@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>初中数学+几何 知识体系 &amp; 线性代数一周冲刺</title>
+<style>
+:root{
+  --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
+  --soft:#7a8399; --rule:rgba(45,49,66,.12); --accent:#eb6c36;
+  --accent-tint:rgba(235,108,54,.08); --ok:#2f7d5d; --warn:#b8860b;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --serif:Georgia,"Songti SC","SimSun",serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
+  --min-page-w:1360px;     /* 页面最低宽度，只保证桌面 */
+  --max-w:1616px;          /* 「内容 + AI 面板」整块最大宽度：单元卡片=1132px（=最初版 1180 容器 − 左右各 24px） */
+  --toolbar-h:89px;        /* 顶栏实际高度，AI 面板贴在其下方 */
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.65;min-width:var(--min-page-w)}
+.wrap{margin:0;padding:40px 32px 80px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin:0 0 8px}
+h1{font-family:var(--serif);font-weight:400;font-size:34px;margin:0 0 8px;letter-spacing:.01em}
+.sub{color:var(--muted);margin:0 0 28px;max-width:64ch}
+.rule{height:1px;background:var(--rule);border:0;margin:32px 0}
+h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+.dcode{font-family:var(--mono);font-size:12px;background:var(--ink);color:var(--paper);border-radius:4px;padding:3px 7px;letter-spacing:.08em}
+.domain{margin:0 0 40px}
+.domain-head p{color:var(--soft);margin:0 0 16px;font-size:13.5px}
+.node{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:18px 20px;margin:0 0 14px;border-left:3px solid var(--rule)}
+.node-head{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.node-id{font-family:var(--mono);font-size:11px;color:var(--soft);border:1px solid var(--rule);border-radius:4px;padding:2px 6px;margin-top:3px}
+.node-title{flex:1 1 300px}
+.node-title h3{margin:0;font-size:17px;font-weight:600}
+.essence{margin:2px 0 0;color:var(--muted);font-size:13.5px}
+.state-ui{display:flex;gap:6px;flex-wrap:wrap}
+.st{font-family:var(--sans);font-size:12px;padding:5px 11px;border:1px solid var(--rule);background:transparent;color:var(--muted);border-radius:6px;cursor:pointer}
+.st:hover{border-color:var(--soft)}
+.st[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-tint);color:var(--accent);font-weight:600}
+.node-body{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:14px}
+.col-label{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:0 0 6px}
+ul{margin:0;padding-left:18px}
+li{margin:2px 0;font-size:13.5px}
+.traps li{color:#8a4b2a}
+.quizzone{margin-top:14px;border-top:1px dashed var(--rule);padding-top:12px}
+.quiz{background:#fbfbfb;border:1px solid var(--rule);border-radius:6px;padding:10px 12px;margin:8px 0}
+.qq{margin:0 0 6px;font-size:13.5px;display:flex;gap:8px}
+.qno{font-family:var(--mono);font-size:11px;color:var(--accent);border:1px solid rgba(235,108,54,.4);border-radius:4px;padding:0 5px;line-height:17px;flex:none;margin-top:3px}
+.reveal,.toggle-quiz{font-family:var(--sans);font-size:12px;background:transparent;border:1px solid var(--rule);border-radius:6px;padding:4px 10px;color:var(--muted);cursor:pointer}
+.reveal:hover,.toggle-quiz:hover{border-color:var(--accent);color:var(--accent)}
+.ans{margin-top:8px;border-left:2px solid var(--accent);padding-left:10px}
+.answerline{margin:0 0 3px;font-size:14px}
+.whyline{margin:0;color:var(--muted);font-size:13px}
+.pathbar{display:flex;height:10px;border-radius:6px;overflow:hidden;border:1px solid var(--rule);background:#fff}
+.pathbar span{display:block;height:100%}
+.pb-done{background:var(--ok)} .pb-doing{background:var(--accent)} .pb-again{background:var(--warn)}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--muted);margin:10px 0 0}
+.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}
+.cards{display:grid;grid-template-columns:1.15fr 1fr .9fr;gap:16px;margin:22px 0 0}
+.card{background:var(--paper2);border:1px solid var(--rule);border-radius:6px;padding:16px 18px}
+.card h3{margin:6px 0 8px;font-size:15px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.day{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:16px 20px;margin:0 0 14px}
+.day-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.daytag{font-family:var(--mono);font-size:11px;background:var(--ink);color:var(--paper);border-radius:4px;padding:3px 8px;letter-spacing:.08em}
+.day-head h3{margin:0;font-size:16px}
+.day-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:10px}
+.checks li::marker{color:var(--accent)}
+.prereq{margin:10px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pre{font-family:var(--mono);font-size:11px;border:1px solid var(--rule);border-radius:4px;padding:2px 7px;color:var(--muted)}
+.review-item{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:13.5px}
+.review-item a{color:var(--accent);text-decoration:none;font-family:var(--mono);font-size:12px}
+.empty{color:var(--soft);font-size:13.5px}
+footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-family:var(--mono);font-size:11px;color:var(--soft)}
+.toolbar{position:sticky;top:0;background:rgba(245,245,245,.95);border-bottom:1px solid var(--rule);padding:10px 0;margin:0 0 24px;z-index:5}
+.toolbar-inner{max-width:var(--max-w);margin:0 auto;padding:0 32px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.tabbtn{font-family:var(--sans);font-size:12.5px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:5px 11px;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.tabbtn:hover{border-color:var(--soft)}
+.tabbtn[aria-selected="true"]{border-color:var(--ink);color:var(--ink);font-weight:600;background:#fff;box-shadow:inset 0 -2px 0 var(--accent)}
+.tabcount{font-family:var(--mono);font-size:10.5px;color:var(--soft);font-weight:400}
+.tabbtn[aria-selected="true"] .tabcount{color:var(--accent)}
+.tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.tabpanel[hidden]{display:none}
+.btn{font-family:var(--sans);font-size:12px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:5px 11px;color:var(--muted);cursor:pointer}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.stat{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+
+/* ---- 单元级「AI 辅助」----
+   设计前提：只保证桌面（最低宽度 1360px），不兼容手机；AI 面板常驻右侧。 */
+.layout{min-width:var(--min-page-w)}
+/* 「单元卡片 + AI 面板」整块：限宽居中，左侧卡片就撑到面板左边缘 */
+.content-row{display:flex;align-items:flex-start;max-width:var(--max-w);margin:0 auto}
+.main{flex:1 1 auto;min-width:0}
+.node{scroll-margin-top:132px}
+/* 单元卡片：一排一个、通栏（宽度=内容列宽，等同最初版 1180 容器通栏 ≈1132px） */
+.nodes{display:flex;flex-direction:column;gap:16px}
+.nodes>.node{margin-bottom:0;width:100%}
+.ai-open{font-family:var(--sans);font-size:12px;border:1px solid rgba(235,108,54,.45);background:var(--accent-tint);color:var(--accent);border-radius:6px;padding:5px 11px;cursor:pointer;flex:none}
+.ai-open:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.ai-drawer{position:sticky;top:var(--toolbar-h);flex:0 0 420px;width:420px;height:calc(100vh - var(--toolbar-h));background:#fff;border-left:1px solid var(--rule);z-index:4;display:flex;flex-direction:column;overflow:hidden;box-shadow:-12px 0 24px -18px rgba(45,49,66,.35)}
+/* 未选话题：整块降级为不可用态 */
+.ai-drawer.no-topic .ai-ctx,.ai-drawer.no-topic .ai-chips,.ai-drawer.no-topic .ai-chips-label,.ai-drawer.no-topic .ai-meter{display:none}
+.ai-head{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--rule)}
+.ai-unit{font-family:var(--mono);font-size:11px;color:var(--accent);margin:0 0 2px;letter-spacing:.06em}
+.ai-head h3{margin:0;font-size:16px;font-weight:600}
+.ai-domain{margin:4px 0 0;color:var(--muted);font-size:12.5px}
+.ai-close{font-family:var(--mono);font-size:13px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:3px 9px;color:var(--muted);cursor:pointer;flex:none}
+.ai-close:hover{border-color:var(--accent);color:var(--accent)}
+.ai-ctx{padding:10px 18px;border-bottom:1px solid var(--rule);background:#fbfbfb}
+.ai-ctx summary{font-family:var(--mono);font-size:11px;color:var(--soft);cursor:pointer}
+.ai-ctx div{padding-top:8px;font-size:12.5px;color:var(--muted)}
+.ai-ctx p{margin:0 0 6px;line-height:1.6}
+.ai-msgs{flex:1;overflow-y:auto;padding:14px 18px}
+.ai-empty{margin:0;padding:14px;border:1px dashed var(--rule);border-radius:8px;background:#fbfbfb}
+.ai-empty p{margin:0 0 8px;font-size:12.5px;color:var(--muted);line-height:1.7}
+.ai-empty p:last-child{margin:0}
+.ai-msg{margin:0 0 12px}
+.ai-who{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin:0 0 4px}
+.ai-bubble{font-size:13.5px;line-height:1.7;border-radius:8px;padding:9px 12px;border:1px solid var(--rule);background:#fbfbfb;white-space:normal;word-break:break-word}
+.ai-msg.user .ai-bubble{background:var(--accent-tint);border-color:rgba(235,108,54,.3)}
+.ai-msg.user .ai-who{color:var(--accent)}
+.ai-bubble code{font-family:var(--mono);font-size:12px;background:rgba(45,49,66,.06);padding:1px 4px;border-radius:3px}
+.ai-typing{color:var(--soft);font-family:var(--mono);font-size:12px}
+.ai-chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 18px 10px}
+.ai-chips-label{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);padding:0 18px 6px;margin:0}
+.chip{font-family:var(--sans);font-size:11.5px;border:1px solid var(--rule);background:#fff;border-radius:999px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:left}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip[disabled]{opacity:.45;cursor:default}
+.ai-input{display:flex;gap:8px;padding:12px 18px 16px;border-top:1px solid var(--rule);align-items:flex-end}
+.ai-input-col{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
+.ai-input textarea{width:100%;font-family:var(--sans);font-size:13.5px;line-height:1.6;border:1px solid var(--rule);border-radius:8px;padding:8px 10px;resize:vertical;color:var(--ink);background:#fff}
+.ai-input textarea:focus{outline:none;border-color:var(--accent)}
+.ai-input textarea:disabled{background:#f0f0ef;color:#9aa0ad;border-color:var(--rule);cursor:not-allowed}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:disabled:hover{border-color:var(--rule);color:var(--muted)}
+/* 图片附件 */
+.attach-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.attach-btn{font-family:var(--sans);font-size:11.5px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:4px 10px;color:var(--muted);cursor:pointer}
+.attach-btn:hover{border-color:var(--accent);color:var(--accent)}
+.attach-btn:disabled{opacity:.45;cursor:not-allowed}
+.attach-hint{font-family:var(--mono);font-size:10px;color:var(--soft)}
+.thumb-wrap{position:relative;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--rule);border-radius:6px;padding:4px 6px;background:#fbfbfb}
+.thumb-wrap img{height:44px;border-radius:4px;display:block}
+.thumb-meta{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.4}
+.thumb-x{border:1px solid var(--rule);background:#fff;border-radius:4px;font-size:11px;color:var(--muted);cursor:pointer;padding:1px 6px}
+.thumb-x:hover{border-color:var(--accent);color:var(--accent)}
+/* 上下文计量：≈token / 500K */
+.ai-meter{padding:8px 18px 10px;border-bottom:1px solid var(--rule)}
+.ai-meter span{font-family:var(--mono);font-size:10.5px;color:var(--soft);display:block;margin-bottom:5px}
+.ai-meter-bar{height:3px;border-radius:2px;background:rgba(45,49,66,.09);overflow:hidden}
+.ai-meter-bar i{display:block;height:100%;background:var(--ok);transition:width .3s}
+.ai-meter.warn .ai-meter-bar i{background:var(--warn)}
+.ai-meter.full .ai-meter-bar i{background:var(--accent)}
+.ai-meter.warn span{color:var(--warn)}
+.ai-meter.full span{color:var(--accent)}
+/* 压缩后的前情摘要 */
+.ai-summary{margin:0 0 12px;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-tint);padding:8px 10px}
+.ai-summary summary{font-family:var(--mono);font-size:10.5px;color:var(--accent);cursor:pointer}
+.ai-summary div{padding-top:8px;font-size:12.5px;color:var(--muted);line-height:1.7}
+.ai-compressing{font-family:var(--mono);font-size:11px;color:var(--accent);padding:8px 10px;border:1px dashed var(--accent);border-radius:8px;margin-bottom:12px}
+.ai-msg .ai-bubble img{max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--rule)}
+</style>
+</head>
+<body>
+<div class="layout">
+<div class="toolbar"><div class="toolbar-inner">
+  <div class="tabs" id="tabs" role="tablist" aria-label="同级课程标签页"></div>
+  <div class="tools">
+    <button class="btn" id="btn-review">只看需复习</button>
+    <button class="btn" id="btn-all">显示全部</button>
+    <button class="btn" id="btn-expand">展开所有自测</button>
+    <button class="btn" id="btn-reset">重置进度</button>
+    <span class="stat" id="stat"></span>
+  </div>
+</div></div>
+<div class="content-row">
+<div class="main">
+<div class="wrap">
+  <p class="eyebrow">Knowledge Map</p>
+  <h1>初中数学+几何 知识体系</h1>
+  <p class="sub">__NCOUNT__ 个知识点，按「命题与逻辑 → 数与式 → 方程 → 函数 → 几何 → 统计」的依赖顺序排列。每个知识点只做三件事：<strong>看懂本质、避开陷阱、通过自测</strong>。自测不过就标「需复习」，已掌握的不再重刷。</p>
+
+  <div class="pathbar" id="pathbar"></div>
+  <div class="legend">
+    <span><i style="background:#2f7d5d"></i>已掌握</span>
+    <span><i style="background:#eb6c36"></i>学习中</span>
+    <span><i style="background:#b8860b"></i>需复习</span>
+    <span><i style="background:#dfe2e8"></i>未学</span>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <p class="col-label">学习原则</p>
+      <h3><span class="dot" style="background:#eb6c36"></span> 三条硬规则</h3>
+      <ul>
+        <li>每个知识点必须通过自测才算「已掌握」——自测不过一律标「需复习」。</li>
+        <li>错题只记「错在哪一步」，不抄整道题。</li>
+        <li>复习只刷标记「需复习」的，已掌握的不再重刷。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="col-label">复习节奏</p>
+      <h3><span class="dot" style="background:#4f5d75"></span> 间隔重复</h3>
+      <ul>
+        <li>当天：学完立刻自测一次。</li>
+        <li>D+1：只看「需复习」的。</li>
+        <li>D+3、D+7：各复现一次。</li>
+        <li>每周一次跨域混合测（随机抽 5 个知识点）。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="col-label">目标顺序</p>
+      <h3><span class="dot" style="background:#2f7d5d"></span> 为什么先补初中</h3>
+      <ul>
+        <li>线代是「符号运算 + 解方程 + 几何直觉」三者的合成。</li>
+        <li>因式分解 → 特征多项式；一元二次方程 → 求特征值。</li>
+        <li>坐标系与勾股定理 → 向量与投影的直觉基础。</li>
+      </ul>
+    </div>
+  </div>
+
+  <hr class="rule">
+  <h2 style="margin-bottom:14px">今日复习队列</h2>
+  <div id="reviewbox"><p class="empty">还没有标记任何「需复习」的知识点。</p></div>
+
+  <hr class="rule">
+__DOMAINS__
+
+  <hr class="rule">
+__LINALG__
+
+  <footer>
+    初中数学+几何 __NCOUNT__ 知识点 · 线性代数 7 天冲刺 · 进度保存在本机浏览器（localStorage），换设备不共享
+  </footer>
+</div><!-- /.wrap -->
+</div><!-- /.main -->
+<script>
+(function(){
+  var KEY = 'math-map-v1';
+  var store = {};
+  try { store = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { store = {}; }
+  var nodes = [].slice.call(document.querySelectorAll('.node'));
+  var panels = [].slice.call(document.querySelectorAll('.tabpanel'));
+  var TKEY = 'math-map-v1-tab';
+  var tabbar = document.getElementById('tabs');
+
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} }
+  function stateOf(id){ return (store[id] && store[id].s) || 'todo'; }
+
+  // ---- 同级课程标签页 ----
+  function buildTabs(){
+    var cur = '*';
+    try { cur = localStorage.getItem(TKEY) || '*'; } catch (e) {}
+    var html = '<button class="tabbtn" data-target="*" role="tab">全部<span class="tabcount" id="cnt-all"></span></button>';
+    panels.forEach(function(p){
+      var t = p.getAttribute('data-tab');
+      html += '<button class="tabbtn" data-target="' + t + '" role="tab">' +
+              p.getAttribute('data-label') + '<span class="tabcount" data-cnt="' + t + '"></span></button>';
+    });
+    tabbar.innerHTML = html;
+    [].forEach.call(tabbar.querySelectorAll('.tabbtn'), function(b){
+      b.addEventListener('click', function(){
+        showTab(b.getAttribute('data-target'));
+        try { localStorage.setItem(TKEY, b.getAttribute('data-target')); } catch (e) {}
+        clearFilter();
+      });
+    });
+    showTab(cur);
+  }
+  function showTab(target){
+    panels.forEach(function(p){
+      p.hidden = !(target === '*' || p.getAttribute('data-tab') === target);
+    });
+    [].forEach.call(tabbar.querySelectorAll('.tabbtn'), function(b){
+      b.setAttribute('aria-selected', b.getAttribute('data-target') === target ? 'true' : 'false');
+    });
+  }
+  function clearFilter(){ nodes.forEach(function(n){ n.style.display = ''; }); }
+  function updateCounts(){
+    panels.forEach(function(p){
+      var ids = [].slice.call(p.querySelectorAll('.node')).map(function(n){ return n.getAttribute('data-id'); });
+      var done = ids.filter(function(i){ return stateOf(i) === 'done'; }).length;
+      var el = tabbar.querySelector('[data-cnt="' + p.getAttribute('data-tab') + '"]');
+      if (el) el.textContent = ids.length ? (done + '/' + ids.length) : '';
+    });
+    var elAll = document.getElementById('cnt-all');
+    if (elAll) {
+      var d = nodes.filter(function(n){ return stateOf(n.getAttribute('data-id')) === 'done'; }).length;
+      elAll.textContent = d + '/' + nodes.length;
+    }
+  }
+
+  function review(){
+    var box = document.getElementById('reviewbox');
+    var again = nodes.filter(function(n){ return stateOf(n.getAttribute('data-id')) === 'again'; });
+    if (!again.length) {
+      box.innerHTML = '<p class="empty">还没有标记任何「需复习」的知识点。自测失败就去卡片右上角点一下「需复习」。</p>';
+      return;
+    }
+    box.innerHTML = again.map(function(n){
+      var id = n.getAttribute('data-id');
+      var t = n.querySelector('.node-title h3').textContent;
+      return '<div class="review-item"><a href="#' + id + '">' + id + '</a><span>' + t + '</span></div>';
+    }).join('');
+  }
+
+  function paint(){
+    var c = { done: 0, doing: 0, again: 0, todo: 0 };
+    nodes.forEach(function(n){
+      var id = n.getAttribute('data-id'), s = stateOf(id);
+      c[s]++;
+      [].forEach.call(n.querySelectorAll('.st'), function(b){
+        b.setAttribute('aria-pressed', b.getAttribute('data-state') === s ? 'true' : 'false');
+      });
+      n.style.borderLeftColor = s === 'again' ? '#b8860b' : s === 'done' ? '#2f7d5d' : s === 'doing' ? '#eb6c36' : 'rgba(45,49,66,.12)';
+    });
+    var total = nodes.length || 1;
+    document.getElementById('pathbar').innerHTML =
+      '<span class="pb-done" style="width:' + (c.done / total * 100) + '%"></span>' +
+      '<span class="pb-doing" style="width:' + (c.doing / total * 100) + '%"></span>' +
+      '<span class="pb-again" style="width:' + (c.again / total * 100) + '%"></span>';
+    document.getElementById('stat').textContent =
+      '已掌握 ' + c.done + '/' + nodes.length + ' · 需复习 ' + c.again + ' · 学习中 ' + c.doing;
+    review();
+    updateCounts();
+  }
+
+  nodes.forEach(function(n){
+    [].forEach.call(n.querySelectorAll('.st'), function(b){
+      b.addEventListener('click', function(){
+        var id = n.getAttribute('data-id');
+        store[id] = { s: b.getAttribute('data-state'), t: Date.now() };
+        save(); paint();
+      });
+    });
+    var tq = n.querySelector('.toggle-quiz'), qz = n.querySelector('.quizzone');
+    tq.addEventListener('click', function(){
+      qz.hidden = !qz.hidden;
+      tq.textContent = qz.hidden ? '展开自测 ▾' : '收起自测 ▴';
+    });
+  });
+
+  [].forEach.call(document.querySelectorAll('.reveal'), function(b){
+    b.addEventListener('click', function(){
+      var a = b.parentNode.querySelector('.ans');
+      a.hidden = !a.hidden;
+      b.textContent = a.hidden ? '看答案' : '收起';
+    });
+  });
+
+  document.getElementById('btn-review').addEventListener('click', function(){
+    showTab('*');
+    try { localStorage.setItem(TKEY, '*'); } catch (e) {}
+    nodes.forEach(function(n){
+      n.style.display = stateOf(n.getAttribute('data-id')) === 'again' ? '' : 'none';
+    });
+  });
+  document.getElementById('btn-all').addEventListener('click', function(){
+    clearFilter();
+  });
+  document.getElementById('btn-expand').addEventListener('click', function(){
+    nodes.forEach(function(n){
+      n.querySelector('.quizzone').hidden = false;
+      n.querySelector('.toggle-quiz').textContent = '收起自测 ▴';
+    });
+  });
+  document.getElementById('btn-reset').addEventListener('click', function(){
+    if (confirm('确定清空全部进度标记？')) { store = {}; save(); paint(); }
+  });
+
+  buildTabs();
+  paint();
+})();
+</script>
+<aside class="ai-drawer no-topic" id="ai-drawer" aria-label="AI 辅助">
+  <header class="ai-head">
+    <div class="ai-head-txt">
+      <p class="ai-unit" id="ai-unit-id">未选择话题</p>
+      <h3 id="ai-unit-title">AI 辅助</h3>
+      <p class="ai-domain" id="ai-unit-domain">在左侧 Knowledge Map 里点任意单元卡片右侧的「AI 辅助」，它就拿到那个单元的全部上下文。</p>
+    </div>
+    <button class="ai-close" id="ai-close" type="button" title="清除当前话题" aria-label="清除当前话题">✕</button>
+  </header>
+  <details class="ai-ctx">
+    <summary id="ai-ctx-summary">已附带该单元上下文</summary>
+    <div id="ai-ctx-body"></div>
+  </details>
+  <div class="ai-meter" id="ai-meter">
+    <span id="ai-meter-txt">上下文 ≈0 / 500K</span>
+    <div class="ai-meter-bar"><i id="ai-meter-fill" style="width:0.5%"></i></div>
+  </div>
+  <div class="ai-msgs" id="ai-msgs"></div>
+  <p class="ai-chips-label" id="ai-chips-label">AI 建议你接着问</p>
+  <div class="ai-chips" id="ai-chips"></div>
+  <form class="ai-input" id="ai-form">
+    <div class="ai-input-col">
+      <div class="attach-row">
+        <button class="attach-btn" id="ai-attach" type="button" disabled>＋ 图片</button>
+        <span class="attach-hint">≤10MB，自动压成 JPG 90% / 最长边 ≤4K</span>
+      </div>
+      <div id="ai-thumb"></div>
+      <textarea id="ai-text" rows="2" disabled placeholder="请在单元内选择话题…"></textarea>
+    </div>
+    <button class="btn ai-send" id="ai-send" type="submit" disabled>发送</button>
+    <input type="file" id="ai-file" accept="image/*" style="display:none">
+  </form>
+</aside>
+</div><!-- /.content-row -->
+</div><!-- /.layout -->
+<script>
+(function(){
+  var HOST = 'http://' + location.hostname + ':8096';
+  var ASK = HOST + '/ask', SUGGEST = HOST + '/suggest', COMPRESS = HOST + '/compress';
+  var MAX_IMG_BYTES = 10 * 1024 * 1024;   // 上传上限 10MB
+  var MAX_SIDE = 3840;                    // 最长边压到 4K 以内
+  var JPEG_Q = 0.9;                       // 保底 JPG 90%
+  var CTX_LIMIT = 500000;                 // 每个对话的上下文上限（token），超了就压缩
+  var KEEP_RECENT = 8;                    // 压缩时保留最近 N 条不压
+  var SYS_OVERHEAD = 900;                 // 后端 system prompt 的固定开销估算
+
+  var drawer = document.getElementById('ai-drawer');
+  var msgsEl = document.getElementById('ai-msgs');
+  var textEl = document.getElementById('ai-text');
+  var sendBtn = document.getElementById('ai-send');
+  var attachBtn = document.getElementById('ai-attach');
+  var fileEl = document.getElementById('ai-file');
+  var thumbEl = document.getElementById('ai-thumb');
+  var chipsEl = document.getElementById('ai-chips');
+  var chipsLabel = document.getElementById('ai-chips-label');
+  var meterTxt = document.getElementById('ai-meter-txt');
+  var meterFill = document.getElementById('ai-meter-fill');
+  var meterEl = document.getElementById('ai-meter');
+  var cur = null;          // 当前话题（单元）
+  var history = [];        // 当前话题的完整对话
+  var pending = null;      // 待发送的图片 {dataUrl, thumb, bytes, w, h, origBytes, name}
+  var busy = false;
+
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function fmt(s){
+    return esc(s)
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\n/g, '<br>');
+  }
+  function fmtSize(b){ return b >= 1048576 ? (b/1048576).toFixed(2)+' MB' : Math.round(b/1024)+' KB'; }
+  function fmtK(n){ return n >= 1000 ? (n/1000).toFixed(1) + 'K' : String(n); }
+  function hkey(id){ return 'math-map-ai-' + id; }
+  function loadHist(id){ try { return JSON.parse(localStorage.getItem(hkey(id)) || '[]'); } catch(e){ return []; } }
+
+  // 存历史：图片只留小缩略图，否则 localStorage 很快爆
+  function saveHist(id, h){
+    try {
+      var slim = h.map(function(m){
+        var o = { role: m.role, content: (m.content || '').slice(0, 4000) };
+        if (m.role === 'summary') o.content = m.content || '';
+        if (m.image) o.image = m.thumb || m.image;
+        return o;
+      });
+      localStorage.setItem(hkey(id), JSON.stringify(slim));
+    } catch(e){
+      console.warn('history save failed', e);
+    }
+  }
+
+  // ---------- 上下文预算：≈ token（中文约 0.75/字，西文约 4 字符/token）----------
+  function estTokens(s){
+    if (!s) return 0;
+    var cjk = (s.match(/[\u2e80-\u9fff\u3000-\u303f\uff00-\uffef]/g) || []).length;
+    return Math.round(cjk * 0.75 + (s.length - cjk) / 4);
+  }
+  function ctxTokens(){
+    var n = SYS_OVERHEAD + estTokens(cur ? JSON.stringify(cur) : '');
+    history.forEach(function(m){ n += estTokens(m.content || '') + 6; });
+    return n;
+  }
+  function updateMeter(extra){
+    if (!meterEl) return;
+    var n = ctxTokens(), pct = Math.min(100, Math.round(n / CTX_LIMIT * 100));
+    meterTxt.textContent = '上下文 ≈' + fmtK(n) + ' / ' + fmtK(CTX_LIMIT) + '（' + pct + '%）' + (extra || '');
+    meterFill.style.width = Math.max(0.5, pct) + '%';
+    meterEl.classList.toggle('warn', pct >= 60);
+    meterEl.classList.toggle('full', pct >= 90);
+  }
+
+  // ---------- 话题状态 ----------
+  function setTopicOff(){
+    cur = null; history = []; pending = null;
+    drawer.classList.add('no-topic');
+    document.getElementById('ai-unit-id').textContent = '未选择话题';
+    document.getElementById('ai-unit-title').textContent = 'AI 辅助';
+    document.getElementById('ai-unit-domain').textContent = '在左侧 Knowledge Map 里点任意单元卡片右侧的「AI 辅助」，它就拿到那个单元的全部上下文。';
+    textEl.value = ''; textEl.disabled = true;
+    textEl.placeholder = '请在单元内选择话题…';
+    sendBtn.disabled = true; attachBtn.disabled = true;
+    renderThumb(); chipsEl.innerHTML = '';
+    msgsEl.innerHTML = '<div class="ai-empty"><p><strong>还没有话题，所以不能提问。</strong></p>' +
+      '<p>去左边 Knowledge Map 里点任意单元卡片右侧的「AI 辅助」——比如 <code>L3 四种命题与逆否等价</code>，' +
+      '面板就会拿到那个单元的本质、必会点、陷阱和自测题，然后这里就能问它了。</p></div>';
+  }
+
+  function collectUnit(node){
+    var panel = node.closest('.tabpanel');
+    var label = panel ? (panel.getAttribute('data-label') || '') : '';
+    var parts = label.split(' ');
+    var qs = [];
+    [].forEach.call(node.querySelectorAll('.quiz'), function(q){
+      var qq = q.querySelector('.qq'), ans = q.querySelector('.answerline'), why = q.querySelector('.whyline');
+      if (!qq || !ans) return;
+      qs.push({ q: qq.textContent.trim(), a: ans.textContent.replace(/^答案：/, '').trim(), why: why ? why.textContent.trim() : '' });
+    });
+    return {
+      unit_id: node.getAttribute('data-id'),
+      unit_title: (node.querySelector('.node-title h3') || {}).textContent || '',
+      domain: parts.slice(1).join(' ') || label,
+      essence: (node.querySelector('.essence') || {}).textContent || '',
+      musts: [].map.call(node.querySelectorAll('.musts li'), function(li){ return li.textContent.trim(); }),
+      traps: [].map.call(node.querySelectorAll('.traps li'), function(li){ return li.textContent.trim(); }),
+      quizzes: qs
+    };
+  }
+
+  function openTopic(node){
+    cur = collectUnit(node);
+    drawer.classList.remove('no-topic');
+    document.getElementById('ai-unit-id').textContent = cur.unit_id + ' · ' + cur.domain;
+    document.getElementById('ai-unit-title').textContent = cur.unit_title;
+    document.getElementById('ai-unit-domain').textContent = cur.essence;
+    document.getElementById('ai-ctx-body').innerHTML =
+      '<p><strong>必会</strong><br>' + cur.musts.map(esc).join('<br>') + '</p>' +
+      '<p><strong>陷阱</strong><br>' + (cur.traps.length ? cur.traps.map(esc).join('<br>') : '—') + '</p>' +
+      '<p><strong>自测题</strong><br>' + (cur.quizzes.length ? cur.quizzes.map(function(z){return esc(z.q);}).join('<br>') : '—') + '</p>';
+    document.getElementById('ai-ctx-summary').textContent = '已附带该单元上下文（' + cur.unit_id + '）';
+    history = loadHist(cur.unit_id);
+    pending = null; renderThumb();
+    textEl.disabled = false; sendBtn.disabled = false; attachBtn.disabled = false;
+    textEl.placeholder = '就「' + cur.unit_title + '」直接提问…（Enter 发送 / Shift+Enter 换行）';
+    renderHist();
+    updateMeter();
+    refreshSuggestions();
+    textEl.focus();
+  }
+
+  function renderHist(){
+    msgsEl.innerHTML = '';
+    if (!history.length){
+      msgsEl.innerHTML = '<div class="ai-empty"><p><strong>这个话题你还没问过。</strong></p>' +
+        '<p>它已经拿到本单元的本质、必会点、陷阱和自测题（含答案），直接问就行；下面的建议问题也是按这个话题现生成的。</p></div>';
+      return;
+    }
+    history.forEach(function(m){
+      if (m.role === 'summary'){ summaryBlock(m.content); return; }
+      bubble(m.role, m.content, m.image);
+    });
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+
+  function summaryBlock(text){
+    var d = document.createElement('details');
+    d.className = 'ai-summary';
+    d.innerHTML = '<summary>已压缩的更早对话（前情摘要 · ' + (text || '').length + ' 字）</summary><div>' + fmt(text || '') + '</div>';
+    msgsEl.appendChild(d);
+  }
+
+  function bubble(role, text, image){
+    var d = document.createElement('div');
+    d.className = 'ai-msg ' + role;
+    d.innerHTML = '<p class="ai-who">' + (role === 'user' ? '我' : 'AI 老师') + '</p><div class="ai-bubble">' + fmt(text || '') +
+                  (image ? '<img src="' + image + '" alt="附图">' : '') + '</div>';
+    msgsEl.appendChild(d);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    return d.querySelector('.ai-bubble');
+  }
+
+  // ---------- 建议问题：由 AI 按话题生成，随对话变化 ----------
+  function renderChips(qs){
+    chipsEl.innerHTML = '';
+    (qs || []).forEach(function(q){
+      var b = document.createElement('button');
+      b.className = 'chip'; b.type = 'button'; b.textContent = q;
+      b.addEventListener('click', function(){ if (!busy) ask(q); });
+      chipsEl.appendChild(b);
+    });
+    chipsLabel.hidden = !(qs && qs.length);
+  }
+  function refreshSuggestions(){
+    if (!cur) return;
+    var unitId = cur.unit_id, hist = history.slice(-6);
+    fetch(SUGGEST, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unit: cur, history: hist })
+    }).then(function(r){ return r.json(); })
+      .then(function(d){ if (cur && cur.unit_id === unitId) renderChips(d.questions || []); })
+      .catch(function(){ if (cur && cur.unit_id === unitId) renderChips([]); });
+  }
+
+  // ---------- 超过 500K：把更早的对话压成摘要 ----------
+  async function ensureBudget(){
+    if (!cur) return;
+    if (ctxTokens() <= CTX_LIMIT) return;
+    if (history.length <= KEEP_RECENT + 1) return;
+    var older = history.slice(0, history.length - KEEP_RECENT)
+                       .filter(function(m){ return m.role === 'user' || m.role === 'assistant'; });
+    if (!older.length) return;
+
+    busy = true; sendBtn.disabled = true; attachBtn.disabled = true;
+    updateMeter(' · 正在压缩更早的对话…');
+    var note = document.createElement('div');
+    note.className = 'ai-compressing';
+    note.textContent = '上下文超过 ' + fmtK(CTX_LIMIT) + '，正在把更早的 ' + older.length + ' 条对话压成摘要（可能 1-2 分钟）…';
+    msgsEl.appendChild(note); msgsEl.scrollTop = msgsEl.scrollHeight;
+
+    try {
+      var r = await fetch(COMPRESS, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unit: cur, messages: older })
+      });
+      var d = await r.json();
+      if (d && d.summary){
+        history = [{ role: 'summary', content: d.summary }].concat(history.slice(-KEEP_RECENT));
+        saveHist(cur.unit_id, history);
+        renderHist();
+        updateMeter(' · 已压缩 ' + older.length + ' 条');
+      } else {
+        updateMeter(' · 压缩未成功');
+      }
+    } catch(e){
+      updateMeter(' · 压缩失败：' + e.message);
+    }
+    note.remove();
+    busy = false;
+    if (cur){ sendBtn.disabled = false; attachBtn.disabled = false; }
+  }
+
+  // ---------- 图片：先压缩再上传 ----------
+  function renderThumb(){
+    thumbEl.innerHTML = '';
+    if (!pending) return;
+    var d = document.createElement('div');
+    d.className = 'thumb-wrap';
+    d.innerHTML = '<img src="' + pending.dataUrl + '" alt="待发送图片"><span class="thumb-meta">' +
+      fmtSize(pending.origBytes) + ' → ' + fmtSize(pending.bytes) + '<br>' + pending.w + '×' + pending.h + ' · JPG 90%</span>';
+    var x = document.createElement('button');
+    x.className = 'thumb-x'; x.type = 'button'; x.textContent = '✕';
+    x.addEventListener('click', function(){ pending = null; renderThumb(); });
+    d.appendChild(x);
+    thumbEl.appendChild(d);
+  }
+
+  function drawScaled(img, maxSide, q){
+    var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    var scale = Math.min(1, maxSide / Math.max(w, h));
+    var tw = Math.max(1, Math.round(w * scale)), th = Math.max(1, Math.round(h * scale));
+    var c = document.createElement('canvas'); c.width = tw; c.height = th;
+    var ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, tw, th);   // 透明底转白，避免 PNG 变黑
+    ctx.drawImage(img, 0, 0, tw, th);
+    return { url: c.toDataURL('image/jpeg', q), w: tw, h: th };
+  }
+
+  function compressImage(file){
+    return new Promise(function(resolve, reject){
+      if (!/^image\//.test(file.type || '')) { reject(new Error('只能传图片文件')); return; }
+      if (file.size > MAX_IMG_BYTES) { reject(new Error('图片 ' + fmtSize(file.size) + ' 超过 10MB 上限')); return; }
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function(){
+        var big = drawScaled(img, MAX_SIDE, JPEG_Q);      // 发给模型：JPG 90% / ≤4K
+        var small = drawScaled(img, 240, 0.62);           // 存历史：小缩略图
+        URL.revokeObjectURL(url);
+        resolve({
+          dataUrl: big.url, thumb: small.url, w: big.w, h: big.h, name: file.name || 'paste.jpg',
+          origBytes: file.size,
+          bytes: Math.round((big.url.length - big.url.indexOf(',') - 1) * 3 / 4)
+        });
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error('无法读取这张图片')); };
+      img.src = url;
+    });
+  }
+
+  function attachFile(file){
+    if (!cur) return;
+    compressImage(file).then(function(info){
+      pending = info; renderThumb();
+    }).catch(function(e){
+      alert('图片处理失败：' + e.message);
+    });
+  }
+
+  // ---------- 提问 ----------
+  async function ask(question){
+    if (busy || !cur) return;
+    var q = (question || '').trim();
+    if (!q && !pending) return;
+    if (!q && pending) q = '请看这张图片，它和本单元有什么关系？';
+
+    await ensureBudget();          // 先看上下文是否超 500K，超了先压缩
+    if (!cur) return;
+
+    var img = pending ? pending.dataUrl : null;
+    var thumb = pending ? pending.thumb : null;
+
+    busy = true; sendBtn.disabled = true; attachBtn.disabled = true;
+    [].forEach.call(chipsEl.querySelectorAll('.chip'), function(c){ c.disabled = true; });
+    if (!history.length) msgsEl.innerHTML = '';
+
+    history.push({ role: 'user', content: q, image: img, thumb: thumb });
+    saveHist(cur.unit_id, history);
+    bubble('user', q, img);
+    textEl.value = ''; pending = null; renderThumb();
+    updateMeter();
+
+    var target = bubble('assistant', '');
+    target.innerHTML = '<span class="ai-typing">思考中…</span>';
+    var acc = '';
+    try {
+      var res = await fetch(ASK, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unit: cur, question: q, image: img, history: history.slice(0, -1) })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var reader = res.body.getReader(), dec = new TextDecoder(), buf = '';
+      while (true){
+        var r = await reader.read();
+        if (r.done) break;
+        buf += dec.decode(r.value, { stream: true });
+        var lines = buf.split('\n'); buf = lines.pop();
+        for (var i = 0; i < lines.length; i++){
+          var line = lines[i].trim();
+          if (line.indexOf('data:') !== 0) continue;
+          var payload = line.slice(5).trim();
+          if (!payload) continue;
+          var obj; try { obj = JSON.parse(payload); } catch(e){ continue; }
+          if (obj.error) acc += '\n[出错] ' + obj.error;
+          if (obj.delta){ acc += obj.delta; target.innerHTML = fmt(acc); msgsEl.scrollTop = msgsEl.scrollHeight; }
+        }
+      }
+      if (!acc) acc = '（没有返回内容，可能是上游超时，再试一次。）';
+    } catch (e){
+      acc = acc || ('请求失败：' + e.message + '\n（可检查服务：' + HOST + '/health）');
+    }
+    target.innerHTML = fmt(acc);
+    history.push({ role: 'assistant', content: acc });
+    saveHist(cur.unit_id, history);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    busy = false;
+    if (cur){ sendBtn.disabled = false; attachBtn.disabled = false; }
+    updateMeter();
+    refreshSuggestions();     // 建议问题随对话变化
+  }
+
+  // ---------- 绑定 ----------
+  [].forEach.call(document.querySelectorAll('.node'), function(node){
+    var b = node.querySelector('.ai-open');
+    if (b) b.addEventListener('click', function(){ openTopic(node); });
+  });
+  document.getElementById('ai-close').addEventListener('click', setTopicOff);
+
+  attachBtn.addEventListener('click', function(){ fileEl.click(); });
+  fileEl.addEventListener('change', function(){
+    if (fileEl.files && fileEl.files[0]) attachFile(fileEl.files[0]);
+    fileEl.value = '';
+  });
+  textEl.addEventListener('paste', function(e){
+    var items = (e.clipboardData || {}).items || [];
+    for (var i = 0; i < items.length; i++){
+      if (items[i].type && items[i].type.indexOf('image') === 0){
+        e.preventDefault();
+        var f = items[i].getAsFile();
+        if (f) attachFile(f);
+        return;
+      }
+    }
+  });
+  drawer.addEventListener('dragover', function(e){ e.preventDefault(); });
+  drawer.addEventListener('drop', function(e){
+    var files = (e.dataTransfer || {}).files || [];
+    for (var i = 0; i < files.length; i++){
+      if (/^image\//.test(files[i].type)){ e.preventDefault(); attachFile(files[i]); return; }
+    }
+  });
+
+  document.getElementById('ai-form').addEventListener('submit', function(e){
+    e.preventDefault(); ask(textEl.value);
+  });
+  textEl.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); ask(textEl.value); }
+  });
+
+  setTopicOff();
+})();
+</script>
+</body>
+</html>

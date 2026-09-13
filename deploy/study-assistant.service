@@ -1,0 +1,18 @@
+[Unit]
+Description=Study Assistant (knowledge-map AI helper, 8096)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PORT=8096
+Environment=LLM_BASE=http://192.168.33.110:8000/v1
+# LLM_KEY：部署时替换为内部网关密钥（仓库不保存密钥）
+Environment=LLM_KEY=CHANGE_ME
+Environment=LLM_MODEL=deepseek
+ExecStart=/usr/bin/python3 /opt/study-assistant/study_assistant.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

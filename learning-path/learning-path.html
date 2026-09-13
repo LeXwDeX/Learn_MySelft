@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学习路径 · 采集 → 研究 → 路径图</title>
+<style>
+:root{
+  --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
+  --soft:#7a8399; --rule:rgba(45,49,66,.12); --accent:#eb6c36;
+  --accent-tint:rgba(235,108,54,.08); --ok:#2f7d5d; --warn:#b8860b;
+  --lock:#9aa2b1;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --serif:Georgia,"Songti SC","SimSun",serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
+  --min-page-w:1360px;
+  --max-w:1616px;
+  --toolbar-h:89px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.65;min-width:var(--min-page-w)}
+.toolbar{position:sticky;top:0;background:rgba(245,245,245,.96);border-bottom:1px solid var(--rule);z-index:6;backdrop-filter:blur(6px)}
+.toolbar-inner{max-width:var(--max-w);margin:0 auto;padding:16px 32px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.brand h1{font-family:var(--serif);font-weight:400;font-size:22px;margin:0;letter-spacing:.01em}
+.brand .sub{color:var(--soft);font-size:12px;margin:0;font-family:var(--mono)}
+.badge{font-family:var(--mono);font-size:11px;letter-spacing:.08em;border:1px solid var(--rule);border-radius:6px;padding:4px 9px;color:var(--muted);background:#fff}
+.badge.on{border-color:var(--accent);background:var(--accent-tint);color:var(--accent)}
+.stagenav{display:flex;gap:6px;align-items:center}
+.stab{font-family:var(--sans);font-size:12.5px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:5px 11px;color:var(--muted);cursor:pointer;transition:border-color .15s,color .15s,box-shadow .15s}
+.stab:hover:not([disabled]){border-color:var(--soft)}
+.stab.on{border-color:var(--ink);color:var(--ink);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)}
+.stab[disabled]{opacity:.4;cursor:not-allowed}
+.spacer{flex:1 1 auto}
+.progress{display:flex;align-items:center;gap:10px;min-width:280px}
+.pbar{flex:1;height:9px;border-radius:6px;overflow:hidden;background:#fff;border:1px solid var(--rule)}
+.pfill{display:block;height:100%;width:0;background:var(--ok);transition:width .3s ease}
+.ptext{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
+.btn{font-family:var(--sans);font-size:12px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:5px 11px;color:var(--muted);cursor:pointer}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{border-color:var(--accent);background:var(--accent);color:#fff;font-weight:600}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.wrap{padding:26px 0 90px}
+.content-row{display:flex;align-items:flex-start;max-width:var(--max-w);margin:0 auto}
+.main{flex:1 1 auto;min-width:0;padding:0 32px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin:0 0 8px}
+h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
+.muted{color:var(--muted);font-size:13.5px}
+.errbar{display:flex;gap:12px;align-items:center;background:#fff4ef;border:1px solid rgba(235,108,54,.4);border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px;margin:0 0 16px;font-size:13.5px;color:#8a4b2a}
+.errbar[hidden]{display:none}
+.stage[hidden]{display:none}
+
+/* ---- 采集 ---- */
+.intake-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:22px 24px}
+.chat-log{min-height:180px;max-height:56vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 2px 12px}
+.bubble{max-width:76%;padding:10px 14px;border-radius:10px;font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+.bubble.ai{align-self:flex-start;background:#fbfbfb;border:1px solid var(--rule);border-bottom-left-radius:3px}
+.bubble.me{align-self:flex-end;background:var(--accent-tint);border:1px solid rgba(235,108,54,.35);color:#7a3a1a;border-bottom-right-radius:3px}
+.bubble .who{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:4px}
+.chat-input{display:flex;gap:10px;border-top:1px solid var(--rule);padding-top:14px;margin-top:6px}
+.chat-input input{flex:1;font-family:var(--sans);font-size:14.5px;padding:10px 13px;border:1px solid var(--rule);border-radius:7px;background:#fff;color:var(--ink);outline:none}
+.chat-input input:focus{border-color:var(--accent)}
+.hint{color:var(--soft);font-size:12px;margin:8px 0 0}
+.spec-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:18px 20px;margin:0 0 18px}
+.spec-card h3{margin:0 0 10px;font-size:16px}
+.spec-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 18px}
+.spec-grid .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)}
+.spec-grid .v{font-size:13.5px;color:var(--ink);margin-bottom:6px}
+
+/* ---- 研究 ---- */
+.panel-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:20px 22px;margin:0 0 16px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 16px}
+.chip{font-family:var(--mono);font-size:11.5px;border:1px solid var(--rule);border-radius:14px;padding:3px 11px;color:var(--muted);background:#fff}
+.src{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--rule);font-size:13.5px}
+.src:last-child{border-bottom:0}
+.src .no{font-family:var(--mono);font-size:11px;color:var(--accent);flex:none}
+.src a{color:var(--ink);text-decoration:none;font-weight:600}
+.src a:hover{color:var(--accent);text-decoration:underline}
+.src .dom{font-family:var(--mono);font-size:11px;color:var(--soft);flex:none}
+.src .snip{color:var(--muted);font-size:12.5px;display:block;margin-top:2px}
+.brief{font-size:14px;line-height:1.8;white-space:pre-wrap;word-break:break-word}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--rule);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---- 路径图 ---- */
+.graph-wrap{position:relative;background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:26px 26px 30px}
+.graph-svg{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.layer{position:relative;z-index:2;display:flex;flex-direction:column;align-items:stretch;gap:26px}
+/* .layer + .layer 的 margin 与 #graph-layer 的 flex gap 重复叠加（52px vs 26px 不齐），故移除 */
+.node{width:100%;background:#fff;border:1px solid var(--rule);border-left:3px solid var(--lock);border-radius:8px;padding:18px 20px;cursor:pointer;position:relative;transition:box-shadow .15s,border-color .15s}
+.node:hover{box-shadow:0 6px 18px -12px rgba(45,49,66,.5)}
+.node.unlocked{border-left-color:var(--accent)}
+.node.done{border-left-color:var(--ok)}
+.node.failed{border-left-color:#b23a48}
+.node-head{display:flex;align-items:center;gap:12px}
+.node-no{font-family:var(--mono);font-size:11px;color:var(--soft);border:1px solid var(--rule);border-radius:4px;padding:2px 7px;flex:none}
+.node-title{flex:1;font-size:15.5px;font-weight:600;margin:0}
+.node-ess{margin:6px 0 0;color:var(--muted);font-size:13px;min-height:42px}
+.status{font-size:11.5px;border-radius:12px;padding:3px 10px;flex:none;white-space:nowrap;border:1px solid var(--rule);color:var(--muted);background:#fff}
+.status.locked{color:var(--lock)}
+.status.unlocked{color:var(--accent);border-color:rgba(235,108,54,.4);background:var(--accent-tint)}
+.status.done{color:var(--ok);border-color:rgba(47,125,93,.4);background:rgba(47,125,93,.08)}
+.status.failed{color:#b23a48;border-color:rgba(178,58,72,.4);background:rgba(178,58,72,.07)}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--muted);margin:14px 0 0}
+.legend i{width:10px;height:4px;border-radius:2px;display:inline-block;margin-right:6px}
+.empty-note{color:var(--soft);font-size:13.5px}
+
+/* ---- 右面板 ---- */
+.panel{position:sticky;top:var(--toolbar-h);flex:0 0 420px;width:420px;height:calc(100vh - var(--toolbar-h));background:#fff;border-left:1px solid var(--rule);box-shadow:-12px 0 24px -20px rgba(45,49,66,.4);display:flex;flex-direction:column;overflow:hidden;z-index:4}
+.panel-head{padding:16px 20px 12px;border-bottom:1px solid var(--rule);flex:none}
+.panel-head .pid{font-family:var(--mono);font-size:11px;color:var(--accent);margin:0 0 2px}
+.panel-head h3{margin:0;font-size:16px}
+.panel-head .pess{margin:5px 0 0;color:var(--muted);font-size:12.5px}
+.panel-body{flex:1;overflow-y:auto;padding:16px 20px 44px}
+.panel-body .katex-display{overflow-x:auto;overflow-y:hidden;padding:2px 0;margin:8px 0}
+.panel-body .katex{font-size:1.02em}
+.notes .katex,.brief .katex{font-size:1.03em}
+.panel-sec{margin:0 0 18px}
+.panel-sec>h4{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:0 0 7px}
+.panel-sec ul{margin:0;padding-left:18px}
+.panel-sec li{font-size:13.5px;margin:3px 0}
+.notes{font-size:13.8px;line-height:1.85;white-space:pre-wrap;word-break:break-word}
+.notes h5{font-family:var(--sans);font-size:14.5px;margin:14px 0 5px;color:var(--ink)}
+.notes code{font-family:var(--mono);font-size:12.5px;background:#f5f5f5;border:1px solid var(--rule);border-radius:4px;padding:0 4px}
+.quiz-box{background:#fbfbfb;border:1px solid var(--rule);border-radius:7px;padding:11px 13px;margin:0 0 10px}
+.quiz-box .q{margin:0 0 8px;font-size:13.5px;font-weight:600}
+.quiz-box textarea{width:100%;min-height:66px;font-family:var(--sans);font-size:13.5px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:#fff;color:var(--ink);resize:vertical;outline:none}
+.quiz-box textarea:focus{border-color:var(--accent)}
+.result{margin-top:8px;font-size:13px;border-left:2px solid var(--accent);padding-left:10px}
+.result.ok{border-left-color:var(--ok)}
+.result.bad{border-left-color:#b23a48}
+.score{font-family:var(--mono);font-size:22px;font-weight:700}
+.score.ok{color:var(--ok)} .score.bad{color:#b23a48}
+.panel-foot{flex:none;border-top:1px solid var(--rule);padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff}
+.om-link{font-size:12.5px;color:var(--accent);text-decoration:none;border:1px solid rgba(235,108,54,.4);background:var(--accent-tint);border-radius:6px;padding:5px 11px}
+.om-link:hover{background:var(--accent);color:#fff}
+.tip{color:var(--soft);font-size:12.5px}
+
+footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule);padding:14px 32px 0;font-family:var(--mono);font-size:11px;color:var(--soft)}
+</style>
+<link rel="stylesheet" href="./katex/katex.min.css">
+</head>
+<body>
+<header class="toolbar">
+  <div class="toolbar-inner">
+    <div class="brand">
+      <h1>学习路径</h1>
+      <p class="sub">对话采集 → 主动研究 → 路径图 + 解锁门控</p>
+    </div>
+    <nav class="stagenav" id="stagenav">
+      <button class="stab" data-stage="intake" type="button">A · 需求采集</button>
+      <button class="stab" data-stage="research" type="button">B · 主动研究</button>
+      <button class="stab" data-stage="learning" type="button">C · 学习路径</button>
+    </nav>
+    <div class="spacer"></div>
+    <div class="progress">
+      <div class="pbar"><span class="pfill" id="progress-fill"></span></div>
+      <span class="ptext" id="progress-text">已完成 0/0</span>
+    </div>
+    <button class="btn" id="restart-btn" type="button">重新开始</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="content-row">
+    <main class="main">
+      <div class="errbar" id="errbar" hidden>
+        <span id="errtext"></span>
+        <button class="btn" id="errretry" type="button">重试</button>
+      </div>
+
+      <!-- 阶段 A：采集 -->
+      <section class="stage" id="stage-intake">
+        <p class="eyebrow">Stage A · Intake</p>
+        <h2>先聊聊你想学什么</h2>
+        <p class="muted">AI 会一次只问一个问题，逐步确认你的目标、基础、深度与可投入时间。</p>
+        <div class="intake-card">
+          <div class="chat-log" id="chat-log"></div>
+          <div class="chat-input">
+            <input id="chat-input" type="text" autocomplete="off" placeholder="输入你的回答，回车发送…">
+            <button class="btn primary" id="chat-send" type="button">发送</button>
+          </div>
+          <p class="hint">第一个输入是「你想学什么」，例如：用三周入门 Rust 并写出一个命令行小工具</p>
+        </div>
+      </section>
+
+      <!-- 阶段 B：研究 -->
+      <section class="stage" id="stage-research" hidden>
+        <p class="eyebrow">Stage B · Research</p>
+        <h2>正在主动研究</h2>
+        <p class="muted" id="research-status"><span class="spinner"></span>正在生成检索式并查询资料…</p>
+        <div class="spec-card" id="spec-card" hidden></div>
+        <div class="panel-card" id="research-card" hidden>
+          <p class="eyebrow">检索式</p>
+          <div class="chips" id="query-chips"></div>
+          <p class="eyebrow">参考来源</p>
+          <div id="source-list"></div>
+          <hr class="rule" style="height:1px;background:var(--rule);border:0;margin:18px 0">
+          <p class="eyebrow">研究简报</p>
+          <div class="brief" id="brief-text"></div>
+        </div>
+      </section>
+
+      <!-- 阶段 C：学习 -->
+      <section class="stage" id="stage-learning" hidden>
+        <p class="eyebrow">Stage C · Learning Path</p>
+        <h2 id="plan-title">学习路径</h2>
+        <p class="muted" id="plan-summary"></p>
+        <div class="graph-wrap" id="graph-wrap">
+          <svg class="graph-svg" id="graph-svg"></svg>
+          <div class="layer" id="graph-layer"></div>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--accent)"></i>可学习</span>
+          <span><i style="background:var(--ok)"></i>已完成</span>
+          <span><i style="background:var(--lock)"></i>锁定（前置未完成）</span>
+          <span><i style="background:#b23a48"></i>自测未通过</span>
+        </div>
+      </section>
+    </main>
+
+    <aside class="panel" id="node-panel">
+      <div class="panel-head">
+        <p class="pid" id="panel-id">NODE DETAIL</p>
+        <h3 id="panel-title">节点详情</h3>
+        <p class="pess" id="panel-ess">点击左侧任意节点，查看学习材料与自测。</p>
+      </div>
+      <div class="panel-body" id="panel-body">
+        <p class="tip">路径图生成后，点击一个「可学习」的节点开始。锁定节点需要先完成它的前置节点。</p>
+      </div>
+      <div class="panel-foot" id="panel-foot" hidden></div>
+    </aside>
+  </div>
+  <footer>学习路径 · 后端 <span id="backend-label">—</span> · 状态保存在本机 localStorage，刷新可恢复</footer>
+</div>
+
+<script src="./katex/katex.min.js"></script>
+<script src="./katex/contrib/auto-render.min.js"></script>
+<script>
+/* 页面内联脚本（由生成器注入） */
+/* 学习路径 · 前端逻辑
+ * 三阶段状态机：intake → research → learning
+ * 后端契约：/path/intake /path/research /path/plan /path/node /path/quiz
+ * 依赖：无（纯原生 JS，无 CDN）
+ */
+(function () {
+  'use strict';
+
+  var API = 'http://192.168.33.146:8096';
+  var TIMEOUT = 180000;               // 单次调用最长 180s（后端推理可能 30~90s）
+  var STORE_PREFIX = 'learn-path-v1-';
+  var LAST_KEY = 'learn-path-v1-last'; // 指向最近一次会话的 slug
+
+  var state = {
+    stage: 'intake',                  // intake | research | learning
+    topic: '',
+    history: [],                      // [{role:'assistant'|'user', content}]
+    spec: null,
+    queries: [],
+    sources: [],
+    brief: '',
+    plan: null,
+    nodeDetail: {},                   // {id: NodeDetail}
+    nodeState: {}                     // {id: {completed, score}}
+  };
+  var selectedId = null;
+  var busy = false;
+  var retryFn = null;
+
+  // ---------- 小工具 ----------
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  function slug(s) {
+    return String(s || 'untitled').toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'untitled';
+  }
+  // KaTeX：把 $...$ / $$...$$ 渲染成公式（失败不影响正文）
+  function renderMathIn(el) {
+    if (!el || typeof window.renderMathInElement !== 'function') return;
+    try {
+      window.renderMathInElement(el, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '\\(', right: '\\)', display: false },
+          { left: '$', right: '$', display: false }
+        ],
+        throwOnError: false,
+        ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option']
+      });
+    } catch (e) { /* 渲染失败保留原始文本 */ }
+  }
+  function storeKey() { return STORE_PREFIX + slug(state.topic); }
+  function domain(u) { try { return new URL(u).hostname; } catch (e) { return u; } }
+
+  // ---------- 持久化 ----------
+  function save() {
+    try {
+      var payload = {
+        stage: state.stage, topic: state.topic, history: state.history,
+        spec: state.spec, queries: state.queries, sources: state.sources,
+        brief: state.brief, plan: state.plan,
+        nodeDetail: state.nodeDetail, nodeState: state.nodeState
+      };
+      localStorage.setItem(storeKey(), JSON.stringify(payload));
+      localStorage.setItem(LAST_KEY, slug(state.topic));
+    } catch (e) { console.warn('save failed', e); }
+  }
+  function clearSave() {
+    try { localStorage.removeItem(storeKey()); localStorage.removeItem(LAST_KEY); } catch (e) {}
+  }
+  function loadSave() {
+    try {
+      var s = localStorage.getItem(LAST_KEY);
+      if (!s) return false;
+      var raw = localStorage.getItem(STORE_PREFIX + s);
+      if (!raw) return false;
+      var d = JSON.parse(raw);
+      if (!d || !d.topic) return false;
+      state.stage = d.stage || 'intake';
+      state.topic = d.topic || '';
+      state.history = d.history || [];
+      state.spec = d.spec || null;
+      state.queries = d.queries || [];
+      state.sources = d.sources || [];
+      state.brief = d.brief || '';
+      state.plan = d.plan || null;
+      state.nodeDetail = d.nodeDetail || {};
+      state.nodeState = d.nodeState || {};
+      // 状态自洽性：learning 必须有 plan
+      if (state.stage === 'learning' && !state.plan) state.stage = 'research';
+      if (state.stage === 'research' && !state.spec) state.stage = 'intake';
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // ---------- 网络 ----------
+  function post(path, body) {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
+    return fetch(API + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal
+    }).then(function (r) {
+      clearTimeout(timer);
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j;
+      });
+    }, function (e) {
+      clearTimeout(timer);
+      throw new Error(e && e.name === 'AbortError' ? '请求超时（180s）' : '网络错误：' + (e && e.message || e));
+    });
+  }
+
+  function showError(msg, retry) {
+    retryFn = retry || null;
+    $('errtext').textContent = msg;
+    $('errretry').hidden = !retry;
+    $('errbar').hidden = false;
+  }
+  function hideError() { $('errbar').hidden = true; retryFn = null; }
+
+  // ---------- 阶段/进度 ----------
+  var STAGE_LABEL = { intake: '阶段 A · 需求采集', research: '阶段 B · 主动研究', learning: '阶段 C · 学习路径' };
+  function setStage(s) {
+    state.stage = s;
+    viewStage(s);
+    save();
+  }
+  // 阶段导航：只切视图，不改 state.stage（数据齐的阶段可随时回看）
+  function viewStage(s) {
+    $('stage-intake').hidden = s !== 'intake';
+    $('stage-research').hidden = s !== 'research';
+    $('stage-learning').hidden = s !== 'learning';
+    var tabs = document.querySelectorAll('.stab');
+    for (var i = 0; i < tabs.length; i++) {
+      var k = tabs[i].dataset.stage;
+      tabs[i].classList.toggle('on', k === s);
+      tabs[i].disabled = (k === 'research' && !state.spec) || (k === 'learning' && !state.plan);
+    }
+  }
+  function bindStageNav() {
+    var tabs = document.querySelectorAll('.stab');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener('click', function () {
+        if (this.disabled) return;
+        viewStage(this.dataset.stage);
+      });
+    }
+  }
+  function renderProgress() {
+    var nodes = (state.plan && state.plan.nodes) || [];
+    var done = nodes.filter(function (n) { return isDone(n.id); }).length;
+    $('progress-text').textContent = '已完成 ' + done + '/' + nodes.length;
+    $('progress-fill').style.width = nodes.length ? (done / nodes.length * 100) + '%' : '0%';
+  }
+
+  // ---------- 图状态 ----------
+  function nodeById(id) {
+    if (!state.plan) return null;
+    for (var i = 0; i < state.plan.nodes.length; i++) if (state.plan.nodes[i].id === id) return state.plan.nodes[i];
+    return null;
+  }
+  function depsOf(id) {
+    var n = nodeById(id);
+    return (n && n.deps) || [];
+  }
+  function isDone(id) { return !!(state.nodeState[id] && state.nodeState[id].completed); }
+  function isUnlocked(id) {
+    return depsOf(id).every(function (d) { return isDone(d); });
+  }
+  function depTitles(id) {
+    return depsOf(id).map(function (d) { var n = nodeById(d); return n ? n.title : d; });
+  }
+
+  // ---------- 阶段 A：采集对话 ----------
+  function appendBubble(role, text) {
+    var log = $('chat-log');
+    var d = document.createElement('div');
+    d.className = 'bubble ' + (role === 'user' ? 'me' : 'ai');
+    d.innerHTML = '<span class="who">' + (role === 'user' ? '你' : 'AI') + '</span>' + esc(text);
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+  function renderChat() {
+    var log = $('chat-log');
+    log.innerHTML = '';
+    if (state.topic) appendBubble('user', state.topic);
+    state.history.forEach(function (m) { appendBubble(m.role, m.content); });
+    if (!state.topic) {
+      appendBubble('assistant', '你好，我是你的学习规划助手。先说说你想学什么？例如「三周入门 Rust」「系统学会 Blender 建模」。');
+    }
+  }
+  function setChatDisabled(off) {
+    $('chat-input').disabled = off;
+    $('chat-send').disabled = off;
+  }
+
+  function sendMessage() {
+    if (busy) return;
+    var el = $('chat-input');
+    var text = (el.value || '').trim();
+    if (!text) return;
+    el.value = '';
+    hideError();
+    if (!state.topic) {
+      // 首次输入：作为学习主题
+      state.topic = text;
+      appendBubble('user', text);
+      save();
+    } else {
+      state.history.push({ role: 'user', content: text });
+      appendBubble('user', text);
+      save();
+    }
+    callIntake();
+  }
+
+  function callIntake() {
+    busy = true; setChatDisabled(true);
+    var log = $('chat-log');
+    var thinking = document.createElement('div');
+    thinking.className = 'bubble ai';
+    thinking.innerHTML = '<span class="who">AI</span><span class="spinner"></span>思考中…';
+    log.appendChild(thinking); log.scrollTop = log.scrollHeight;
+
+    post('/path/intake', { topic: state.topic, history: state.history })
+      .then(function (r) {
+        thinking.remove();
+        busy = false; setChatDisabled(false);
+        if (r.done && r.spec) {
+          state.spec = r.spec; save();
+          renderSpecCard();
+          setStage('research');
+          startResearch();
+        } else {
+          state.history.push({ role: 'assistant', content: r.question || '请再具体说说你的学习目标？' });
+          appendBubble('assistant', r.question || '请再具体说说你的学习目标？');
+          save();
+        }
+      })
+      .catch(function (e) {
+        thinking.remove();
+        busy = false; setChatDisabled(false);
+        showError('采集失败：' + e.message, callIntake);
+      });
+  }
+
+  function renderSpecCard() {
+    var sp = state.spec || {};
+    var card = $('spec-card');
+    function row(k, v) {
+      return '<div><div class="k">' + esc(k) + '</div><div class="v">' + esc(v || '—') + '</div></div>';
+    }
+    card.innerHTML = '<h3>需求单（Spec）</h3><div class="spec-grid">' +
+      row('主题', sp.topic) + row('目标', sp.goal) + row('现有基础', sp.level) +
+      row('期望深度', sp.depth) + row('可投入时间', sp.budget) +
+      row('偏好形式', (sp.preferences || []).join('、')) +
+      row('约束', sp.constraints) + row('大纲线索', (sp.outline_hint || []).join('；')) +
+      '</div>';
+    card.hidden = false;
+  }
+
+  // ---------- 阶段 B：研究 ----------
+  function startResearch() {
+    $('research-card').hidden = true;
+    $('research-status').hidden = false;
+    $('research-status').innerHTML = '<span class="spinner"></span>正在生成检索式并查询资料…';
+    hideError();
+    post('/path/research', { spec: state.spec })
+      .then(function (r) {
+        state.queries = r.queries || [];
+        state.sources = r.sources || [];
+        state.brief = r.brief || '';
+        save();
+        renderResearch();
+        $('research-status').innerHTML = '<span class="spinner"></span>研究完成，正在生成学习路径…';
+        return post('/path/plan', { spec: state.spec, brief: state.brief });
+      })
+      .then(function (plan) {
+        if (!plan || !plan.nodes || plan.nodes.length < 6) throw new Error('路径节点不足 6 个，请重试');
+        normalizePlan(plan);
+        state.plan = plan;
+        save();
+        $('research-status').hidden = true;
+        setStage('learning');
+        renderPlan();
+      })
+      .catch(function (e) {
+        $('research-status').innerHTML = '研究/规划失败：' + esc(e.message);
+        showError('研究与规划失败：' + e.message, function () {
+          $('research-status').hidden = false;
+          startResearch();
+        });
+      });
+  }
+
+  // 补齐 edges、确保 id 连续、deps 只引用更小序号
+  function normalizePlan(plan) {
+    plan.nodes.forEach(function (n, i) { if (!n.id) n.id = 'n' + (i + 1); });
+    var order = {};
+    plan.nodes.forEach(function (n, i) { order[n.id] = i; });
+    plan.nodes.forEach(function (n) {
+      n.deps = (n.deps || []).filter(function (d) { return order[d] != null && order[d] < order[n.id]; });
+      n.objectives = n.objectives || [];
+    });
+    var edges = [];
+    plan.nodes.forEach(function (n) {
+      n.deps.forEach(function (d) { edges.push([d, n.id]); });
+    });
+    plan.edges = edges;
+    plan.title = plan.title || '学习路径';
+    plan.summary = plan.summary || '';
+  }
+
+  function renderResearch() {
+    var chips = state.queries.map(function (q) { return '<span class="chip">' + esc(q) + '</span>'; }).join('');
+    $('query-chips').innerHTML = chips || '<span class="empty-note">无检索式</span>';
+    var srcs = state.sources.map(function (s, i) {
+      return '<div class="src"><span class="no">[' + (i + 1) + ']</span><div>' +
+        '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">' + esc(s.title || s.url) + '</a>' +
+        ' <span class="dom">' + esc(domain(s.url)) + '</span>' +
+        (s.snippet ? '<span class="snip">' + esc(s.snippet) + '</span>' : '') +
+        '</div></div>';
+    }).join('');
+    $('source-list').innerHTML = srcs || '<p class="empty-note">没有检索到来源（仍会基于模型知识生成路径）。</p>';
+    $('brief-text').textContent = state.brief || '（无简报）';
+    renderMathIn($('brief-text'));
+    $('research-card').hidden = false;
+  }
+
+  // ---------- 阶段 C：路径图 ----------
+  function renderPlan() {
+    var plan = state.plan;
+    $('plan-title').textContent = plan.title || '学习路径';
+    $('plan-summary').textContent = plan.summary || '';
+    // 分层：level = 前置最大层级 + 1
+    var level = {};
+    plan.nodes.forEach(function (n) {
+      var mx = -1;
+      n.deps.forEach(function (d) { if (level[d] != null && level[d] > mx) mx = level[d]; });
+      level[n.id] = mx + 1;
+    });
+    var maxLv = 0;
+    plan.nodes.forEach(function (n) { if (level[n.id] > maxLv) maxLv = level[n.id]; });
+    var layerEl = $('graph-layer');
+    layerEl.innerHTML = '';
+    for (var lv = 0; lv <= maxLv; lv++) {
+      var div = document.createElement('div');
+      div.className = 'layer';
+      plan.nodes.forEach(function (n, i) {
+        if (level[n.id] !== lv) return;
+        div.appendChild(nodeCard(n, i + 1));
+      });
+      layerEl.appendChild(div);
+    }
+    renderProgress();
+    requestAnimationFrame(drawEdges);
+  }
+
+  function nodeCard(n, no) {
+    var done = isDone(n.id);
+    var unlocked = isUnlocked(n.id);
+    var st = state.nodeState[n.id] || {};
+    var cls, label;
+    if (done) { cls = 'done'; label = '✅ 已完成'; }
+    else if (!unlocked) { cls = 'locked'; label = '🔒 锁定'; }
+    else if (typeof st.score === 'number' && st.score < 60) { cls = 'failed'; label = '❌ 自测未过'; }
+    else { cls = 'unlocked'; label = '可学习'; }
+    var el = document.createElement('article');
+    el.className = 'node ' + cls;
+    el.id = 'node-' + n.id;
+    el.dataset.id = n.id;
+    el.innerHTML = '<div class="node-head">' +
+      '<span class="node-no">' + esc(n.id) + '</span>' +
+      '<h3 class="node-title">' + esc(n.title) + '</h3>' +
+      '<span class="status ' + cls + '">' + label + '</span></div>' +
+      '<p class="node-ess">' + esc(n.essence || '') + '</p>';
+    el.addEventListener('click', function () { selectNode(n.id); });
+    return el;
+  }
+
+  function drawEdges() {
+    var wrap = $('graph-wrap'), svg = $('graph-svg');
+    if (!state.plan || !wrap || !svg) return;
+    var wr = wrap.getBoundingClientRect();
+    svg.setAttribute('width', wrap.clientWidth);
+    svg.setAttribute('height', wrap.clientHeight);
+    var parts = [];
+    (state.plan.edges || []).forEach(function (e) {
+      var a = document.getElementById('node-' + e[0]);
+      var b = document.getElementById('node-' + e[1]);
+      if (!a || !b) return;
+      var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      var x1 = ra.left - wr.left + ra.width / 2, y1 = ra.bottom - wr.top;
+      var x2 = rb.left - wr.left + rb.width / 2, y2 = rb.top - wr.top;
+      var my = (y1 + y2) / 2;
+      var d = 'M' + x1 + ',' + y1 + ' C' + x1 + ',' + my + ' ' + x2 + ',' + my + ' ' + x2 + ',' + y2;
+      var ok = isDone(e[0]);
+      parts.push('<path d="' + d + '" fill="none" stroke="' + (ok ? '#2f7d5d' : '#c9ced8') +
+        '" stroke-width="2"' + (ok ? '' : ' stroke-dasharray="5 4"') + '/>');
+    });
+    svg.innerHTML = parts.join('');
+  }
+
+  // ---------- 右面板：节点详情 ----------
+  function panelHead(id, title, ess, sub) {
+    $('panel-id').textContent = sub || id;
+    $('panel-title').textContent = title;
+    $('panel-ess').textContent = ess || '';
+  }
+  function setFoot(html) {
+    var f = $('panel-foot');
+    if (html) { f.innerHTML = html; f.hidden = false; } else { f.innerHTML = ''; f.hidden = true; }
+  }
+
+  function selectNode(id) {
+    selectedId = id;
+    var n = nodeById(id);
+    if (!n) return;
+    hideError();
+    // 门控：锁定节点不发 /path/node
+    if (!isUnlocked(id) && !isDone(id)) {
+      panelHead(id, n.title, n.essence, 'NODE ' + id + ' · 锁定');
+      var pre = depTitles(id);
+      $('panel-body').innerHTML = '<div class="panel-sec"><h4>先完成以下前置节点</h4><ul>' +
+        pre.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
+        '<p class="tip">完成全部前置节点后，本节点会自动解锁。</p>';
+      setFoot('');
+      return;
+    }
+    if (state.nodeDetail[id]) { renderNodeDetail(id); return; }
+    panelHead(id, n.title, n.essence, 'NODE ' + id);
+    $('panel-body').innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
+    setFoot('');
+    post('/path/node', {
+      spec: state.spec,
+      node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
+      dep_titles: depTitles(id)
+    }).then(function (detail) {
+      state.nodeDetail[id] = detail; save();
+      if (selectedId === id) renderNodeDetail(id);
+    }).catch(function (e) {
+      if (selectedId !== id) return;
+      $('panel-body').innerHTML = '<p class="tip">生成失败：' + esc(e.message) + '</p>';
+      setFoot('<button class="btn primary" id="reload-node" type="button">重试生成</button>');
+      $('reload-node').addEventListener('click', function () {
+        delete state.nodeDetail[id]; save(); selectNode(id);
+      });
+      showError('学习材料生成失败：' + e.message, function () {
+        delete state.nodeDetail[id]; save(); selectNode(id);
+      });
+    });
+  }
+
+  // 简单 markdown：## 小标题 + 空行分段；$...$ 保持原样文本
+  function renderNotes(s) {
+    var lines = String(s || '').split('\n');
+    var out = [];
+    lines.forEach(function (ln) {
+      var t = ln.trim();
+      if (/^#{2,3}\s+/.test(t)) out.push('<h5>' + esc(t.replace(/^#{2,3}\s+/, '')) + '</h5>');
+      else if (/^\s*[-*]\s+/.test(ln)) out.push('<div style="padding-left:14px">· ' + esc(t.replace(/^\s*[-*]\s+/, '')) + '</div>');
+      else if (t === '') out.push('<div style="height:8px"></div>');
+      else out.push('<div>' + esc(ln) + '</div>');
+    });
+    return out.join('');
+  }
+  function listSection(title, arr) {
+    if (!arr || !arr.length) return '';
+    return '<div class="panel-sec"><h4>' + esc(title) + '</h4><ul>' +
+      arr.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+  }
+
+  function omLink(n) {
+    var prompt = n.title + '。学习目标：' + (n.objectives || []).join('；') + '。本质：' + (n.essence || '');
+    return 'http://192.168.33.110:8094/workbench/new?prompt=' + encodeURIComponent(prompt);
+  }
+
+  function renderNodeDetail(id) {
+    var n = nodeById(id), d = state.nodeDetail[id];
+    if (!n || !d) return;
+    panelHead(id, n.title, n.essence, 'NODE ' + id + (isDone(id) ? ' · 已完成' : ''));
+    var qs = ((d.quiz && d.quiz.questions) || []);
+    var quizHtml = qs.map(function (q, i) {
+      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + esc(q.q) + '</p>' +
+        '<textarea id="ans-' + i + '" placeholder="写下你的答案…"></textarea></div>';
+    }).join('');
+    var prev = state.nodeState[id] || {};
+    var prevResult = '';
+    if (typeof prev.score === 'number') {
+      prevResult = '<div class="result ' + (prev.completed ? 'ok' : 'bad') + '">' +
+        '<span class="score ' + (prev.completed ? 'ok' : 'bad') + '">' + prev.score + '</span> 分' +
+        (prev.completed ? ' · 已通过' : ' · 上次未通过') + '</div>';
+    }
+    $('panel-body').innerHTML =
+      '<div class="panel-sec"><h4>学习正文</h4><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
+      listSection('要点', d.key_points) +
+      listSection('例子', d.examples) +
+      listSection('易错点', d.misconceptions) +
+      (qs.length ? '<div class="panel-sec"><h4>自测（' + qs.length + ' 题）</h4>' + quizHtml + '</div>' : '') +
+      prevResult;
+    renderMathIn($('panel-body'));
+
+    var foot = '';
+    if (qs.length && !isDone(id)) foot += '<button class="btn primary" id="submit-quiz" type="button">提交自测</button>';
+    if (isDone(id)) foot += '<span class="tip">✅ 已完成</span>';
+    foot += '<a class="om-link" target="_blank" rel="noopener" href="' + esc(omLink(n)) + '">用 OpenMAIC 生成这节课 →</a>';
+    setFoot(foot);
+    if ($('submit-quiz')) $('submit-quiz').addEventListener('click', function () { submitQuiz(id); });
+  }
+
+  function submitQuiz(id) {
+    var n = nodeById(id), d = state.nodeDetail[id];
+    var qs = ((d.quiz && d.quiz.questions) || []);
+    var answers = qs.map(function (q, i) {
+      var el = $('ans-' + i);
+      return el ? (el.value || '').trim() : '';
+    });
+    if (answers.every(function (a) { return !a; })) { alert('请至少回答一题再提交。'); return; }
+    var btn = $('submit-quiz');
+    btn.disabled = true; btn.textContent = '判分中…';
+    hideError();
+    post('/path/quiz', {
+      node: { title: n.title, essence: n.essence, objectives: n.objectives || [] },
+      questions: qs.map(function (q) { return { q: q.q, answer: q.answer }; }),
+      answers: answers
+    }).then(function (res) {
+      var st = state.nodeState[id] || {};
+      st.score = res.score;
+      // pass=true 不自动完成，等用户点「完成本节点并解锁下一节点」
+      state.nodeState[id] = st;
+      save();
+      showQuizResult(id, res);
+      renderPlan();
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = '提交自测';
+      showError('判分失败：' + e.message, function () { submitQuiz(id); });
+    });
+  }
+
+  function showQuizResult(id, res) {
+    var d = state.nodeDetail[id];
+    var qs = ((d.quiz && d.quiz.questions) || []);
+    var per = res.per_question || [];
+    var detail = qs.map(function (q, i) {
+      var p = per[i] || {};
+      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + esc(q.q) + '</p>' +
+        '<div class="result ' + (p.ok ? 'ok' : 'bad') + '">' +
+        '<strong>' + (p.ok ? '✓ 正确' : '✗ 有缺漏') + '</strong> ' + esc(p.comment || '') + '</div></div>';
+    }).join('');
+    var cls = res.pass ? 'ok' : 'bad';
+    $('panel-body').innerHTML =
+      '<div class="panel-sec"><h4>自测结果</h4>' +
+      '<div class="result ' + cls + '"><span class="score ' + cls + '">' + esc(res.score) + '</span> 分 — ' +
+      (res.pass ? '通过 ✅' : '未通过 ❌') + '</div>' +
+      (res.feedback ? '<p style="font-size:13.5px;margin-top:10px">' + esc(res.feedback) + '</p>' : '') +
+      '<div style="height:10px"></div>' + detail + '</div>';
+    renderMathIn($('panel-body'));
+    var foot = '';
+    if (res.pass && !isDone(id)) {
+      foot += '<button class="btn primary" id="complete-node" type="button">完成本节点并解锁下一节点</button>';
+    } else if (res.pass && isDone(id)) {
+      foot += '<span class="tip">✅ 已完成</span>';
+    } else {
+      foot += '<button class="btn primary" id="redo-quiz" type="button">再想想，可重做</button>';
+    }
+    foot += '<a class="om-link" target="_blank" rel="noopener" href="' + esc(omLink(nodeById(id))) + '">用 OpenMAIC 生成这节课 →</a>';
+    setFoot(foot);
+    if ($('complete-node')) $('complete-node').addEventListener('click', function () { completeNode(id); });
+    if ($('redo-quiz')) $('redo-quiz').addEventListener('click', function () { renderNodeDetail(id); });
+  }
+
+  function completeNode(id) {
+    var st = state.nodeState[id] || {};
+    st.completed = true;
+    state.nodeState[id] = st;
+    save();
+    renderPlan();
+    renderNodeDetail(id);
+  }
+
+  // ---------- 重新开始 ----------
+  function restart() {
+    if (!confirm('确定要清空当前学习路径并重新开始吗？')) return;
+    clearSave();
+    state = {
+      stage: 'intake', topic: '', history: [], spec: null, queries: [], sources: [],
+      brief: '', plan: null, nodeDetail: {}, nodeState: {}
+    };
+    selectedId = null; busy = false;
+    hideError();
+    $('chat-log').innerHTML = '';
+    $('spec-card').hidden = true;
+    $('research-card').hidden = true;
+    $('panel-body').innerHTML = '<p class="tip">路径图生成后，点击一个「可学习」的节点开始。锁定节点需要先完成它的前置节点。</p>';
+    panelHead('NODE DETAIL', '节点详情', '点击左侧任意节点，查看学习材料与自测。');
+    setFoot('');
+    setStage('intake');
+    renderChat();
+    renderProgress();
+    setChatDisabled(false);
+  }
+
+  // ---------- 初始化 ----------
+  function init() {
+    $('chat-send').addEventListener('click', sendMessage);
+    $('chat-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
+    $('restart-btn').addEventListener('click', restart);
+    bindStageNav();
+    $('errretry').addEventListener('click', function () { var f = retryFn; hideError(); if (f) f(); });
+    window.addEventListener('resize', function () { if (state.plan) drawEdges(); });
+    $('backend-label').textContent = API;
+
+    var restored = loadSave();
+    if (restored) {
+      renderChat();
+      if (state.spec) renderSpecCard();
+      if (state.stage === 'learning' && state.plan) {
+        setStage('learning');
+        renderPlan();
+      } else if (state.stage === 'research') {
+        setStage('research');
+        renderResearch();
+        $('research-status').innerHTML = '上次研究已完成或中断，<button class="btn" id="resume-research" type="button">继续生成路径</button>';
+        var rb = $('resume-research');
+        if (rb) rb.addEventListener('click', function () { startResearch(); });
+      } else {
+        setStage('intake');
+      }
+    } else {
+      setStage('intake');
+      renderChat();
+    }
+    renderProgress();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+</body>
+</html>
