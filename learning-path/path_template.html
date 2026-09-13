@@ -137,6 +137,22 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .tip{color:var(--soft);font-size:12.5px}
 
 footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule);padding:14px 32px 0;font-family:var(--mono);font-size:11px;color:var(--soft)}
+
+/* ---- 学习资料库（动态扫描入口） ---- */
+.lib-wrap{position:relative;display:inline-block}
+.lib-pop{position:absolute;right:0;top:calc(100% + 8px);min-width:360px;max-width:470px;background:#fff;border:1px solid var(--rule);border-radius:8px;box-shadow:0 14px 34px -18px rgba(45,49,66,.5);padding:12px 14px;z-index:40;text-align:left}
+.lib-pop[hidden]{display:none}
+.lib-h{margin:0 0 6px;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);display:flex;justify-content:space-between;gap:10px}
+.lib-h i{font-style:normal;letter-spacing:0;text-transform:none;color:var(--soft)}
+.lib-item{display:flex;flex-direction:column;gap:2px;padding:8px 9px;border-radius:6px;text-decoration:none;color:var(--ink);margin:2px 0}
+.lib-item:hover{background:var(--accent-tint)}
+.lib-item .t{font-size:13.5px;font-weight:600}
+.lib-item .m{font-family:var(--mono);font-size:11px;color:var(--soft)}
+.lib-empty{color:var(--soft);font-size:13px;margin:6px 9px}
+.lib-foot{margin-top:8px;border-top:1px solid var(--rule);padding-top:8px;display:flex;flex-direction:column;gap:6px}
+.lib-foot a{font-size:12.5px;color:var(--accent);text-decoration:none}
+.lib-foot a:hover{text-decoration:underline}
+.lib-count{font-family:var(--mono);font-size:10.5px;color:var(--soft)}
 </style>
 <link rel="stylesheet" href="./katex/katex.min.css">
 </head>
@@ -156,6 +172,10 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     <div class="progress">
       <div class="pbar"><span class="pfill" id="progress-fill"></span></div>
       <span class="ptext" id="progress-text">已完成 0/0</span>
+    </div>
+    <div class="lib-wrap" id="lib-wrap">
+      <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>
+      <div class="lib-pop" id="lib-pop" hidden></div>
     </div>
     <button class="btn" id="restart-btn" type="button">重新开始</button>
   </div>

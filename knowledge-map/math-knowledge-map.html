@@ -160,6 +160,22 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
 .ai-summary div{padding-top:8px;font-size:12.5px;color:var(--muted);line-height:1.7}
 .ai-compressing{font-family:var(--mono);font-size:11px;color:var(--accent);padding:8px 10px;border:1px dashed var(--accent);border-radius:8px;margin-bottom:12px}
 .ai-msg .ai-bubble img{max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--rule)}
+
+/* ---- 学习资料库（动态扫描入口） ---- */
+.lib-wrap{position:relative;display:inline-block}
+.lib-pop{position:absolute;right:0;top:calc(100% + 8px);min-width:360px;max-width:470px;background:#fff;border:1px solid var(--rule);border-radius:8px;box-shadow:0 14px 34px -18px rgba(45,49,66,.5);padding:12px 14px;z-index:40;text-align:left}
+.lib-pop[hidden]{display:none}
+.lib-h{margin:0 0 6px;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);display:flex;justify-content:space-between;gap:10px}
+.lib-h i{font-style:normal;letter-spacing:0;text-transform:none;color:var(--soft)}
+.lib-item{display:flex;flex-direction:column;gap:2px;padding:8px 9px;border-radius:6px;text-decoration:none;color:var(--ink);margin:2px 0}
+.lib-item:hover{background:var(--accent-tint)}
+.lib-item .t{font-size:13.5px;font-weight:600}
+.lib-item .m{font-family:var(--mono);font-size:11px;color:var(--soft)}
+.lib-empty{color:var(--soft);font-size:13px;margin:6px 9px}
+.lib-foot{margin-top:8px;border-top:1px solid var(--rule);padding-top:8px;display:flex;flex-direction:column;gap:6px}
+.lib-foot a{font-size:12.5px;color:var(--accent);text-decoration:none}
+.lib-foot a:hover{text-decoration:underline}
+.lib-count{font-family:var(--mono);font-size:10.5px;color:var(--soft)}
 </style>
 </head>
 <body>
@@ -171,6 +187,10 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
     <button class="btn" id="btn-all">显示全部</button>
     <button class="btn" id="btn-expand">展开所有自测</button>
     <button class="btn" id="btn-reset">重置进度</button>
+    <div class="lib-wrap" id="lib-wrap">
+      <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>
+      <div class="lib-pop" id="lib-pop" hidden></div>
+    </div>
     <span class="stat" id="stat"></span>
   </div>
 </div></div>
@@ -789,6 +809,84 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
   });
 
   setTopicOff();
+})();
+</script>
+<script>
+/* 学习资料库 · 动态扫描（同源 localStorage 中已生成的学习路径/学习资料） */
+(function () {
+  'use strict';
+  var PREFIX = 'learn-path-v1-', LAST = 'learn-path-v1-last';
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function stageLabel(s) {
+    return ({ intake: '阶段 A · 需求采集', research: '阶段 B · 主动研究', learning: '阶段 C · 学习路径' })[s] || s || '';
+  }
+  function scan() {
+    var out = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (!k || k.indexOf(PREFIX) !== 0 || k === LAST) continue;
+        var d = null;
+        try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
+        var it = { slug: k.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
+        if (d && typeof d === 'object') {
+          it.topic = d.topic || it.slug;
+          it.stage = d.stage || '';
+          if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
+          var ns = d.nodeState || {};
+          for (var id in ns) { if (ns[id] && ns[id].completed) it.done++; }
+        } else { it.topic = it.slug; }
+        out.push(it);
+      }
+    } catch (e) {}
+    out.sort(function (a, b) {
+      var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
+      return pa - pb || b.done - a.done;
+    });
+    return out;
+  }
+  function render() {
+    var pop = $('lib-pop');
+    if (!pop) return;
+    var items = scan();
+    var cnt = $('lib-count');
+    if (cnt) cnt.textContent = items.length ? ' (' + items.length + ')' : '';
+    var h = '<p class="lib-h"><span>已生成的学习资料</span><i>动态扫描 · 本机</i></p>';
+    if (!items.length) {
+      h += '<p class="lib-empty">还没扫描到学习资料——先让 AI 生成一个吧。</p>';
+    } else {
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i], meta = stageLabel(it.stage);
+        if (it.stage === 'learning') meta = it.total ? (it.done + '/' + it.total + ' 节点完成') : '路径已生成';
+        h += '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
+             '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>';
+      }
+    }
+    h += '<div class="lib-foot">' +
+         '<a href="learning-path.html?new=1">＋ 生成新的学习路径（进入生成器）</a>' +
+         '</div>';
+    pop.innerHTML = h;
+  }
+  function bind() {
+    var btn = $('lib-btn'), pop = $('lib-pop'), wrap = $('lib-wrap');
+    if (!btn || !pop) return;
+    var cnt = $('lib-count');
+    if (cnt) { var n = scan().length; cnt.textContent = n ? ' (' + n + ')' : ''; }
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (pop.hidden) { render(); pop.hidden = false; } else { pop.hidden = true; }
+    });
+    document.addEventListener('click', function (e) {
+      if (!pop.hidden && wrap && !wrap.contains(e.target)) pop.hidden = true;
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') pop.hidden = true; });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
 })();
 </script>
 </body>

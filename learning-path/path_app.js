@@ -74,7 +74,11 @@
   }
   function loadSave() {
     try {
-      var s = localStorage.getItem(LAST_KEY);
+      // 支持 ?t=<slug> 深链（从「学习资料库」直接打开某份资料）；无参则恢复最近一次
+      var s = null;
+      try { s = new URLSearchParams(location.search).get('t'); } catch (e2) { s = null; }
+      if (s && !localStorage.getItem(STORE_PREFIX + s)) s = null;   // 指定的资料不存在则回退
+      if (!s) s = localStorage.getItem(LAST_KEY);
       if (!s) return false;
       var raw = localStorage.getItem(STORE_PREFIX + s);
       if (!raw) return false;
@@ -93,6 +97,7 @@
       // 状态自洽性：learning 必须有 plan
       if (state.stage === 'learning' && !state.plan) state.stage = 'research';
       if (state.stage === 'research' && !state.spec) state.stage = 'intake';
+      try { localStorage.setItem(LAST_KEY, s); } catch (e) {}
       return true;
     } catch (e) { return false; }
   }
@@ -608,6 +613,70 @@
     setChatDisabled(false);
   }
 
+  // ---------- 学习资料库（动态扫描 localStorage） ----------
+  function scanMaterials() {
+    var out = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (!k || k.indexOf(STORE_PREFIX) !== 0 || k === LAST_KEY) continue;
+        var d = null;
+        try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
+        var it = { slug: k.slice(STORE_PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
+        if (d && typeof d === 'object') {
+          it.topic = d.topic || it.slug;
+          it.stage = d.stage || '';
+          if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
+          var ns = d.nodeState || {};
+          for (var id in ns) { if (ns[id] && ns[id].completed) it.done++; }
+        } else { it.topic = it.slug; }
+        out.push(it);
+      }
+    } catch (e) {}
+    out.sort(function (a, b) {
+      var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
+      return pa - pb || b.done - a.done;
+    });
+    return out;
+  }
+  function libRender() {
+    var pop = $('lib-pop');
+    if (!pop) return;
+    var items = scanMaterials();
+    var cnt = $('lib-count');
+    if (cnt) cnt.textContent = items.length ? ' (' + items.length + ')' : '';
+    var h = '<p class="lib-h"><span>已生成的学习资料</span><i>动态扫描 · 本机</i></p>';
+    if (!items.length) {
+      h += '<p class="lib-empty">还没扫描到学习资料——在下方输入主题，生成第一个吧。</p>';
+    } else {
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i], meta = STAGE_LABEL[it.stage] || it.stage || '';
+        if (it.stage === 'learning') meta = it.total ? (it.done + '/' + it.total + ' 节点完成') : '路径已生成';
+        h += '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
+             '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>';
+      }
+    }
+    h += '<div class="lib-foot">' +
+         '<a href="learning-path.html?new=1">＋ 生成新的学习路径</a>' +
+         '<a href="junior-math-linalg.html">← 知识地图（初中数学 + 线代）</a>' +
+         '</div>';
+    pop.innerHTML = h;
+  }
+  function libBind() {
+    var btn = $('lib-btn'), pop = $('lib-pop'), wrap = $('lib-wrap');
+    if (!btn || !pop) return;
+    var cnt = $('lib-count');
+    if (cnt) { var n = scanMaterials().length; cnt.textContent = n ? ' (' + n + ')' : ''; }
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (pop.hidden) { libRender(); pop.hidden = false; } else { pop.hidden = true; }
+    });
+    document.addEventListener('click', function (e) {
+      if (!pop.hidden && wrap && !wrap.contains(e.target)) pop.hidden = true;
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') pop.hidden = true; });
+  }
+
   // ---------- 初始化 ----------
   function init() {
     $('chat-send').addEventListener('click', sendMessage);
@@ -617,8 +686,12 @@
     $('errretry').addEventListener('click', function () { var f = retryFn; hideError(); if (f) f(); });
     window.addEventListener('resize', function () { if (state.plan) drawEdges(); });
     $('backend-label').textContent = API;
+    libBind();
 
-    var restored = loadSave();
+    // ?new=1：强制新开（不恢复历史；已有资料仍保留在「学习资料库」里）
+    var fresh = false;
+    try { fresh = !!new URLSearchParams(location.search).get('new'); } catch (e) {}
+    var restored = fresh ? false : loadSave();
     if (restored) {
       renderChat();
       if (state.spec) renderSpecCard();
