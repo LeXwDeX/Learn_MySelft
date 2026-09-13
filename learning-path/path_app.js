@@ -644,10 +644,14 @@
     if (!pop) return;
     var items = scanMaterials();
     var cnt = $('lib-count');
-    if (cnt) cnt.textContent = items.length ? ' (' + items.length + ')' : '';
-    var h = '<p class="lib-h"><span>已生成的学习资料</span><i>动态扫描 · 本机</i></p>';
+    if (cnt) cnt.textContent = ' (' + (items.length + 1) + ')';
+    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 本机</i></p>';
+    h += '<p class="lib-sub">常驻资料</p>';
+    h += '<a class="lib-item" href="junior-math-linalg.html">' +
+         '<span class="t">知识地图 · 初中数学到线性代数</span><span class="m">内含命题定理 · 打开知识地图</span></a>';
+    h += '<p class="lib-sub">学习路径（动态扫描）</p>';
     if (!items.length) {
-      h += '<p class="lib-empty">还没扫描到学习资料——在下方输入主题，生成第一个吧。</p>';
+      h += '<p class="lib-empty">暂无生成的学习路径——去生成一个吧。</p>';
     } else {
       for (var i = 0; i < items.length; i++) {
         var it = items[i], meta = STAGE_LABEL[it.stage] || it.stage || '';
@@ -658,7 +662,6 @@
     }
     h += '<div class="lib-foot">' +
          '<a href="learning-path.html?new=1">＋ 生成新的学习路径</a>' +
-         '<a href="junior-math-linalg.html">← 知识地图（初中数学 + 线代）</a>' +
          '</div>';
     pop.innerHTML = h;
   }
@@ -666,7 +669,7 @@
     var btn = $('lib-btn'), pop = $('lib-pop'), wrap = $('lib-wrap');
     if (!btn || !pop) return;
     var cnt = $('lib-count');
-    if (cnt) { var n = scanMaterials().length; cnt.textContent = n ? ' (' + n + ')' : ''; }
+    if (cnt) { var n = scanMaterials().length; cnt.textContent = ' (' + (n + 1) + ')'; }
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (pop.hidden) { libRender(); pop.hidden = false; } else { pop.hidden = true; }
