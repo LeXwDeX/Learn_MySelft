@@ -29,11 +29,15 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   await Promise.all([save({'u0/test': 'first'}), save({'u0/test': 'second'})]);
   assert.deepEqual(calls.slice(-2), [{'u0/test': 'first'}, {'u0/test': 'second'}]);
   const recovered = environment({'learn-unsaved-v1/u0': JSON.stringify({'u0/test': 'recover me'})});
-  load(recovered, 'shared/saves.js'); await Promise.resolve();
+  load(recovered, 'shared/saves.js'); await recovered.LearnUser.ready;
   recovered.LearnUser.fetch = (url, options) => recovered.LearnSaves.send(options, async () => Response.json({ok: true}));
   assert.equal((await recovered.LearnUser.fetch('', {body: JSON.stringify({entries: {'u0/test': 'stale'}})})).status, 409);
   assert.equal(JSON.parse(recovered.storage.get('learn-unsaved-v1/u0'))['u0/test'], 'recover me');
   await recovered.LearnSaves.retry(); assert(recovered.reloaded); assert(!recovered.LearnSaves.pending());
+  const acknowledged = environment({'learn-unsaved-v1/u0': JSON.stringify({'u0/test': '{"a":1,"b":2}'})});
+  acknowledged.LearnUser.fetch = async () => Response.json({entries: {'u0/test': '{"b": 2, "a": 1}'}});
+  load(acknowledged, 'shared/saves.js'); await acknowledged.LearnUser.ready;
+  assert(!acknowledged.LearnSaves.pending()); assert(!acknowledged.notices.has('state-save'));
   const jobs = environment(); let submits = 0, polls = 0, requestId;
   jobs.LearnUser.fetch = async (url, options) => {
     if (options.method === 'POST') { submits++; requestId = JSON.parse(options.body).request_id; return Response.json({job: {id: 'j1', status: 'running', created_ms: Date.now(), operation: '/path/intake'}}); }

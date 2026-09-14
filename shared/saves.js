@@ -84,8 +84,20 @@
       if (!Object.keys(pending).length && window.LearnUI) window.LearnUI.clear('state-save');
     }
   };
-  context.ready.then(function () {
-    if (!context.user || context.readOnly) return;
+  function canonical(value) {
+    if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+    if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(function (key) {
+      return JSON.stringify(key) + ':' + canonical(value[key]);
+    }).join(',') + '}';
+    return JSON.stringify(value);
+  }
+  function sameValue(left, right) {
+    if (left === right) return true;
+    try { return canonical(JSON.parse(left)) === canonical(JSON.parse(right)); }
+    catch (error) { return false; }
+  }
+  context.ready = context.ready.then(async function () {
+    if (!context.user || context.readOnly) return context;
     storageKey = 'learn-unsaved-v1/' + context.userId;
     var saved = null;
     try { saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch (error) {}
@@ -93,9 +105,25 @@
       Object.keys(saved).forEach(function (key) {
         if (key.startsWith(context.userId + '/') && typeof saved[key] === 'string') pending[key] = saved[key];
       });
+      if (Object.keys(pending).length) {
+        // A page can disappear after the server commits but before its fetch
+        // promise handles the acknowledgement. Confirm before showing recovery.
+        var controller = new AbortController();
+        var timeout = setTimeout(function () { controller.abort(); }, 5000);
+        try {
+          var response = await context.fetch(context.apiBase + '/state/all', {cache: 'no-store', signal: controller.signal});
+          var data = await response.json();
+          if (response.ok && data.entries) Object.keys(pending).forEach(function (key) {
+            if (sameValue(pending[key], data.entries[key])) delete pending[key];
+          });
+        } catch (error) { /* Keep the local copy when confirmation is unavailable. */ }
+        finally { clearTimeout(timeout); }
+        persist();
+      }
       recovering = Object.keys(pending).length > 0;
       if (recovering) notice('发现上次未保存的内容，请重试同步后继续。', true);
     }
+    return context;
   });
   window.addEventListener('beforeunload', function (event) {
     if (Object.keys(pending).length) { event.preventDefault(); event.returnValue = ''; }

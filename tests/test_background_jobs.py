@@ -47,6 +47,17 @@ class QueueTests(unittest.TestCase):
         with self.assertRaises(JobError):
             queue.get(first['id'], 'someone-else')
 
+    def test_active_work_stays_visible_without_loading_large_results(self):
+        queue = JobQueue(self.store, lambda *args: (200, {}), limit=2)
+        active = queue.submit('u0', 'request-active', '/path/intake', {'key': 'u0/active'})
+        done = queue.submit('u0', 'request-done', '/path/intake', {'key': 'u0/done'})
+        with self.store.transaction() as connection:
+            connection.execute("UPDATE jobs SET status='succeeded',created_ms=created_ms+1000,result=? WHERE id=?",
+                               ('not-loaded-by-summary', done['id']))
+        rows = queue.list('u0')
+        self.assertEqual(rows[0]['id'], active['id'])
+        self.assertNotIn('result', rows[1])
+
     def test_restart_marks_unfinished_work_and_preserves_queued_work(self):
         queue = JobQueue(self.store, lambda *args: (200, {'answer': 'done'}), workers=1)
         interrupted = queue.submit('u0', 'request-first', '/path/intake', {'key': 'u0/one'})
