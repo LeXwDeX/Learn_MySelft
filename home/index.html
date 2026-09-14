@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>学习工具 · 固定入口</title>
+<script src="/state_sync.js?v=1"></script>
 <style>
 :root{
   --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
@@ -33,6 +34,23 @@ a.tool:hover{border-color:var(--soft);border-top-color:var(--accent)}
 .tool .path{font-family:var(--mono);font-size:11px;color:var(--soft);margin-bottom:14px;word-break:break-all}
 .tool .go{margin-top:auto;font-family:var(--mono);font-size:12.5px;color:var(--accent)}
 a.tool:hover .go{text-decoration:underline}
+
+/* ---- 学习资料库（动态扫描区块）---- */
+.libsec{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:22px 26px;margin-top:18px}
+.libsec-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.libsec h2{font-family:var(--serif);font-weight:400;font-size:22px;margin:0}
+.hint{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft)}
+.libn{font-family:var(--mono);font-size:11px;color:var(--soft);margin-left:auto}
+.librows{display:flex;flex-direction:column;gap:8px}
+a.lrow{display:flex;align-items:center;justify-content:space-between;gap:16px;background:#fff;border:1px solid var(--rule);border-radius:6px;padding:12px 16px;text-decoration:none;color:inherit}
+a.lrow:hover{border-color:var(--accent)}
+.lrow .lt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.lrow .t{font-size:14.5px;font-weight:600}
+.lrow .m{font-family:var(--mono);font-size:11px;color:var(--soft)}
+.lrow .go{font-family:var(--mono);font-size:12px;color:var(--accent);flex:none}
+a.lrow:hover .go{text-decoration:underline}
+.lempty{color:var(--soft);font-size:13.5px;margin:2px 0}
+
 .note{margin:18px 0 0;background:var(--paper2);border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:6px;padding:14px 18px;color:var(--muted);font-size:13.5px}
 .note b{color:var(--ink)}
 .note .k{font-family:var(--mono);font-size:12px;color:var(--ink);border:1px solid var(--rule);border-radius:4px;padding:1px 6px;background:#fff}
@@ -66,15 +84,24 @@ footer .fixed{color:var(--ink)}
       <h2>学习资料生成器</h2>
       <p class="desc">输入一个主题 → 对话采集需求 → 主动研究检索 → 生成带依赖门控的学习路径图；每个节点配讲义、要点、易错与自测。</p>
       <ul>
-        <li>已生成的学习资料（如 golang）在页面右上角「学习资料库 ▾」里直接打开</li>
-        <li>每份资料独立对话与进度，保存在浏览器本机</li>
+        <li>生成过的资料会自动出现在<b>本页下方</b>和页面右上角「学习资料库 ▾」里，点击直开</li>
+        <li>每份资料独立对话与进度，自动同步保存到服务端</li>
       </ul>
       <p class="path">/diagram-design/learning-path/learning-path.html</p>
       <span class="go">打开学习路径 →</span>
     </a>
   </div>
 
-  <p class="note"><b>学习资料库 ▾</b> —— 两个页面右上角都能打开：<b>常驻资料</b>（知识地图）＋ <b>学习路径</b>（动态扫描你生成过的资料）。数据保存在浏览器本机，换设备不共享；打开页面后如看不到最新版，按 <span class="k">Ctrl+F5</span> 强刷。</p>
+  <section class="libsec">
+    <div class="libsec-head">
+      <h2>学习资料库</h2>
+      <span class="hint">动态扫描 · 自动同步到服务端</span>
+      <span class="libn" id="lib-n"></span>
+    </div>
+    <div class="librows" id="lib-list"></div>
+  </section>
+
+  <p class="note"><b>学习资料库 ▾</b> —— 两个页面右上角都能打开：<b>常驻资料</b>（知识地图）＋ <b>学习路径</b>（动态扫描你生成过的资料）；本页上方也会自动列出你的学习路径。<b>所有学习数据（进度、对话、生成的资料）都实时同步保存到服务端（33.146）</b>，换设备打开自动恢复；打开页面后如看不到最新版，按 <span class="k">Ctrl+F5</span> 强刷。</p>
 
   <footer>
     <span class="fixed">固定入口：http://192.168.33.146:8091/learn/</span>
@@ -83,5 +110,57 @@ footer .fixed{color:var(--ink)}
     <span>源码仓库 Learn_MySelft</span>
   </footer>
 </div>
+<script>
+/* 学习资料库 · 动态扫描（同源 localStorage 中已生成的学习路径） */
+(function () {
+  'use strict';
+  var PREFIX = 'learn-path-v1-', LAST = 'learn-path-v1-last';
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function stageLabel(s) {
+    return ({ intake: '阶段 A · 需求采集', research: '阶段 B · 主动研究', learning: '阶段 C · 学习路径' })[s] || s || '';
+  }
+  var items = [];
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (!k || k.indexOf(PREFIX) !== 0 || k === LAST) continue;
+      var d = null;
+      try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
+      var it = { slug: k.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
+      if (d && typeof d === 'object') {
+        it.topic = d.topic || it.slug;
+        it.stage = d.stage || '';
+        if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
+        var ns = d.nodeState || {};
+        for (var id in ns) { if (ns[id] && ns[id].completed) it.done++; }
+      } else { it.topic = it.slug; }
+      items.push(it);
+    }
+  } catch (e) {}
+  items.sort(function (a, b) {
+    var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
+    return pa - pb || b.done - a.done;
+  });
+  var box = document.getElementById('lib-list'), cnt = document.getElementById('lib-n');
+  if (cnt) cnt.textContent = items.length ? ('共 ' + items.length + ' 份') : '';
+  if (!box) return;
+  if (!items.length) {
+    box.innerHTML = '<p class="lempty">还没扫描到生成的学习资料——点上面「学习路径」生成一个吧。（数据存在本机浏览器里）</p>';
+    return;
+  }
+  var h = '';
+  for (var j = 0; j < items.length; j++) {
+    var t = items[j], m = stageLabel(t.stage);
+    if (t.stage === 'learning') m = t.total ? (t.done + '/' + t.total + ' 节点完成') : '路径已生成';
+    h += '<a class="lrow" href="/diagram-design/learning-path/learning-path.html?t=' + encodeURIComponent(t.slug) + '">' +
+         '<span class="lt"><span class="t">' + esc(t.topic) + '</span><span class="m">' + esc(m) + '</span></span>' +
+         '<span class="go">打开 →</span></a>';
+  }
+  box.innerHTML = h;
+})();
+</script>
 </body>
 </html>

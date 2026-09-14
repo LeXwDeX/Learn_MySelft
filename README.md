@@ -9,8 +9,8 @@
 |------|------|------|
 | `knowledge-map/` | 知识地图 | 《初中数学+几何 知识体系 & 线性代数一周冲刺》交互式知识页。每个知识点卡片带「AI 辅助」按钮，点选后右侧常驻面板进入该单元的独立对话（每单元 = 每对话） |
 | `learning-path/` | 学习路径 | 输入主题 → 对话式采集需求 → 主动研究 → 生成依赖路径图。节点按依赖解锁（前置全部完成才可学），自测通过（≥60 分）标记完成 |
-| `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask`、`/suggest`、`/compress`、`/health`、`/path/intake`、`/path/research`、`/path/plan`、`/path/node`、`/path/quiz` |
-| `home/` | 固定首页 | 学习工具固定入口（部署为 `<站点>/learn/`）。收藏这一页即可，两个工具的链接都在上面 |
+| `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask`、`/suggest`、`/compress`、`/health`、`/path/intake`、`/path/research`、`/path/plan`、`/path/node`、`/path/quiz`、`/state/all`、`/state/put`、`/state/del`（学习数据服务端存储） |
+| `home/` | 固定首页 | 学习工具固定入口（部署为 `<站点>/learn/`）。收藏这一页即可，两个工具的链接都在上面；`state_sync.js` 为全站学习数据同步脚本（部署为 `<站点>/state_sync.js`） |
 | `deploy/` | 部署 | systemd 单元文件 |
 
 ## 部署
@@ -45,7 +45,7 @@ cd learning-path && python3 gen_path_page.py # path_template.html + path_app.js 
 
 - 仅适配桌面（整页最低宽度 1360px），无手机适配
 - 页面为单文件、无 CDN 依赖；公式走自托管 KaTeX
-- 每单元 = 每对话；对话历史存浏览器 localStorage（`math-map-ai-<单元>` / `learn-path-v1-<主题>`），不上传服务器
+- 每单元 = 每对话；对话历史与学习数据实时同步到服务端（study-assistant `/state/*`，每键一个 JSON 文件，存于 `/opt/study-assistant/state/`），浏览器 localStorage 作为本机缓存；换设备打开自动恢复
 - 学习路径门控：节点依赖全部完成后才解锁；自测 ≥60 分标记完成
 - AI 纪律：引导式学习——不主动给答案，学习者提交后再评估；明确索要才给解答
 - 后端对接内部 LLM 网关（OpenAI 兼容接口，模型名 `deepseek`，推理档 max，输出上限 384K）

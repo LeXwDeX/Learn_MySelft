@@ -178,6 +178,7 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
 .lib-count{font-family:var(--mono);font-size:10.5px;color:var(--soft)}
 .lib-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:10px 2px 4px}
 </style>
+<script src="/state_sync.js?v=1"></script>
 </head>
 <body>
 <div class="layout">
@@ -252,7 +253,7 @@ __DOMAINS__
 __LINALG__
 
   <footer>
-    初中数学+几何 __NCOUNT__ 知识点 · 线性代数 7 天冲刺 · 进度保存在本机浏览器（localStorage），换设备不共享
+    初中数学+几何 __NCOUNT__ 知识点 · 线性代数 7 天冲刺 · 进度实时同步到服务端，换设备自动恢复
   </footer>
 </div><!-- /.wrap -->
 </div><!-- /.main -->
@@ -856,7 +857,7 @@ __LINALG__
     var items = scan();
     var cnt = $('lib-count');
     if (cnt) cnt.textContent = ' (' + (items.length + 1) + ')';
-    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 本机</i></p>';
+    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 自动同步</i></p>';
     h += '<p class="lib-sub">常驻资料</p>';
     h += '<a class="lib-item" href="junior-math-linalg.html">' +
          '<span class="t">知识地图 · 初中数学到线性代数</span><span class="m">内含命题定理 · 当前页</span></a>';

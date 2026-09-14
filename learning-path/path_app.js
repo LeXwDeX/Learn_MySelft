@@ -645,7 +645,7 @@
     var items = scanMaterials();
     var cnt = $('lib-count');
     if (cnt) cnt.textContent = ' (' + (items.length + 1) + ')';
-    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 本机</i></p>';
+    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 自动同步</i></p>';
     h += '<p class="lib-sub">常驻资料</p>';
     h += '<a class="lib-item" href="junior-math-linalg.html">' +
          '<span class="t">知识地图 · 初中数学到线性代数</span><span class="m">内含命题定理 · 打开知识地图</span></a>';

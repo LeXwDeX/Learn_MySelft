@@ -156,6 +156,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 .lib-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:10px 2px 4px}
 </style>
 <link rel="stylesheet" href="./katex/katex.min.css">
+<script src="/state_sync.js?v=1"></script>
 </head>
 <body>
 <header class="toolbar">
@@ -252,7 +253,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       <div class="panel-foot" id="panel-foot" hidden></div>
     </aside>
   </div>
-  <footer>学习路径 · 后端 <span id="backend-label">—</span> · 状态保存在本机 localStorage，刷新可恢复</footer>
+  <footer>学习路径 · 后端 <span id="backend-label">—</span> · 状态实时同步到服务端，刷新/换设备自动恢复</footer>
 </div>
 
 <script src="./katex/katex.min.js"></script>
@@ -906,7 +907,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var items = scanMaterials();
     var cnt = $('lib-count');
     if (cnt) cnt.textContent = ' (' + (items.length + 1) + ')';
-    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 本机</i></p>';
+    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 自动同步</i></p>';
     h += '<p class="lib-sub">常驻资料</p>';
     h += '<a class="lib-item" href="junior-math-linalg.html">' +
          '<span class="t">知识地图 · 初中数学到线性代数</span><span class="m">内含命题定理 · 打开知识地图</span></a>';

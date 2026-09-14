@@ -11,11 +11,14 @@
 
 只用标准库，无第三方依赖。监听 0.0.0.0:8096。
 """
+import hashlib
 import json
 import os
 import re
 import ssl
 import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -57,6 +60,14 @@ MAX_TOPIC = 2000
 ALLOWED_ORIGIN = re.compile(
     r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$"
 )
+
+# ---- 学习数据服务端持久化（/state/*）----
+# 浏览器里的所有学习数据（进度标记、单元对话、学习路径生成物等 localStorage 键）会实时同步到这里。
+# 每键一个 JSON 文件，内容 {"key","v","ts"}；v=null 表示已删除（墓碑，防止旧设备把已删数据推回来）。
+STATE_DIR = os.environ.get("STATE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "state"))
+STATE_LOCK = threading.Lock()
+STATE_MAX_KEYS = 2000            # 单次请求键数上限
+STATE_MAX_VALUE = 2_000_000      # 单键值长度上限（字符）
 
 # ============================================================================
 # 学习路径：system prompt 集中管理
@@ -608,9 +619,51 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    # ---------- 学习数据仓库：/state/*（浏览器 localStorage ⇄ 服务端文件）----------
+    def _state_path(self, key):
+        return os.path.join(STATE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json")
+
+    def _state_all(self):
+        out = {}
+        if not os.path.isdir(STATE_DIR):
+            return out
+        with STATE_LOCK:
+            for fn in os.listdir(STATE_DIR):
+                if not fn.endswith(".json"):
+                    continue
+                try:
+                    with open(os.path.join(STATE_DIR, fn), "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                    if isinstance(d, dict) and isinstance(d.get("key"), str):
+                        out[d["key"]] = d.get("v")
+                except Exception:
+                    continue
+        return out
+
+    def _state_put(self, entries):
+        """写入/删除（v=None 为墓碑）。返回成功条数。"""
+        os.makedirs(STATE_DIR, exist_ok=True)
+        n = 0
+        now = int(time.time() * 1000)
+        with STATE_LOCK:
+            for k, v in list(entries.items())[:STATE_MAX_KEYS]:
+                if not isinstance(k, str) or not k or len(k) > 512:
+                    continue
+                if v is not None:
+                    if not isinstance(v, str):
+                        v = json.dumps(v, ensure_ascii=False)
+                    if len(v) > STATE_MAX_VALUE:
+                        continue
+                with open(self._state_path(k), "w", encoding="utf-8") as f:
+                    json.dump({"key": k, "v": v, "ts": now}, f, ensure_ascii=False)
+                n += 1
+        return n
+
     def do_GET(self):
-        if self.path.startswith("/health"):
-            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz"]})
+        if self.path.startswith("/state/all"):
+            self._json(200, {"ok": True, "entries": self._state_all()})
+        elif self.path.startswith("/health"):
+            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/state/all", "/state/put", "/state/del"]})
         else:
             self._json(404, {"error": "not found"})
 
@@ -816,6 +869,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
+        # 学习数据同步端点：浏览器端全量推送（含删除墓碑）
+        if path.startswith("/state/put") or path.startswith("/state/del"):
+            try:
+                body = self._read_body()
+            except Exception as e:
+                self._json(400, {"error": "bad json: %s" % e})
+                return
+            try:
+                if path.startswith("/state/put"):
+                    entries = body.get("entries") or {}
+                    if not isinstance(entries, dict):
+                        self._json(400, {"error": "entries must be an object"})
+                        return
+                else:
+                    keys = body.get("keys") or []
+                    entries = {k: None for k in keys if isinstance(k, str)}
+                n = self._state_put(entries)
+                self._json(200, {"ok": True, "n": n})
+            except Exception as e:
+                self._json(500, {"error": "%s: %s" % (type(e).__name__, e)})
+            return
         # 学习路径端点：单独入口，统一错误包装
         if path.startswith("/path/"):
             try:
