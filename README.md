@@ -14,7 +14,7 @@
 | `learning-path/` | 学习路径 | 输入主题 → 对话式采集需求 → 主动研究（SearXNG 检索）→ 生成依赖路径图。节点按依赖解锁（前置全部完成才可学），自测通过（≥60 分）标记完成 |
 | `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask` `/suggest` `/compress` `/health` `/path/intake` `/path/research` `/path/plan` `/path/node` `/path/quiz` `/state/all` `/state/put` `/state/del` |
 | `home/` | 固定首页 | 学习工具固定入口（部署为 `<站点>/learn/`）；`state_sync.js` 为全站学习数据同步脚本（部署为 `<站点>/state_sync.js`） |
-| `deploy/` | 部署 | systemd 单元文件（`study-assistant.service`、`static-pages.service`） |
+| `deploy/` | 部署 | systemd 单元文件（`zixueshe-web.service`、`study-assistant.service`、`static-pages.service`） |
 
 ## 架构与数据流
 
@@ -22,7 +22,7 @@
 浏览器                                 服务器
 ┌────────────────────┐   SSE / JSON  ┌─────────────────────┐         ┌──────────────────┐
 │ 静态页面（无框架）    │ ────────────▶ │ study-assistant     │ ──────▶ │ OpenAI 兼容 LLM   │
-│ 知识地图 / 路径 / 首页 │ ◀──────────── │ :8096（纯标准库）     │         │ 网关（模型 deepseek）│
+│ 知识地图 / 路径 / 首页 │ ◀──────────── │ :8101（纯标准库）     │         │ 网关（模型 deepseek）│
 └────────────────────┘               │                     │         └──────────────────┘
          │ localStorage              │ /state/*            │
          └─── 写入即推 / 加载即拉 ─────▶ │ 每键一个 JSON 文件    │
@@ -45,13 +45,13 @@ sudo cp study-assistant/study_assistant.py /opt/study-assistant/
 # 编辑 deploy/study-assistant.service：把 LLM_KEY 改为实际密钥（按需调整 LLM_BASE 等，见下表）
 sudo cp deploy/study-assistant.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now study-assistant
-curl -s http://127.0.0.1:8096/health   # 验证
+curl -s http://127.0.0.1:8101/health   # 验证
 ```
 
 ### 2. 静态页面
 
 ```bash
-# R = 静态根目录（示例部署：/DATA/AppData/static-pages，由 deploy/static-pages.service 以 :8091 服务）
+# R = 静态根目录（当前部署：/DATA/AppData/zixueshe-web，由 deploy/zixueshe-web.service 以 :8100 服务）
 R=/path/to/static-root
 mkdir -p $R/learn $R/diagram-design/learning-path
 cp home/index.html                     $R/learn/index.html
@@ -75,9 +75,9 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 
 ### 当前部署实例
 
-- 固定入口：`http://192.168.33.146:8091/learn/`
-- 后端：`http://192.168.33.146:8096`（systemd 服务 `study-assistant`）
-- 静态根：`/DATA/AppData/static-pages`（systemd 服务 `static-pages`，python http.server :8091）
+- 固定入口：`http://192.168.33.146:8100/learn/`（systemd 服务 `zixueshe-web`；旧 `:8091/learn/` 地址自动跳转）
+- 后端：`http://192.168.33.146:8101`（systemd 服务 `study-assistant`）
+- 静态根：`/DATA/AppData/zixueshe-web`（python http.server :8100）
 
 ## 配置
 
@@ -85,7 +85,7 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PORT` | `8096` | 监听端口 |
+| `PORT` | `8101` | 监听端口 |
 | `LLM_BASE` | `http://192.168.33.110:8000/v1`（当前部署所用网关） | OpenAI 兼容网关地址；部署到其他环境必须显式设置 |
 | `LLM_KEY` | （空） | 网关密钥；**仓库内以 `CHANGE_ME` 占位，部署时替换，禁止提交真实密钥** |
 | `LLM_MODEL` | `deepseek` | 模型名 |
@@ -95,8 +95,8 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 
 ### 前端地址约定（换部署地址时看这里）
 
-- `state_sync.js`：自动请求「当前页面主机名 `:8096`」——**静态站与后端同机部署时零配置**。
-- `learning-path/path_app.js`：顶部常量 `var API = 'http://192.168.33.146:8096'`——部署到其他地址时改这一处，然后重新执行 `gen_path_page.py` 生成页面。
+- `state_sync.js`：自动请求「当前页面主机名 `:8101`」——**静态站与后端同机部署时零配置**。
+- `learning-path/path_app.js`：顶部常量 `var API = 'http://192.168.33.146:8101'`——部署到其他地址时改这一处，然后重新执行 `gen_path_page.py` 生成页面。
 - `knowledge-map/ai_panel.js`：知识地图的 API 常量同理（改动后重新执行 `gen_math_map.py`）。
 - 后端内置 CORS 白名单：`localhost / 127.0.0.1 / 192.168.x.x / 10.x.x.x`——只允许这些来源，刻意如此。
 
@@ -125,3 +125,4 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 - **v1.0**（2026-09-14）：首个发布版。知识地图 + 学习路径全流程（采集 / 研究 / 路径图 / 门控自测）+ `/state/*` 服务端数据同步。修复项：untitled 根因治理、卡片布局与间距、KaTeX 公式渲染、空回复重试、输出预算 384K。
 - 仓库整理：移除测试资料（示例知识地图数据与产物），仅保留工具与文档；模板与生成器去品牌化。
 - 项目更名：Learn MySelf → 自学社（ZiXueShe）。
+- 部署调整（2026-09-14）：前端迁至专用段 `:8100`（`zixueshe-web` 服务），AI 后端迁至 `:8101`；旧入口地址自动跳转。

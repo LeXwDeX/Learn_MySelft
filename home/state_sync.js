@@ -1,4 +1,4 @@
-/* 学习数据同步 —— 浏览器 localStorage ⇄ 服务端（study-assistant :8096）
+/* 学习数据同步 —— 浏览器 localStorage ⇄ 服务端（study-assistant :8101）
    策略：
    1) 写入即推：拦截所有 localStorage 写入，去抖 600ms 批量 POST /state/put（删除写墓碑）；
    2) 加载即拉：GET /state/all，以服务端为准写回本地，有差异自动刷新一次（≤2 次防环）；
@@ -14,7 +14,7 @@
   window.__stateSyncLoaded = true;
   try { if (localStorage.getItem('__sync_off') === '1') return; } catch (e) { return; }
 
-  var API = location.protocol + '//' + location.hostname + ':8096';
+  var API = location.protocol + '//' + location.hostname + ':8101';
   function keep(k) { return !!k && k.indexOf('__sync') !== 0; }
 
   // 空壳判定：历史脏数据既不上推也不下发（本地有真实内容时以本地为准并回推修复）

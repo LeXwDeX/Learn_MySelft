@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""study-assistant — 学习地图的 AI 辅助后端（33.146:8096）
+"""study-assistant — 学习地图的 AI 辅助后端（33.146:8101）
 
 职责：
   1) POST /ask      —— 接收带「单元上下文」的提问，拼装带上下文的 system prompt，
@@ -9,7 +9,7 @@
                        供前端渲染建议问题，随对话变化而变化
   3) GET  /health
 
-只用标准库，无第三方依赖。监听 0.0.0.0:8096。
+只用标准库，无第三方依赖。监听 0.0.0.0:8101。
 """
 import hashlib
 import json
@@ -1038,7 +1038,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    port = int(os.environ.get("PORT", "8096"))
+    port = int(os.environ.get("PORT", "8101"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     srv.daemon_threads = True
     sys.stderr.write("study-assistant listening on 0.0.0.0:%d (model=%s, base=%s)\n" % (port, LLM_MODEL, LLM_BASE))

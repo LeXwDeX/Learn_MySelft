@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var API = 'http://192.168.33.146:8096';
+  var API = 'http://192.168.33.146:8101';
   var TIMEOUT = 180000;               // 单次调用最长 180s（后端推理可能 30~90s）
   var STORE_PREFIX = 'learn-path-v1-';
   var LAST_KEY = 'learn-path-v1-last'; // 指向最近一次会话的 slug

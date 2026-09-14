@@ -1,5 +1,5 @@
 (function(){
-  var HOST = 'http://' + location.hostname + ':8096';
+  var HOST = 'http://' + location.hostname + ':8101';
   var ASK = HOST + '/ask', SUGGEST = HOST + '/suggest', COMPRESS = HOST + '/compress';
   var MAX_IMG_BYTES = 10 * 1024 * 1024;   // 上传上限 10MB
   var MAX_SIDE = 3840;                    // 最长边压到 4K 以内
