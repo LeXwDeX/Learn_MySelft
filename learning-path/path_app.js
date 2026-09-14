@@ -534,11 +534,6 @@
       arr.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
   }
 
-  function omLink(n) {
-    var prompt = n.title + '。学习目标：' + (n.objectives || []).join('；') + '。本质：' + (n.essence || '');
-    return 'http://192.168.33.146:8102/workbench/new?prompt=' + encodeURIComponent(prompt);
-  }
-
   function renderNodeDetail(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
@@ -568,7 +563,6 @@
     if (qs.length && !isDone(id)) foot += '<button class="btn primary" id="submit-quiz" type="button">提交自测</button>';
     if (qs.length && !isDone(id) && typeof prev.score === 'number') foot += '<button class="btn" id="redo-quiz" type="button">换新题，再试一次</button>';
     if (isDone(id)) foot += '<span class="tip">✅ 已完成</span>';
-    foot += '<a class="om-link" target="_blank" rel="noopener" href="' + esc(omLink(n)) + '">用 OpenMAIC 生成这节课 →</a>';
     setFoot(foot);
     if ($('submit-quiz')) $('submit-quiz').addEventListener('click', function () { submitQuiz(id); });
     if ($('redo-quiz')) $('redo-quiz').addEventListener('click', function () { redoQuiz(id); });
@@ -631,7 +625,6 @@
     } else {
       foot += '<button class="btn primary" id="redo-quiz" type="button">换新题，再试一次</button>';
     }
-    foot += '<a class="om-link" target="_blank" rel="noopener" href="' + esc(omLink(nodeById(id))) + '">用 OpenMAIC 生成这节课 →</a>';
     setFoot(foot);
     if ($('complete-node')) $('complete-node').addEventListener('click', function () { completeNode(id); });
     if ($('redo-quiz')) $('redo-quiz').addEventListener('click', function () { redoQuiz(id); });
@@ -763,7 +756,17 @@
   }
 
   // ---------- 初始化 ----------
+  // 等待状态同步“加载即拉”完成（最多 2 秒）再启动，防旧数据覆盖竞态
   function init() {
+    var done = false;
+    function go() { if (done) return; done = true; boot(); }
+    try {
+      if (window.__syncReady && typeof window.__syncReady.then === 'function') {
+        window.__syncReady.then(go, go); setTimeout(go, 2000);
+      } else { go(); }
+    } catch (e) { go(); }
+  }
+  function boot() {
     $('chat-send').addEventListener('click', sendMessage);
     $('chat-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
     $('restart-btn').addEventListener('click', restart);

@@ -15,6 +15,12 @@
   window.__stateSyncLoaded = true;
   try { if (localStorage.getItem('__sync_off') === '1') return; } catch (e) { return; }
 
+  // 就绪承诺：页面脚本等 __syncReady 后再初始化（防“加载即写”把旧数据推回服务端覆盖新数据）
+  var __readyFired = false, __resolveReady = null;
+  window.__syncReady = new Promise(function (res) { __resolveReady = res; });
+  function ready() { if (__readyFired) return; __readyFired = true; try { __resolveReady(); } catch (e) {} }
+  setTimeout(ready, 1500);   // 兜底：后端不可达时也必须放行页面
+
   var API = location.protocol + '//' + location.hostname + ':8101';
   function keep(k) { return !!k && k.indexOf('__sync') !== 0; }
 
@@ -110,7 +116,7 @@
   try { reloads = parseInt(sessionStorage.getItem(GUARD) || '0', 10) || 0; } catch (e) {}
   try {
     fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-      if (!j || !j.ok || !j.entries) return;
+      if (!j || !j.ok || !j.entries) { ready(); return; }
       var server = j.entries, changed = false, migrate = {}, k;
       Object.keys(server).forEach(function (k2) {
         if (!keep(k2)) return;
@@ -140,6 +146,7 @@
         for (k in migrate) puts[k] = migrate[k];
         flush();
       }
+      ready();                                            // 拉取与迁移处理完毕：放行页面初始化
       if (changed) {
         if (reloads < 2) {                                // 写回本地后刷新一次让页面读到新数据；防环
           try { sessionStorage.setItem(GUARD, String(reloads + 1)); } catch (e) {}
@@ -148,6 +155,6 @@
       } else {
         try { sessionStorage.removeItem(GUARD); } catch (e) {}
       }
-    }).catch(function () {});
-  } catch (e) {}
+    }).catch(function () { ready(); });
+  } catch (e) { ready(); }
 })();
