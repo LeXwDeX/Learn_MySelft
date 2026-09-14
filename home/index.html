@@ -62,7 +62,7 @@ footer .fixed{color:var(--ink)}
 <div class="wrap">
   <p class="eyebrow">ZiXueShe · 固定入口</p>
   <h1>学习工具主页</h1>
-  <p class="sub">初中数学到线性代数 · 学习资料生成 · AI 引导式问答。全部学习入口都在这一页，<b>本地址为固定入口，可直接收藏</b>。</p>
+  <p class="sub">学习资料生成 · AI 引导式问答。全部学习入口都在这一页，<b>本地址为固定入口，可直接收藏</b>。</p>
   <hr class="rule">
 
   <div class="grid">
@@ -78,18 +78,6 @@ footer .fixed{color:var(--ink)}
       <span class="go">打开学习路径 →</span>
     </a>
 
-    <a class="tool" href="/diagram-design/learning-path/junior-math-linalg.html">
-      <span class="no">02 · Knowledge Map · 知识地图</span>
-      <h2>初中数学到线性代数</h2>
-      <p class="desc">32 个知识点，按「命题与逻辑 → 数与式 → 方程 → 函数 → 几何 → 统计」的依赖顺序排列；每个知识点只做三件事：看本质、避陷阱、过自测。</p>
-      <ul>
-        <li>内含命题定理：充分/必要条件、逆否等价、证明方法、数学归纳法</li>
-        <li>每单元一个独立对话，右侧常驻 AI 辅助（引导思考，不直接给答案）</li>
-        <li>四态进度标记：未学 / 学习中 / 已掌握 / 需复习</li>
-      </ul>
-      <p class="path">/diagram-design/learning-path/junior-math-linalg.html</p>
-      <span class="go">打开知识地图 →</span>
-    </a>
   </div>
 
   <section class="libsec">
@@ -101,7 +89,7 @@ footer .fixed{color:var(--ink)}
     <div class="librows" id="lib-list"></div>
   </section>
 
-  <p class="note"><b>学习资料库 ▾</b> —— 两个页面右上角都能打开：<b>常驻资料</b>（知识地图）＋ <b>学习路径</b>（动态扫描你生成过的资料）；本页上方也会自动列出你的学习路径。<b>所有学习数据（进度、对话、生成的资料）都实时同步保存到服务端（33.146）</b>，换设备打开自动恢复；打开页面后如看不到最新版，按 <span class="k">Ctrl+F5</span> 强刷。</p>
+  <p class="note"><b>学习资料库 ▾</b> —— 右上角「学习资料库」动态扫描你生成过的资料；本页上方也会自动列出你的学习路径。<b>所有学习数据（进度、对话、生成的资料）都实时同步保存到服务端（33.146）</b>，换设备打开自动恢复；打开页面后如看不到最新版，按 <span class="k">Ctrl+F5</span> 强刷。</p>
 
   <footer>
     <span class="fixed">固定入口：http://192.168.33.146:8100/learn/</span>
@@ -149,7 +137,7 @@ footer .fixed{color:var(--ink)}
   if (cnt) cnt.textContent = items.length ? ('共 ' + items.length + ' 份') : '';
   if (!box) return;
   if (!items.length) {
-    box.innerHTML = '<p class="lempty">还没扫描到生成的学习资料——点上面「学习路径」生成一个吧。（学习数据自动同步到服务端）</p>';
+    box.innerHTML = '<p class="lempty">还没扫描到生成的学习资料——点上面「学习资料生成器」生成一个吧。（学习数据自动同步到服务端）</p>';
     return;
   }
   var h = '';

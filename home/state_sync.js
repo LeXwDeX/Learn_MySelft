@@ -2,6 +2,7 @@
    策略：
    1) 写入即推：拦截所有 localStorage 写入，去抖 600ms 批量 POST /state/put（删除写墓碑）；
    2) 加载即拉：GET /state/all，以服务端为准写回本地，有差异自动刷新一次（≤2 次防环）；
+      墓碑（v=null）优先：即使本地刚写入过，服务端墓碑也会删除本地并撤销待推送（防旧设备把已删数据顶回来）；
    3) 空壳保护：历史脏数据（learn-path-v1-* 无主题、无路径、无对话的空状态）不上推、不下发；
       若本地有内容而服务端是空壳，用本地上推修复服务端（防止服务器空壳覆盖设备上的真实数据）；
    4) 兜底：页面隐藏/卸载时用 sendBeacon 冲掉未发送的改动；
@@ -113,15 +114,18 @@
       var server = j.entries, changed = false, migrate = {}, k;
       Object.keys(server).forEach(function (k2) {
         if (!keep(k2)) return;
-        if (k2 in puts || k2 in dels) return;            // 本地刚改过：等推送，别用旧值覆盖
         var v = server[k2], local = localStorage.getItem(k2);
+        if (v === null) {                                 // 墓碑优先：撤销待推送并删除本地（防旧设备顶回）
+          delete puts[k2]; delete dels[k2];
+          if (local !== null) { oDel.call(localStorage, k2); changed = true; }
+          return;
+        }
+        if (k2 in puts || k2 in dels) return;            // 本地刚改过：等推送，别用旧值覆盖
         if (isJunkVal(k2, v)) {                           // 服务端是空壳：不下发；本地有内容则回推修复
           if (local !== null && !isJunkVal(k2, local)) { puts[k2] = local; flush(); }
           return;
         }
-        if (v === null) {                                 // 墓碑：服务端已删除
-          if (local !== null) { oDel.call(localStorage, k2); changed = true; }
-        } else if (typeof v === 'string' && local !== v) {
+        if (typeof v === 'string' && local !== v) {
           oSet.call(localStorage, k2, v);
           changed = true;
         }

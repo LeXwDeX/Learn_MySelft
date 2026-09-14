@@ -371,7 +371,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
         save();
         s = fixSlug;
       }
-      try { localStorage.setItem(LAST_KEY, s); } catch (e) {}
+      try { if (localStorage.getItem(LAST_KEY) !== s) localStorage.setItem(LAST_KEY, s); } catch (e) {}
       return true;
     } catch (e) { return false; }
   }
@@ -958,11 +958,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     if (!pop) return;
     var items = scanMaterials();
     var cnt = $('lib-count');
-    if (cnt) cnt.textContent = ' (' + (items.length + 1) + ')';
+    if (cnt) cnt.textContent = ' (' + items.length + ')';
     var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 自动同步</i></p>';
-    h += '<p class="lib-sub">常驻资料</p>';
-    h += '<a class="lib-item" href="junior-math-linalg.html">' +
-         '<span class="t">知识地图 · 初中数学到线性代数</span><span class="m">内含命题定理 · 打开知识地图</span></a>';
     h += '<p class="lib-sub">学习路径（动态扫描）</p>';
     if (!items.length) {
       h += '<p class="lib-empty">暂无生成的学习路径——去生成一个吧。</p>';
@@ -983,7 +980,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var btn = $('lib-btn'), pop = $('lib-pop'), wrap = $('lib-wrap');
     if (!btn || !pop) return;
     var cnt = $('lib-count');
-    if (cnt) { var n = scanMaterials().length; cnt.textContent = ' (' + (n + 1) + ')'; }
+    if (cnt) { var n = scanMaterials().length; cnt.textContent = ' (' + n + ')'; }
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (pop.hidden) { libRender(); pop.hidden = false; } else { pop.hidden = true; }
