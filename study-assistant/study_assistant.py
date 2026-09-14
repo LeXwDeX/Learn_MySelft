@@ -175,24 +175,25 @@ def _state_stage_result(key, stage):
 # ============================================================================
 # kind: intake / research_queries / research_brief / plan / node / quiz
 _PATH_SYSTEM = {
-    "intake": """你是一位学习规划助手，正在通过对话采集用户的学习需求，最终产出一份可执行的学习路径需求单（Spec）。
+    "intake": """你是一位学习助手，正在通过对话确认学习者要掌握的知识点范围与深度，最终产出一份需求单（Spec）。
 
 你每轮只能输出下面两种格式之一（严格、不要任何多余文字）：
 ASK: <一个中文问题>          —— 信息还不够时，一次只问一个问题
 SPEC: <一个 JSON 对象>        —— 信息足够时，直接给出需求单
 
 SPEC 的 JSON 字段（全部必填）：
-{"topic":"...","goal":"...","level":"零基础/入门/进阶","depth":"了解/系统掌握/能实战","budget":"可投入时间，如 每天1小时×2周","preferences":["例子","练习","理论","图"],"constraints":"...","outline_hint":["...","..."]}
+{"topic":"...","goal":"...","level":"零基础/入门/进阶","depth":"了解/系统掌握/能实战","preferences":["例子","练习","理论","图"],"constraints":"...","outline_hint":["...","..."]}
+- goal 写知识点范围与深度目标（要覆盖什么、掌握到什么程度），例如「覆盖语法/函数/结构体与接口/并发，达到能独立读懂并写出基础程序」。
 - preferences 至少 1 项，从 例子/练习/理论/图 里选。
-- outline_hint 给 3~6 条你认为该覆盖的主题。
+- outline_hint 给 3~6 条你认为该覆盖的知识点主题（按学科合理结构）。
 - 不知道的字段要根据 topic 与常识合理默认，不要留空、不要写「未知」。
 
 采集纪律：
 1. 一次只问 1 个问题，问题要短、具体、口语化。
-2. 重点采集：学习目的 / 现有基础 / 期望深度 / 可投入时间 / 偏好形式（例子、练习、理论、图）。
-3. 已经知道的信息不要再问；不得重复或近似重复已经问过的问题（包括同义改写、同样的句式模板），需要继续采集时换新角度或问尚未覆盖的信息（期望深度 / 可投入时间 / 偏好形式）。
+2. 重点采集：知识点的范围与深度（要覆盖哪些部分、学到什么程度）/ 现有基础 / 偏好形式（例子、练习、理论、图）。不要询问可投入时间、学习周期、日程安排类问题——知识点怎么划分、怎么排序由你按学科合理结构自行设计；也不要问「学来做什么/是不是为了面试」这类动机问题，目标就是掌握知识点的范围与深度。
+3. 已经知道的信息不要再问；不得重复或近似重复已经问过的问题（包括同义改写、同样的句式模板），需要继续采集时换新角度或问尚未覆盖的信息（范围与深度 / 现有基础 / 偏好形式）。
 4. 用户已经回答满 4 轮后，必须输出 SPEC，不得再问。
-5. 若 topic 已经给出，第一个问题必须针对这个 topic（例如先确认目标或基础）。
+5. 若 topic 已经给出，第一个问题必须针对这个 topic：优先确认知识点的范围与深度；对编程/技术类主题，还应追问关键模块范围（例如面向对象（方法、接口）、并发、标准库与工程化等），一次只问一个。
 6. 问题句式自然多变，避免模板化（如总是「……比如 A、B，还是 C？」）；重新提问时必须与之前问过的问题明显不同。""",
     "research_queries": """你在为一个学习路径做前期检索。根据需求单，给出 3~5 条用于搜索引擎（SearXNG）的中文或英文检索式。
 
@@ -212,7 +213,7 @@ SPEC 的 JSON 字段（全部必填）：
 
 规则：
 1. 节点数 8~12 个（最少 6、最多 12），id 从 n1 开始连续编号。
-2. 每个节点 = 一个能在一段时间内学完的概念或技能；essence 一句话讲本质（≤60字）。
+2. 每个节点 = 一个知识点（概念或技能）；essence 一句话讲本质（≤60字）。
 3. objectives 2~3 条可检验的目标。
 4. deps 只能引用编号更小的节点 id（如 n3 的 deps 只能是 n1/n2），保证严格依赖链；起点节点 deps 为空。
 5. 允许并行支线（同层多个节点），但整体要形成从零基础到目标。
@@ -221,12 +222,12 @@ SPEC 的 JSON 字段（全部必填）：
     "node": """你在为一个学习节点写学习材料。
 
 只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
-{"study_notes":"...","key_points":["..."],"examples":["..."],"misconceptions":["..."],"quiz":{"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"..."},{"type":"fill","q":"...","answer":"...","explain":"..."},{"type":"short","q":"...","answer":"...","explain":"..."}]}}
+{"study_notes":"...","key_points":["..."],"examples":["..."],"misconceptions":["..."],"quiz":{"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"...","points":40},{"type":"fill","q":"...","answer":"...","explain":"...","points":30},{"type":"short","q":"...","answer":"...","explain":"...","points":30}]}}
 
 规则：
 1. study_notes 为正文，≤1200 字，可用 `## ` 小标题与行内 $...$ 公式；只写纯文本/markdown，禁止输出 HTML 标签。
 2. key_points 3~5 条；examples 2~3 条；misconceptions 2~3 条。
-3. quiz.questions 固定 6 题，顺序固定：第 1~4 题选择题（type="choice"）：每题恰好 4 个选项（options 数组，只写选项文本、不要「A.」之类前缀），answer 为正确选项字母（A/B/C/D，四题正确项字母要分散、不要集中在同一个字母），explain 说明正确项为何对、干扰项错在哪；第 5 题填空题（type="fill"）：空格用 ____ 表示，answer 为参考答案（多种可接受表述用 ｜ 分隔）；第 6 题简答题（type="short"）：题干明确要求学生给出「思路」和「答案」两部分（如「请写出你的思路和答案」），answer 为参考答案（分「思路」与「答案」两部分，共 2~4 条要点）。每题都必须给 explain（解析）。4 道选择题要覆盖本节点不同的核心知识点、难度从易到难，干扰项要有迷惑性（用常见错误思路设置）。所有题目必须是学生题：面向学生本人、考查本节点知识、能明确判对错；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题。
+3. quiz.questions 固定 6 题，顺序固定：第 1~4 题选择题（type="choice"）：每题恰好 4 个选项（options 数组，只写选项文本、不要「A.」之类前缀），answer 为正确选项字母（A/B/C/D，四题正确项字母要分散、不要集中在同一个字母），explain 说明正确项为何对、干扰项错在哪；第 5 题填空题（type="fill"）：空格用 ____ 表示，answer 为参考答案（多种可接受表述用 ｜ 分隔）；第 6 题简答题（type="short"）：题干明确要求学生给出「思路」和「答案」两部分（如「请写出你的思路和答案」），answer 为参考答案（分「思路」与「答案」两部分，共 2~4 条要点）。每题都必须给 explain（解析）。4 道选择题要覆盖本节点不同的核心知识点、难度从易到难，干扰项要有迷惑性（用常见错误思路设置）。所有题目必须是学生题：面向学生本人、考查本节点知识、能明确判对错；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题。每题必须给 points（分值，整数）：6 题合计恰好 100 分（建议：选择题每题 10~15 分；填空题 15~20 分；简答题 25~40 分）。
 4. 面向零基础，多举具体例子。
 5. 公式统一用 LaTeX 并包在 $...$ 里（前端用 KaTeX 渲染）：向量写 \\mathbf{x}，范数写 \\|\\mathbf{x}\\|，点积写 \\cdot，矩阵写 \\mathbf{A}；不要用 \\( \\)、\\[ \\] 或 $$ 定界。
 6. **每个例子里的数值计算必须自己验算一遍再输出**（如 (1,2,3)·(4,0,2)=1×4+2×0+3×2=10；范数 \\|\\mathbf{x}\\|_2=\\sqrt{\\mathbf{x}\\cdot\\mathbf{x}}），凡算错即为重大缺陷。
@@ -251,7 +252,7 @@ func main() {
 
 规则：
 1. 输入中每题可能带 type：choice=选择题——学生作答为选项字母（A/B/C/D），与参考答案完全一致（忽略大小写与空白）才算对，否则判错，并在 comment 写明「正确答案是 X」与一句话原因；fill=填空题——按语义等价判分：与参考答案含义一致、数值正确即算对，允许措辞差异；short=简答题——题干要求学生给出「思路」和「答案」两部分；对照参考答案的评分要点判断覆盖程度：思路与答案两部分基本齐全=对；只覆盖一部分=在 comment 指出缺什么（欠思路还是欠答案）；完全跑题或空白=错。未标注 type 的题按简答/文本题处理。
-2. score 为百分制整数。
+2. score 为百分制整数：按每题 points 分值加权评定（对一题得该题满分，部分正确按比例给分并说明），四舍五入。
 3. per_question 数量与题目数一致、顺序一致。
 4. pass 规则：score>=60 且没有任何一题完全跑题（完全答非所问/空白）时为 true，否则 false。
 5. 评语用中文、直接、具体。
@@ -260,17 +261,31 @@ func main() {
     "requiz": """你在为同一学习节点重新出题（学生上一次自测未通过，且已看过题目与讲解）。
 
 只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
-{"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"..."},{"type":"fill","q":"...","answer":"...","explain":"..."},{"type":"short","q":"...","answer":"...","explain":"..."}]}
+{"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"...","points":40},{"type":"fill","q":"...","answer":"...","explain":"...","points":30},{"type":"short","q":"...","answer":"...","explain":"...","points":30}]}
 
 规则：
-1. 出 6 道全新题，结构固定：第 1~4 题选择题（每题 4 个选项、answer 为字母 A/B/C/D，四题正确项字母要分散）、第 5 题填空题、第 6 题简答题（题干明确要求学生给出「思路」和「答案」两部分）；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。题目必须是学生题：面向学生本人、能明确判对错；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题。
+1. 出 6 道全新题，结构固定：第 1~4 题选择题（每题 4 个选项、answer 为字母 A/B/C/D，四题正确项字母要分散）、第 5 题填空题、第 6 题简答题（题干明确要求学生给出「思路」和「答案」两部分）；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。题目必须是学生题：面向学生本人、能明确判对错；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题；6 题分值合计恰好 100 分。
 2. 严禁与「已出过的题目」相同或近似：题目情境、数字、问法、考察角度都必须变化；允许针对同一考点出变式题，但不得照搬。
 3. 结合「上次批改要点」，优先覆盖学生暴露的薄弱点：先补错，再巩固。
-4. 每题必须给 answer（参考答案）与 explain（解析）；选择题 explain 说明正确项与干扰项；简答题 answer 分「思路」与「答案」两部分给出。
+4. 每题必须给 answer（参考答案）、explain（解析）与 points（分值，整数）；6 题 points 合计恰好 100。选择题 explain 说明正确项与干扰项；简答题 answer 分「思路」与「答案」两部分给出。
 5. 公式统一用 $...$ 的 LaTeX（前端 KaTeX 渲染），不要用 \\( \\)、\\[ \\] 或 $$ 定界。
 6. 数值必须自行验算正确。
 7. 题目涉及代码时：q/answer/explain 里的代码必须放进 ```go（其他语言用对应标注）围栏代码块、完整给出、单独成段（JSON 字符串里换行照常用转义）；不要把代码压成一行、不要截断或省略。
 8. 前端渲染能力（只用以下语法）：```go 围栏代码块、行内 `代码`、**加粗**、$...$ 行内 LaTeX（KaTeX 渲染）；不要用表格、图片、HTML 标签，也不要用 $$ 或 \\[ \\] 公式定界。""",
+    "quizmap": """你在为一张学习地图出一套「测验地图」——按知识点逐个出题，供学习者在线作答、自动判分。
+
+只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
+{"title":"<地图标题> · 测验","questions":[{"point":"L1 环境搭建与工具链","type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"...","points":10}]}
+
+规则：
+1. 覆盖：按地图的节点顺序出题，每个节点至少 1 题；节点多于 14 个时只覆盖最重要的 14 个节点。总题数 8~16。point 引用地图单元时用「L<编号> <标题>」形式（编号与「学习地图」页展示一致，地图内部 id n1 对应展示 L1）。
+2. 结合学习者情况：某节点「未完成」或「自测得分 < 80」的，可对该节点多出 1 题（重点考察）；已完成且得分高的节点 1 题即可。
+3. 题型：选择题为主（每题 4 个选项、单选），穿插 2~4 道填空题、1~2 道简答题（简答题题干明确要求给出「思路」和「答案」两部分）。选择题正确项字母要分散；干扰项用常见错误思路设置。
+4. 题目必须是「给学习者做的题」：直接考察知识点本身；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题。
+5. 每题必须给 answer（参考答案）、explain（解析）与 points（分值，整数）：全部题目 points 合计恰好 100 分（按题量与题型加权）。
+6. 公式统一用 $...$ 的 LaTeX（前端 KaTeX 渲染），不要用 \\( \\)、\\[ \\] 或 $$ 定界。代码用 ``` 围栏代码块完整给出，不要压成一行。
+7. 数值必须自行验算正确。
+8. 前端渲染能力（只用以下语法）：```语言 围栏代码块、行内 `代码`、**加粗**、$...$ 行内 LaTeX。不要用表格、图片、HTML 标签。""",
 }
 
 
@@ -603,7 +618,6 @@ def _norm_spec(spec, topic=""):
         "goal": clip(spec.get("goal"), 400),
         "level": clip(spec.get("level"), 60),
         "depth": clip(spec.get("depth"), 60),
-        "budget": clip(spec.get("budget"), 120),
         "preferences": prefs,
         "constraints": clip(spec.get("constraints"), 400),
         "outline_hint": _str_list(spec.get("outline_hint"), 8, 100),
@@ -674,12 +688,21 @@ def _norm_plan(obj, spec):
 
 
 def _norm_shq(q):
-    """归一单道自测题：透传 type/options（有 options 一律视为选择题）；题干为空返回 None。"""
+    """归一单道自测题：透传 type/options（有 options 一律视为选择题）与分值；题干为空返回 None。"""
     question = clip(q.get("q") or q.get("question"), 1500)
     if not question:
         return None
     item = {"q": question, "answer": clip(q.get("answer"), 1500),
             "explain": clip(q.get("explain"), 1500)}
+    try:
+        p = int(q.get("points"))
+        if 1 <= p <= 100:
+            item["points"] = p
+    except Exception:
+        pass
+    pt = clip(q.get("point"), 200)
+    if pt:
+        item["point"] = pt
     opts = []
     if isinstance(q.get("options"), list):
         opts = [clip(str(o), 400) for o in q.get("options") if str(o).strip()][:4]
@@ -691,6 +714,23 @@ def _norm_shq(q):
         if t in ("fill", "short"):
             item["type"] = t
     return item
+
+
+def _fix_points(qs):
+    """确保点数合计=100：齐全且和=100 则保留；否则平均分配（余数从最后一题往前加 1）。"""
+    n = len(qs)
+    if not n:
+        return qs
+    ok = all(isinstance(q.get("points"), int) and q["points"] > 0 for q in qs)
+    if ok and sum(q["points"] for q in qs) != 100:
+        ok = False
+    if not ok:
+        base, rem = divmod(100, n)
+        for q in qs:
+            q["points"] = base
+        for i in range(rem):
+            qs[n - 1 - i]["points"] += 1
+    return qs
 
 
 def _norm_node_detail(obj):
@@ -709,6 +749,7 @@ def _norm_node_detail(obj):
         qs.append(item)
         if len(qs) >= 6:
             break
+    _fix_points(qs)
     if not notes and not qs:
         return None
     return {"study_notes": notes,
@@ -732,9 +773,31 @@ def _norm_quiz_questions(obj):
         qs.append(item)
         if len(qs) >= 6:
             break
+    _fix_points(qs)
     if not qs:
         return None
     return {"questions": qs}
+
+
+def _norm_quizmap(obj, fallback_title=""):
+    """归一「测验地图」：{title, questions[..16]}，至少 1 题有效否则 None。"""
+    if not isinstance(obj, dict):
+        return None
+    title = clip(obj.get("title"), 120) or (clip(fallback_title, 120) + " · 测验")
+    qs = []
+    for q in (obj.get("questions") if isinstance(obj.get("questions"), list) else []):
+        if not isinstance(q, dict):
+            continue
+        item = _norm_shq(q)
+        if item is None:
+            continue
+        qs.append(item)
+        if len(qs) >= 16:
+            break
+    if not qs:
+        return None
+    _fix_points(qs)
+    return {"title": title, "questions": qs}
 
 
 def _norm_quiz_result(obj, n):
@@ -833,7 +896,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/state/all"):
             self._json(200, {"ok": True, "entries": self._state_all()})
         elif self.path.startswith("/health"):
-            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/state/all", "/state/put", "/state/del", "/state/delete"]})
+            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/path/quizmap", "/state/all", "/state/put", "/state/del", "/state/delete"]})
         else:
             self._json(404, {"error": "not found"})
 
@@ -1150,6 +1213,122 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, rq)
             return
 
+        # -- 测验地图：按学习地图 + 学习情况出一整套测验 --
+        if path.startswith("/path/quizmap"):
+            key = clip(str(body.get("key") or ""), 200)
+            if not (key.startswith("learn-path-v1-") and not key.endswith("-last")):
+                self._json(400, {"error": "key must be a learn-path-v1 material key"})
+                return
+            gate_key = "quizmap:" + key
+            hit = _gen_cache_get(gate_key, GEN_CACHE_TTL)
+            if hit is not None:
+                self._json(200, hit)
+                return
+            _gate, _owner = _gen_gate_join(gate_key)
+            if not _owner:
+                _gate["ev"].wait(GEN_WAIT_MAX)
+                hit = _gate["out"] or _gen_cache_get(gate_key, GEN_CACHE_TTL)
+                if hit is not None:
+                    self._json(200, hit)
+                    return
+                self._json(502, {"error": _gate["err"] or "测验地图仍在生成中，请稍后重试"})
+                return
+            m = _state_material(key)
+            if not m:
+                _gen_gate_finish(gate_key, _gate, err="material not found")
+                self._json(404, {"error": "material not found"})
+                return
+            plan = m.get("plan") if isinstance(m.get("plan"), dict) else None
+            if not plan or not isinstance(plan.get("nodes"), list) or not plan["nodes"]:
+                _gen_gate_finish(gate_key, _gate, err="plan required")
+                self._json(422, {"error": "plan required"})
+                return
+            detail = m.get("nodeDetail") if isinstance(m.get("nodeDetail"), dict) else {}
+            nstate = m.get("nodeState") if isinstance(m.get("nodeState"), dict) else {}
+            map_title = clip(m.get("topic") or plan.get("title"), 120)
+            out_nodes = []
+            for n in plan["nodes"]:
+                if not isinstance(n, dict):
+                    continue
+                nid = clip(n.get("id"), 20)
+                if not nid:
+                    continue
+                st = nstate.get(nid) if isinstance(nstate.get(nid), dict) else {}
+                done = bool(st.get("completed"))
+                score = st.get("score") if isinstance(st.get("score"), (int, float)) else None
+                item = {"id": nid, "标题": clip(n.get("title"), 120),
+                        "本质": clip(n.get("essence"), 200),
+                        "目标": _str_list(n.get("objectives"), 3, 160),
+                        "依赖": _str_list(n.get("deps"), 6, 20),
+                        "情况": {"已完成": done,
+                               "得分": int(score) if isinstance(score, (int, float)) else None}}
+                d = detail.get(nid) if isinstance(detail.get(nid), dict) else {}
+                kp = _str_list(d.get("key_points"), 3, 200)
+                if kp:
+                    item["要点"] = kp
+                out_nodes.append(item)
+            if not out_nodes:
+                _gen_gate_finish(gate_key, _gate, err="plan required")
+                self._json(422, {"error": "plan required"})
+                return
+            done_set = set(n["id"] for n in out_nodes if n["情况"]["已完成"])
+            done_n = len(done_set)
+            score_parts, weak = [], []
+            for n in out_nodes:
+                sc = n["情况"]["得分"]
+                if sc is not None:
+                    score_parts.append("%s=%d" % (n["id"], sc))
+                unlocked = all(dep in done_set for dep in n["依赖"])
+                if (isinstance(sc, (int, float)) and sc < 80) or (not n["情况"]["已完成"] and unlocked):
+                    weak.append(n["id"])
+            learner = "共 %d 个节点；已完成 %d；自测得分：%s；薄弱（<80 或未完成且已解锁）：%s" % (
+                len(out_nodes), done_n, "、".join(score_parts) or "（暂无）", "、".join(weak) or "（无）")
+            payload = {
+                "学习地图": {"title": map_title, "summary": clip(plan.get("summary"), 300),
+                          "nodes": out_nodes},
+                "学习者概况": learner,
+            }
+            def _mk_quizmap(extra=""):
+                return [
+                    {"role": "system", "content": _path_system("quizmap")},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)
+                     + "\n请输出测验地图 JSON。" + extra},
+                ]
+            try:
+                qm = _norm_quizmap(_json_block(_upstream_nonempty(
+                    _mk_quizmap(), max_tokens=PATH_MAX_TOKENS, temperature=0.4)), map_title)
+                if qm is None:
+                    qm = _norm_quizmap(_json_block(_upstream_nonempty(
+                        _mk_quizmap(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），必须含 8~16 道题，points 合计恰好 100。"),
+                        max_tokens=PATH_MAX_TOKENS, temperature=0.3)), map_title)
+            except Exception:
+                _gen_gate_finish(gate_key, _gate, err="quizmap generation failed")
+                raise
+            if qm is None:
+                _gen_gate_finish(gate_key, _gate, err="quizmap generation failed")
+                self._json(502, {"error": "quizmap generation failed"})
+                return
+            try:
+                src_slug = key[len("learn-path-v1-"):]
+                base_slug = src_slug + "-测验"
+                slug = base_slug
+                i = 1
+                while _state_read_key("quiz-map-v1-" + slug) is not None and i < 50:
+                    i += 1
+                    slug = base_slug + str(i)
+                store = {"kind": "quiz-map", "sourceKey": key, "sourceSlug": src_slug,
+                         "title": qm["title"], "created": int(time.time()),
+                         "questions": qm["questions"], "attempts": []}
+                self._state_put({"quiz-map-v1-" + slug: json.dumps(store, ensure_ascii=False)})
+            except Exception:
+                _gen_gate_finish(gate_key, _gate, err="quizmap save failed")
+                raise
+            out = {"ok": True, "slug": slug, "title": qm["title"], "count": len(qm["questions"])}
+            _gen_cache_put(gate_key, out)
+            _gen_gate_finish(gate_key, _gate, out=out)
+            self._json(200, out)
+            return
+
         # -- 自测判分 --
         if path.startswith("/path/quiz"):
             node = body.get("node") or {}
@@ -1158,10 +1337,12 @@ class Handler(BaseHTTPRequestHandler):
             if not qsrc and isinstance(body.get("quiz"), dict):
                 qsrc = (body.get("quiz") or {}).get("questions")
             qs = []
-            for q in (qsrc or [])[:6]:
+            for q in (qsrc or [])[:16]:
                 if not (isinstance(q, dict) and clip(q.get("q"), 300)):
                     continue
                 item = {"q": clip(q.get("q"), 1500), "answer": clip(q.get("answer"), 1500)}
+                if isinstance(q.get("points"), (int, float)) and 1 <= int(q["points"]) <= 100:
+                    item["points"] = int(q["points"])
                 if isinstance(q.get("type"), str) and q.get("type") in ("choice", "fill", "short"):
                     item["type"] = q.get("type")
                 if isinstance(q.get("options"), list):

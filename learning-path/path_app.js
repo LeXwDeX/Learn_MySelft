@@ -272,6 +272,8 @@
     $('stage-intake').hidden = s !== 'intake';
     $('stage-research').hidden = s !== 'research';
     $('stage-learning').hidden = s !== 'learning';
+    var qb = $('quizmap-btn');
+    if (qb) qb.hidden = !(s === 'learning' && state.plan);
     var tabs = document.querySelectorAll('.stab');
     for (var i = 0; i < tabs.length; i++) {
       var k = tabs[i].dataset.stage;
@@ -296,6 +298,15 @@
   }
 
   // ---------- 图状态 ----------
+  // 显示层编号：学习单元 n1 → L1（内部 id / 数据键 / DOM id 一律不动）
+  function dispId(id) { return String(id).replace(/^n(\d+)$/, 'L$1'); }
+  // 老题目没有 points 时的均分值：100/n 向下取整，余数从最后一题向前每题 +1（与服务端 _fix_points 一致）
+  function evenPts(n) {
+    var out = [], base = Math.floor(100 / n), rem = 100 % n;
+    for (var i = 0; i < n; i++) out.push(base);
+    for (var j = 0; j < rem; j++) out[n - 1 - j] += 1;
+    return out;
+  }
   function nodeById(id) {
     if (!state.plan) return null;
     for (var i = 0; i < state.plan.nodes.length; i++) if (state.plan.nodes[i].id === id) return state.plan.nodes[i];
@@ -310,7 +321,7 @@
     return depsOf(id).every(function (d) { return isDone(d); });
   }
   function depTitles(id) {
-    return depsOf(id).map(function (d) { var n = nodeById(d); return n ? n.title : d; });
+    return depsOf(id).map(function (d) { var n = nodeById(d); return n ? n.title : dispId(d); });
   }
 
   // ---------- 阶段 A：采集对话 ----------
@@ -328,7 +339,7 @@
     if (state.topic) appendBubble('user', state.topic);
     state.history.forEach(function (m) { appendBubble(m.role, m.content); });
     if (!state.topic) {
-      appendBubble('assistant', '你好，我是你的学习规划助手。先说说你想学什么？例如「三周入门 Rust」「系统学会 Blender 建模」。');
+      appendBubble('assistant', '你好，我是你的学习助手。先说说你想学什么？例如「Go 语言入门」「Blender 建模」。');
     }
   }
   function setChatDisabled(off) {
@@ -394,7 +405,7 @@
     }
     card.innerHTML = '<h3>需求单（Spec）</h3><div class="spec-grid">' +
       row('主题', sp.topic) + row('目标', sp.goal) + row('现有基础', sp.level) +
-      row('期望深度', sp.depth) + row('可投入时间', sp.budget) +
+      row('期望深度', sp.depth) +
       row('偏好形式', (sp.preferences || []).join('、')) +
       row('约束', sp.constraints) + row('大纲线索', (sp.outline_hint || []).join('；')) +
       '</div>';
@@ -512,7 +523,7 @@
     el.id = 'node-' + n.id;
     el.dataset.id = n.id;
     el.innerHTML = '<div class="node-head">' +
-      '<span class="node-no">' + esc(n.id) + '</span>' +
+      '<span class="node-no">' + esc(dispId(n.id)) + '</span>' +
       '<h3 class="node-title">' + esc(n.title) + '</h3>' +
       '<span class="status ' + cls + '">' + label + '</span></div>' +
       '<p class="node-ess">' + esc(n.essence || '') + '</p>';
@@ -561,7 +572,7 @@
     hideError();
     // 门控：锁定节点不发 /path/node
     if (!isUnlocked(id) && !isDone(id)) {
-      panelHead(id, n.title, n.essence, 'NODE ' + id + ' · 锁定');
+      panelHead(id, n.title, n.essence, 'NODE ' + dispId(id) + ' · 锁定');
       var pre = depTitles(id);
       $('panel-body').innerHTML = '<div class="panel-sec"><h4>先完成以下前置节点</h4><ul>' +
         pre.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
@@ -570,7 +581,7 @@
       return;
     }
     if (state.nodeDetail[id]) { renderNodeDetail(id); return; }
-    panelHead(id, n.title, n.essence, 'NODE ' + id);
+    panelHead(id, n.title, n.essence, 'NODE ' + dispId(id));
     $('panel-body').innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
     setFoot('');
     post('/path/node', {
@@ -625,8 +636,10 @@
 
   // ---------- 自测题渲染（选择题点选 / 填空·简答文本作答） ----------
   var choiceAns = {};   // { 题号: 字母 } —— 选择题当前选择
-  function quizQHtml(q, i, radioPrefix, areaPrefix, cur) {
-    var head = '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + mdRender(q.q) + '</p>';
+  function quizQHtml(q, i, radioPrefix, areaPrefix, cur, ptsArr) {
+    var pts = (q.points != null) ? q.points : (ptsArr ? ptsArr[i] : null);
+    var head = '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' +
+      (pts != null ? '<span class="q-points">（' + pts + ' 分）</span> ' : '') + mdRender(q.q) + '</p>';
     if (q.options && q.options.length) {
       var opts = q.options.map(function (o, j) {
         var letter = String.fromCharCode(65 + j);
@@ -655,11 +668,12 @@
   function renderNodeDetail(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
-    panelHead(id, n.title, n.essence, 'NODE ' + id + (isDone(id) ? ' · 已完成' : ''));
+    panelHead(id, n.title, n.essence, 'NODE ' + dispId(id) + (isDone(id) ? ' · 已完成' : ''));
     var qs = ((d.quiz && d.quiz.questions) || []);
     choiceAns = {};
+    var ptsArr = evenPts(qs.length);
     var quizHtml = qs.map(function (q, i) {
-      return quizQHtml(q, i, 'opt-', 'ans-', null);
+      return quizQHtml(q, i, 'opt-', 'ans-', null, ptsArr);
     }).join('');
     var prev = state.nodeState[id] || {};
     var prevResult = '';
@@ -674,7 +688,7 @@
       listSection('要点', d.key_points) +
       listSection('例子', d.examples) +
       listSection('易错点', d.misconceptions) +
-      (qs.length ? '<div class="panel-sec"><h4>自测（' + qs.length + ' 题）</h4>' + quizHtml + '</div>' : '') +
+      (qs.length ? '<div class="panel-sec"><h4>自测（' + qs.length + ' 题 · 满分 100 分）</h4>' + quizHtml + '</div>' : '') +
       prevResult;
     renderMathIn($('panel-body'));
     highlightIn($('panel-body'));
@@ -697,11 +711,12 @@
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
     modalNodeId = id;
-    $('qm-title').textContent = 'NODE ' + id + ' · ' + n.title + ' — 自测答题';
+    $('qm-title').textContent = 'NODE ' + dispId(id) + ' · ' + n.title + ' — 自测答题';
     var qs = (d.quiz && d.quiz.questions) || [];
+    var ptsArr = evenPts(qs.length);
     var h = qs.map(function (q, i) {
       var cur = $('ans-' + i) ? $('ans-' + i).value : '';
-      return quizQHtml(q, i, 'qmo-', 'qma-', cur);
+      return quizQHtml(q, i, 'qmo-', 'qma-', cur, ptsArr);
     }).join('');
     $('qm-body').innerHTML = h;
     renderMathIn($('qm-body'));
@@ -745,6 +760,7 @@
         var o = { q: q.q, answer: q.answer };
         if (q.type) o.type = q.type;
         if (q.options && q.options.length) o.options = q.options;
+        if (q.points) o.points = q.points;
         return o;
       }),
       answers: answers
@@ -768,9 +784,12 @@
     var d = state.nodeDetail[id];
     var qs = ((d.quiz && d.quiz.questions) || []);
     var per = res.per_question || [];
+    var pts = evenPts(qs.length);
     var detail = qs.map(function (q, i) {
       var p = per[i] || {};
-      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + mdRender(q.q) + '</p>' +
+      var pv = (q.points != null) ? q.points : pts[i];
+      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' +
+        (pv != null ? '<span class="q-points">（' + pv + ' 分）</span> ' : '') + mdRender(q.q) + '</p>' +
         '<div class="result ' + (p.ok ? 'ok' : 'bad') + '">' +
         '<strong>' + (p.ok ? '✓ 正确' : '✗ 有缺漏') + '</strong> ' + mdRender(p.comment || '') + '</div></div>';
     }).join('');
@@ -835,6 +854,21 @@
     renderNodeDetail(id);
   }
 
+  // ---------- 生成测验地图（按学习地图 + 学习情况） ----------
+  function genQuizMap() {
+    if (!(state.stage === 'learning' && state.plan)) return;
+    if (!confirm('确认根据这张学习地图和你的学习情况生成一套测验？\n（按知识点出题 8~16 道，合计 100 分；生成后打开「测验地图」作答）')) return;
+    var btn = $('quizmap-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）'; }
+    hideError();
+    post('/path/quizmap', { key: storeKey() }).then(function (r) {
+      location.href = 'quiz-map.html?t=' + encodeURIComponent(r.slug);
+    }).catch(function (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '生成测验'; }
+      showError('生成测验失败：' + e.message, genQuizMap);
+    });
+  }
+
   // ---------- 重新开始 ----------
   function restart() {
     if (!confirm('确定要清空当前学习路径并重新开始吗？')) return;
@@ -885,17 +919,41 @@
       return out;
     }).catch(function () { return []; });
   }
+  var QUIZ_PREFIX = 'quiz-map-v1-';
+  function fetchQuizMaps() {
+    return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      var entries = (j && j.entries) || {}, out = [];
+      Object.keys(entries).forEach(function (k) {
+        if (k.indexOf(QUIZ_PREFIX) !== 0) return;
+        var v = entries[k];
+        if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
+        var d = null;
+        try { d = JSON.parse(v); } catch (e) { d = null; }
+        if (!d || typeof d !== 'object') return;
+        var it = { slug: k.slice(QUIZ_PREFIX.length), title: d.title || k.slice(QUIZ_PREFIX.length),
+                   count: (d.questions || []).length, last: null };
+        var at = d.attempts || [];
+        if (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number') {
+          it.last = at[at.length - 1].score;
+        }
+        out.push(it);
+      });
+      out.sort(function (a, b) { return (b.last || 0) - (a.last || 0); });
+      return out;
+    }).catch(function () { return []; });
+  }
   function libRender() {
     var pop = $('lib-pop');
     if (!pop) return;
     pop.innerHTML = '<p class="lib-h"><span>学习资料库</span><i>服务端数据</i></p><p class="lib-sub">加载中…</p>';
-    fetchMaterials().then(function (items) {
+    Promise.all([fetchMaterials(), fetchQuizMaps()]).then(function (res) {
+      var items = res[0], quizzes = res[1];
       var cnt = $('lib-count');
-      if (cnt) cnt.textContent = ' (' + items.length + ')';
+      if (cnt) cnt.textContent = ' (' + (items.length + quizzes.length) + ')';
       var h = '<p class="lib-h"><span>学习资料库</span><i>服务端动态扫描</i></p>';
-      h += '<p class="lib-sub">学习路径</p>';
+      h += '<p class="lib-sub">学习地图 · ' + items.length + '</p>';
       if (!items.length) {
-        h += '<p class="lib-empty">暂无生成的学习路径——去生成一个吧。</p>';
+        h += '<p class="lib-empty">暂无生成的学习地图——去生成一个吧。</p>';
       } else {
         for (var i = 0; i < items.length; i++) {
           var it = items[i], meta = STAGE_LABEL[it.stage] || it.stage || '';
@@ -907,8 +965,22 @@
                '</div>';
         }
       }
+      h += '<p class="lib-sub">测验地图 · ' + quizzes.length + '</p>';
+      if (!quizzes.length) {
+        h += '<p class="lib-empty">暂无测验地图——在学习地图里点「生成测验」。</p>';
+      } else {
+        for (var j = 0; j < quizzes.length; j++) {
+          var q = quizzes[j];
+          var qmeta = '共 ' + q.count + ' 题' + (q.last != null ? ' · 最近 ' + q.last + ' 分' : '');
+          h += '<div class="lib-row">' +
+               '<a class="lib-item" href="quiz-map.html?t=' + encodeURIComponent(q.slug) + '">' +
+               '<span class="t">' + esc(q.title) + '</span><span class="m">' + esc(qmeta) + '</span></a>' +
+               '<button class="lib-del" type="button" data-slug="' + esc(q.slug) + '" data-topic="' + esc(q.title) + '" data-key="' + esc(QUIZ_PREFIX + q.slug) + '" title="删除这份资料">🗑</button>' +
+               '</div>';
+        }
+      }
       h += '<div class="lib-foot">' +
-           '<a href="learning-path.html?new=1">＋ 生成新的学习路径</a>' +
+           '<a href="learning-path.html?new=1">＋ 生成新的学习地图</a>' +
            '</div>';
       pop.innerHTML = h;
     });
@@ -916,9 +988,9 @@
   function libBind() {
     var btn = $('lib-btn'), pop = $('lib-pop'), wrap = $('lib-wrap');
     if (!btn || !pop) return;
-    fetchMaterials().then(function (items) {
+    Promise.all([fetchMaterials(), fetchQuizMaps()]).then(function (res) {
       var cnt = $('lib-count');
-      if (cnt) cnt.textContent = ' (' + items.length + ')';
+      if (cnt) cnt.textContent = ' (' + (res[0].length + res[1].length) + ')';
     });
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -926,7 +998,7 @@
     });
     pop.addEventListener('click', function (e) {
       var b = e.target && e.target.closest ? e.target.closest('.lib-del') : null;
-      if (b) { e.stopPropagation(); openDelModal(b.getAttribute('data-slug'), b.getAttribute('data-topic')); }
+      if (b) { e.stopPropagation(); openDelModal(b.getAttribute('data-slug'), b.getAttribute('data-topic'), b.getAttribute('data-key') || null); }
     });
     document.addEventListener('click', function (e) {
       var dm = $('del-modal');
@@ -936,9 +1008,10 @@
   }
 
   // ---------- 删除资料（需密码；校验在服务端） ----------
-  var delSlug = null;
-  function openDelModal(s, topic) {
+  var delSlug = null, delKey = null;
+  function openDelModal(s, topic, fullKey) {
     delSlug = s;
+    delKey = fullKey || null;
     $('dm-topic').textContent = topic || s;
     var err = $('dm-err'); if (err) err.hidden = true;
     var inp = $('dm-pass'); if (inp) inp.value = '';
@@ -948,14 +1021,16 @@
   function closeDelModal() {
     $('del-modal').hidden = true;
     delSlug = null;
+    delKey = null;
   }
   function submitDel() {
     if (!delSlug) return;
     var target = delSlug;
+    var key = delKey || (STORE_PREFIX + target);
     var pass = ($('dm-pass') || {}).value || '';
     fetch(API + '/state/delete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keys: [STORE_PREFIX + target], password: pass })
+      body: JSON.stringify({ keys: [key], password: pass })
     }).then(function (r) { return r.json(); }).then(function (j) {
       if (j && j.ok) {
         var wasCurrent = slug(state.topic || '') === target;
@@ -1000,6 +1075,7 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && !$('del-modal').hidden) closeDelModal();
     });
+    $('quizmap-btn').addEventListener('click', genQuizMap);
     libBind();
 
     purgeLocalLegacy();   // 清理历史遗留的浏览器本地数据（页面已不再本地保存任何东西）

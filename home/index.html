@@ -66,15 +66,27 @@ footer .fixed{color:var(--ink)}
 
   <div class="grid">
     <a class="tool" href="/diagram-design/learning-path/learning-path.html">
-      <span class="no">01 · Learning Path · 学习路径</span>
-      <h2>学习资料生成器</h2>
-      <p class="desc">输入一个主题 → 对话采集需求 → 主动研究检索 → 生成带依赖门控的学习路径图；每个节点配讲义、要点、易错与自测。</p>
+      <span class="no">01 · Learning Map · 学习地图</span>
+      <h2>学习地图生成器</h2>
+      <p class="desc">输入一个主题 → 对话确认知识点范围与深度 → 主动研究检索 → 生成带依赖门控的<b>学习地图</b>；每个<b>知识点</b>配讲义、要点、易错与自测。</p>
       <ul>
         <li>生成过的资料会自动出现在<b>本页下方</b>和页面右上角「学习资料库 ▾」里，点击直开</li>
         <li>每份资料独立对话与进度；数据只在服务端，打开页面即远程加载</li>
       </ul>
       <p class="path">/diagram-design/learning-path/learning-path.html</p>
-      <span class="go">打开学习路径 →</span>
+      <span class="go">打开学习地图 →</span>
+    </a>
+
+    <a class="tool" href="/diagram-design/learning-path/quiz-map.html">
+      <span class="no">02 · Quiz Map · 测验地图</span>
+      <h2>测验地图生成器</h2>
+      <p class="desc">从任意一张学习地图出发，按知识点与你的学习情况生成整套测验；在线作答、自动判分，结果计入学习情况。</p>
+      <ul>
+        <li>生成后可直接在<b>测验地图</b>页在线作答，自动判分</li>
+        <li>每张测验地图独立保存；数据只在服务端，页面不做任何本地保存</li>
+      </ul>
+      <p class="path">/diagram-design/learning-path/quiz-map.html</p>
+      <span class="go">打开测验地图 →</span>
     </a>
 
   </div>
@@ -103,6 +115,7 @@ footer .fixed{color:var(--ink)}
   'use strict';
   var API = location.protocol + '//' + location.hostname + ':8101';
   var PREFIX = 'learn-path-v1-', LAST = 'learn-path-v1-last';
+  var QUIZ_PREFIX = 'quiz-map-v1-';
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -110,26 +123,41 @@ footer .fixed{color:var(--ink)}
   function stageLabel(s) {
     return ({ intake: '阶段 I · 需求采集', research: '阶段 R · 主动研究', learning: '阶段 L · 学习路径' })[s] || s || '';
   }
-  function render(items) {
+  function render(maps, quizzes) {
     var box = document.getElementById('lib-list'), cnt = document.getElementById('lib-n');
-    if (cnt) cnt.textContent = items.length ? ('共 ' + items.length + ' 份') : '';
+    var total = maps.length + quizzes.length;
+    if (cnt) cnt.textContent = total ? ('共 ' + total + ' 份') : '';
     if (!box) return;
-    if (!items.length) {
-      box.innerHTML = '<p class="lempty">还没扫描到生成的学习资料——点上面「学习资料生成器」生成一个吧。（数据保存在服务端）</p>';
-      return;
-    }
     var h = '';
-    for (var j = 0; j < items.length; j++) {
-      var t = items[j], m = stageLabel(t.stage);
-      if (t.stage === 'learning') m = t.total ? (t.done + '/' + t.total + ' 节点完成') : '路径已生成';
-      h += '<a class="lrow" href="/diagram-design/learning-path/learning-path.html?t=' + encodeURIComponent(t.slug) + '">' +
-           '<span class="lt"><span class="t">' + esc(t.topic) + '</span><span class="m">' + esc(m) + '</span></span>' +
-           '<span class="go">打开 →</span></a>';
+    h += '<p class="hint" style="margin:4px 0 8px">学习地图 · ' + maps.length + '</p>';
+    if (!maps.length) {
+      h += '<p class="lempty">暂无学习地图——点上面「学习地图生成器」生成一个吧。</p>';
+    } else {
+      for (var j = 0; j < maps.length; j++) {
+        var t = maps[j], m = stageLabel(t.stage);
+        if (t.stage === 'learning') m = t.total ? (t.done + '/' + t.total + ' 节点完成') : '路径已生成';
+        h += '<a class="lrow" href="/diagram-design/learning-path/learning-path.html?t=' + encodeURIComponent(t.slug) + '">' +
+             '<span class="lt"><span class="t">' + esc(t.topic) + '</span><span class="m">' + esc(m) + '</span></span>' +
+             '<span class="go">打开 →</span></a>';
+      }
+    }
+    h += '<p class="hint" style="margin:18px 0 8px">测验地图 · ' + quizzes.length + '</p>';
+    if (!quizzes.length) {
+      h += '<p class="lempty">暂无测验地图——在学习地图里点「生成测验」。</p>';
+    } else {
+      for (var k = 0; k < quizzes.length; k++) {
+        var q = quizzes[k];
+        var meta = '共 ' + q.count + ' 题' + (q.last != null ? ' · 最近 ' + q.last + ' 分' : '') +
+                   (q.source ? ' · 来自《' + q.source + '》' : '');
+        h += '<a class="lrow" href="/diagram-design/learning-path/quiz-map.html?t=' + encodeURIComponent(q.slug) + '">' +
+             '<span class="lt"><span class="t">' + esc(q.title) + '</span><span class="m">' + esc(meta) + '</span></span>' +
+             '<span class="go">打开 →</span></a>';
+      }
     }
     box.innerHTML = h;
   }
   fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-    var entries = (j && j.entries) || {}, items = [];
+    var entries = (j && j.entries) || {}, maps = [], quizzes = [], mapTopics = {};
     Object.keys(entries).forEach(function (k) {
       if (k.indexOf(PREFIX) !== 0 || k === LAST) return;
       var v = entries[k];
@@ -145,13 +173,28 @@ footer .fixed{color:var(--ink)}
         var ns = d.nodeState || {};
         for (var id in ns) { if (ns[id] && ns[id].completed) it.done++; }
       } else { it.topic = it.slug; }
-      items.push(it);
+      mapTopics[k] = it.topic;
+      maps.push(it);
     });
-    items.sort(function (a, b) {
+    Object.keys(entries).forEach(function (k) {
+      if (k.indexOf(QUIZ_PREFIX) !== 0) return;
+      var v = entries[k];
+      if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
+      var d = null;
+      try { d = JSON.parse(v); } catch (e) { d = null; }
+      if (!d || typeof d !== 'object') return;
+      var at = d.attempts || [];
+      var last = (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number') ? at[at.length - 1].score : null;
+      quizzes.push({ slug: k.slice(QUIZ_PREFIX.length), title: d.title || k.slice(QUIZ_PREFIX.length),
+                     count: (d.questions || []).length, last: last,
+                     source: mapTopics[d.sourceKey] || d.sourceSlug || '' });
+    });
+    maps.sort(function (a, b) {
       var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
       return pa - pb || b.done - a.done;
     });
-    render(items);
+    quizzes.sort(function (a, b) { return (b.last || 0) - (a.last || 0); });
+    render(maps, quizzes);
   }).catch(function () {
     var box = document.getElementById('lib-list');
     if (box) box.innerHTML = '<p class="lempty">无法连接服务端（33.146:8101）——请稍后刷新重试。</p>';
