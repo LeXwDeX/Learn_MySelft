@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>测验地图 · 按知识点出题 → 在线作答 → 自动判分</title>
+<style>
+:root{
+  --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
+  --soft:#7a8399; --rule:rgba(45,49,66,.12); --accent:#eb6c36;
+  --accent-tint:rgba(235,108,54,.08); --ok:#2f7d5d;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --serif:Georgia,"Songti SC","SimSun",serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
+  --min-page-w:1360px;
+  --max-w:1150px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.65;min-width:var(--min-page-w)}
+.toolbar{position:sticky;top:0;background:rgba(245,245,245,.96);border-bottom:1px solid var(--rule);z-index:6;backdrop-filter:blur(6px)}
+.toolbar-inner{max-width:var(--max-w);margin:0 auto;padding:16px 32px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.brand h1{font-family:var(--serif);font-weight:400;font-size:22px;margin:0;letter-spacing:.01em}
+.brand .sub{color:var(--soft);font-size:12px;margin:0;font-family:var(--mono)}
+.spacer{flex:1 1 auto}
+.btn{font-family:var(--sans);font-size:12px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:5px 11px;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:5px;text-decoration:none}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{border-color:var(--accent);background:var(--accent);color:#fff;font-weight:600}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.wrap{max-width:var(--max-w);margin:0 auto;padding:26px 32px 90px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin:0 0 8px}
+h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
+.muted{color:var(--muted);font-size:13.5px}
+.tip{color:var(--soft);font-size:12.5px}
+.card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:20px 24px;margin-bottom:18px}
+.mode-h{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.mode-h h2{margin:0}
+.qgroup{margin:24px 0 8px}
+.qgroup-h{font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;color:var(--accent);text-transform:uppercase;border-bottom:1px solid var(--rule);padding-bottom:6px;margin:0 0 12px}
+.quiz-box{background:#fbfbfb;border:1px solid var(--rule);border-radius:7px;padding:11px 13px;margin:0 0 10px}
+.quiz-box .q{margin:0 0 8px;font-size:13.5px;font-weight:600;white-space:pre-wrap}
+.quiz-box .q .q-points{color:var(--soft,#7a8399);font-size:12.5px;font-weight:400}
+.quiz-box textarea{width:100%;min-height:140px;font-family:var(--sans);font-size:13.5px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:#fff;color:var(--ink);resize:vertical;outline:none}
+.quiz-box textarea:focus{border-color:var(--accent)}
+.quiz-box .qopts{margin:2px 0 0;display:flex;flex-direction:column;gap:6px}
+.quiz-box .qopt{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border:1px solid var(--rule);border-radius:6px;background:#fff;cursor:pointer;font-size:13.5px;line-height:1.6}
+.quiz-box .qopt:hover{border-color:var(--accent);background:var(--accent-tint)}
+.quiz-box .qopt input{margin:3px 0 0;flex:none;accent-color:var(--accent)}
+.quiz-box .qopt > span{flex:1 1 auto;min-width:0;white-space:pre-wrap}
+.result{margin-top:8px;font-size:13px;border-left:2px solid var(--accent);padding-left:10px;white-space:pre-wrap}
+.result.ok{border-left-color:var(--ok)}
+.result.bad{border-left-color:#b23a48}
+.score{font-family:var(--mono);font-size:22px;font-weight:700}
+.score.ok{color:var(--ok)} .score.bad{color:#b23a48}
+.md-code{background:#f7f7f8;border:1px solid var(--rule);border-radius:6px;padding:10px 12px;font-family:var(--mono);font-size:12.5px;line-height:1.6;font-weight:400;overflow-x:auto;margin:6px 0;white-space:pre}
+.md-code code{font-family:inherit}
+code.md-inline{font-family:var(--mono);font-size:.92em;background:#f4f4f5;border:1px solid var(--rule);border-radius:4px;padding:0 4px;font-weight:400}
+pre.md-code code.hljs{background:transparent;padding:0}
+.foot{display:flex;gap:10px;align-items:center;margin:18px 0}
+.lrow{display:flex;align-items:center;justify-content:space-between;gap:16px;background:#fff;border:1px solid var(--rule);border-radius:6px;padding:12px 16px;text-decoration:none;color:inherit;margin-bottom:8px}
+.lrow:hover{border-color:var(--accent)}
+.lrow .lt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.lrow .t{font-size:14.5px;font-weight:600}
+.lrow .m{font-family:var(--mono);font-size:11px;color:var(--soft)}
+.lrow .go{font-family:var(--mono);font-size:12px;color:var(--accent);flex:none}
+.lempty{color:var(--soft);font-size:13.5px;margin:2px 0}
+.lerr{background:#fff4ef;border:1px solid rgba(235,108,54,.4);border-left:3px solid var(--accent);border-radius:6px;padding:12px 16px;font-size:13.5px;color:#8a4b2a}
+.qcount{font-family:var(--mono);font-size:11px;color:var(--soft)}
+</style>
+<link rel="stylesheet" href="./katex/katex.min.css">
+<link rel="stylesheet" href="./highlight/github.min.css">
+</head>
+<body>
+<header class="toolbar">
+  <div class="toolbar-inner">
+    <a class="btn home-link" href="/learn/" title="返回首页">← 首页</a>
+    <div class="brand">
+      <h1>测验地图</h1>
+      <p class="sub" id="brand-sub">按知识点出题 · 在线作答 · 自动判分</p>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn" id="to-map" href="#" hidden>打开对应学习地图 →</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <main id="main">
+    <p class="tip">加载中…</p>
+  </main>
+</div>
+
+<script src="./katex/katex.min.js"></script>
+<script src="./katex/contrib/auto-render.min.js"></script>
+<script src="./highlight/highlight.min.js"></script>
+<script>
+__QUIZ_DIALOG_JS__
+</script>
+<script>
+/* 测验地图 · 两种模式：
+ *   ?t=<slug>  查看/作答某张测验地图（结果回写学习情况）
+ *   无参数     选择模式：从学习地图生成测验 / 打开已有测验地图
+ * 后端契约：/path/quizmap（生成）、/path/quiz（判分）、/state/*（服务端数据）
+ */
+(function () {
+  'use strict';
+
+  var API = location.protocol + '//' + location.hostname + ':8101';
+  var TIMEOUT = 360000;
+  var USER_PATH = 'u0/';              // 多用户口子——固定用户路径，将来替换为每用户 id
+  var QUIZ_PREFIX = 'quiz-map-v1-';
+  var MAP_PREFIX = 'learn-path-v1-';
+  var LAST_KEY = 'learn-path-v1-last';
+
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  function param(k) {
+    try { return new URLSearchParams(location.search).get(k); } catch (e) { return null; }
+  }
+  // 服务端状态键统一带固定用户前缀；扫描/匹配前先剥掉它再按原业务键逻辑
+  function stripUser(k) {
+    return (typeof k === 'string' && k.indexOf(USER_PATH) === 0) ? k.slice(USER_PATH.length) : k;
+  }
+  // 读状态：优先固定前缀键，兼容无前缀旧键
+  function entryVal(entries, bizKey) {
+    if (typeof entries[USER_PATH + bizKey] === 'string') return entries[USER_PATH + bizKey];
+    if (typeof entries[bizKey] === 'string') return entries[bizKey];
+    return undefined;
+  }
+  function renderMathIn(el) {
+    if (!el || typeof window.renderMathInElement !== 'function') return;
+    try {
+      window.renderMathInElement(el, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '\\(', right: '\\)', display: false },
+          { left: '$', right: '$', display: false }
+        ],
+        throwOnError: false,
+        ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option']
+      });
+    } catch (e) { /* 渲染失败保留原始文本 */ }
+  }
+  function highlightIn(el) {
+    if (typeof hljs === 'undefined' || !el) return;
+    var codes = el.querySelectorAll('pre.md-code code');
+    for (var i = 0; i < codes.length; i++) {
+      var c = codes[i];
+      try {
+        if (/\blanguage-/.test(c.className)) { hljs.highlightElement(c); }
+        else { var r = hljs.highlightAuto(c.textContent); c.innerHTML = r.value; c.className = 'hljs'; }
+      } catch (e) { /* 高亮失败不影响正文 */ }
+    }
+  }
+  function mdText(t) {
+    return esc(t)
+      .replace(/`([^`\n]+)`/g, function (_, c) { return '<code class="md-inline">' + c + '</code>'; })
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  }
+  function mdRender(text) {
+    var src = String(text == null ? '' : text);
+    var out = '', last = 0, m;
+    var re = /```([a-zA-Z0-9+#-]*)\r?\n?([\s\S]*?)```/g;
+    while ((m = re.exec(src))) {
+      out += mdText(src.slice(last, m.index));
+      out += '<pre class="md-code"><code' + (m[1] ? ' class="language-' + m[1] + '"' : '') + '>' + esc(m[2].replace(/\r/g, '').replace(/\n+$/, '')) + '</code></pre>';
+      last = m.index + m[0].length;
+    }
+    out += mdText(src.slice(last));
+    return out;
+  }
+  function post(path, body) {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
+    return fetch(API + path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: ctrl.signal
+    }).then(function (r) {
+      clearTimeout(timer);
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j;
+      });
+    }, function (e) {
+      clearTimeout(timer);
+      throw new Error(e && e.name === 'AbortError' ? '请求超时（360s）' : '网络错误：' + (e && e.message || e));
+    });
+  }
+  function fetchEntries() {
+    return fetch(API + '/state/all', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { return (j && j.entries) || {}; });
+  }
+  // 知识点标签归一显示：内部 n1 → 展示 L1
+  function dispPoint(s) { return String(s == null ? '' : s).replace(/\bn(\d+)\b/g, 'L$1'); }
+
+  // ============================ 查看/作答模式 ============================
+  var currentQs = null;
+  var currentSlug = null, currentD = null, currentRes = null, currentEntries = null;
+  function renderView(slug) {
+    var main = $('main');
+    main.innerHTML = '<p class="tip">加载测验地图…</p>';
+    fetchEntries().then(function (entries) {
+      var raw = entryVal(entries, QUIZ_PREFIX + slug);
+      if (typeof raw !== 'string') {
+        main.innerHTML = '<div class="lerr">找不到这张测验地图（' + esc(slug) + '）。<br><a href="quiz-map.html">返回测验地图列表</a></div>';
+        return;
+      }
+      var d = null;
+      try { d = JSON.parse(raw); } catch (e) { d = null; }
+      if (!d || !d.questions || !d.questions.length) {
+        main.innerHTML = '<div class="lerr">这张测验地图数据为空或已损坏。</div>';
+        return;
+      }
+      var sourceTitle = d.sourceSlug || d.sourceKey || '';
+      var srcRaw = entries[d.sourceKey];
+      if (typeof srcRaw === 'string') {
+        try {
+          var sm = JSON.parse(srcRaw);
+          sourceTitle = (sm && (sm.topic || (sm.plan && sm.plan.title) || (sm.spec && sm.spec.topic))) || sourceTitle;
+        } catch (e) { /* 用 sourceSlug 兜底 */ }
+      }
+      var tm = $('to-map');
+      if (d.sourceSlug) { tm.href = 'learning-path.html?t=' + encodeURIComponent(d.sourceSlug); tm.hidden = false; }
+      $('brand-sub').textContent = '来自《' + sourceTitle + '》 · 共 ' + d.questions.length + ' 题 · 满分 100 分';
+
+      var qs = d.questions;
+      currentQs = qs;
+      currentSlug = slug; currentD = d; currentEntries = entries;
+      currentRes = (d.lastResult && typeof d.lastResult.score === 'number') ? d.lastResult : null;
+      main.innerHTML =
+        '<div class="card"><p class="eyebrow">测验地图</p><h2>' + esc(d.title || '测验') + '</h2>' +
+        '<p class="muted">来自《' + esc(sourceTitle) + '》 · 共 ' + qs.length + ' 题 · 满分 100 分' +
+        (d.lastResult && typeof d.lastResult.score === 'number' ? ' · 上次 ' + d.lastResult.score + ' 分' : '') + '</p></div>' +
+        '<div id="q-area"><p class="tip">完整题目与作答在测验窗口中展示。支持翻页查看历史题集，草稿自动保存。</p></div>' +
+        '<div class="foot"><button class="btn primary" id="submit" type="button">打开测验</button>' +
+        '<span class="tip">在大窗口中作答、查看答案和提交</span></div>' +
+        '<div id="result-area"></div>';
+      renderMathIn($('q-area'));
+      highlightIn($('q-area'));
+      $('submit').addEventListener('click', function () { openExam(slug, d); });
+      if (currentRes) showResult(currentRes);   // 重看历史 lastResult：直接展示结果页与飞轮按钮
+    }).catch(function () {
+      main.innerHTML = '<div class="lerr">无法连接服务端（' + esc(API) + '）——请稍后刷新重试。</div>';
+    });
+  }
+
+  function openExam(slug, d) {
+    var related = Object.keys(currentEntries).filter(function (key) {
+      try { return JSON.parse(currentEntries[key]).sourceKey === d.sourceKey; } catch (error) { return false; }
+    }).sort(function (a, b) { return (JSON.parse(currentEntries[a]).created || 0) - (JSON.parse(currentEntries[b]).created || 0); });
+    return window.QuizDialog.open({relatedKeys: related, api: API, key: USER_PATH + QUIZ_PREFIX + slug, title: d.title,
+      render: mdRender, decorate: function (el) { renderMathIn(el); highlightIn(el); },
+      onLoad: function (quiz) { Object.assign(d, quiz); currentD = d; },
+      onResult: function (res, key) { if (key !== USER_PATH + QUIZ_PREFIX + slug) return; Object.assign(d, res.quiz); currentD = d; currentQs = d.questions; showResult(res); }
+    });
+  }
+  function showResult(res) {
+    var cls = res.pass ? 'ok' : 'bad';
+    currentRes = res;
+    $('result-area').innerHTML =
+      '<div class="card"><p class="eyebrow">测验结果</p>' +
+      '<div class="result ' + cls + '"><span class="score ' + cls + '">' + esc(res.score) + '</span> 分 — ' +
+      (res.pass ? '通过 ✅' : '未通过 ❌') + '</div>' +
+      (res.feedback ? '<p style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">' + mdRender(res.feedback) + '</p>' : '') +
+      '<p class="tip">逐题得分、作答与判分依据可在测验窗口中回看。</p>' +
+      '<div class="foot">' +
+        '<button class="btn" id="again" type="button">换新题，再测一次</button>' +
+        '<button class="btn" id="gaps-btn" type="button">AI 诊断缺漏</button>' +
+        '<button class="btn" id="refine-btn" type="button">按薄弱点细化学习地图</button>' +
+      '</div>' +
+      '<div id="gaps-area"></div>' +
+      '<div id="refine-area"></div>' +
+      '</div>';
+    renderMathIn($('result-area'));
+    highlightIn($('result-area'));
+    var b = $('submit'); if (b) { b.disabled = false; b.textContent = '查看作答与批改'; }
+    var again = $('again');
+    if (again) again.addEventListener('click', function () {
+      if (!currentD.sourceKey) { alert('找不到关联学习地图'); return; }
+      again.disabled = true; again.textContent = '出题与验题中…';
+      post('/path/quizmap', {key: currentD.sourceKey}).then(function (result) {
+        location.href = 'quiz-map.html?t=' + encodeURIComponent(result.slug);
+      }).catch(function (error) {
+        again.disabled = false; again.textContent = '换新题，再测一次';
+        alert(error.message);
+      });
+    });
+    var gb = $('gaps-btn');
+    if (gb) gb.addEventListener('click', function () { runGaps(); });
+    var rb = $('refine-btn');
+    if (rb) rb.addEventListener('click', function () { runRefine(); });
+    if (currentD && currentD.gaps) renderGaps(currentD.gaps);   // 已有诊断：直接回显
+  }
+
+  function persistQuiz(slug, d) {
+    var entries = {};
+    entries[USER_PATH + QUIZ_PREFIX + slug] = JSON.stringify(d);
+    return fetch(API + '/state/put', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: entries }), keepalive: true
+    }).catch(function () { /* 回写失败不阻断作答 */ });
+  }
+  // ============================ 飞轮：诊断缺漏 → 细化学习地图 ============================
+  // 本卷失分题：ok=false，或简答题未写出「思路」
+  function collectGapItems() {
+    var qs = currentQs || [];
+    var res = currentRes || (currentD && currentD.lastResult) || null;
+    var per = (res && res.per_question) || [];
+    var ans = (currentD && currentD.lastAnswers) || [];
+    var out = [];
+    qs.forEach(function (q, i) {
+      var p = per[i] || {};
+      var mine = ans[i] == null ? '' : String(ans[i]);
+      var lost = (p.earned != null && p.max_points != null) ? p.earned < p.max_points : p.ok === false;
+      if (!lost) return;
+      out.push({ unit: q.point || '', q: q.q || '', mine: mine,
+                 correct: q.answer || '', explain: p.comment || '', ok: false });
+    });
+    return out;
+  }
+  function renderGaps(resp) {
+    var box = $('gaps-area');
+    if (!box) return;
+    if (!resp || !resp.gaps || !resp.gaps.length) { box.innerHTML = '<p class="tip">诊断未返回缺漏点。</p>'; return; }
+    var h = '<div style="margin-top:14px"><h4 style="margin:0 0 8px">AI 诊断缺漏</h4>';
+    if (resp.summary) h += '<p style="font-size:13.5px;white-space:pre-wrap">' + mdRender(resp.summary) + '</p>';
+    resp.gaps.forEach(function (g) {
+      h += '<div class="quiz-box"><p class="q">' + esc(g.unit || '综合') + '</p>';
+      if (g.points && g.points.length) {
+        h += '<ul style="margin:4px 0 0;padding-left:18px;font-size:13.5px">' +
+             g.points.map(function (p) { return '<li>' + mdRender(p) + '</li>'; }).join('') + '</ul>';
+      }
+      if (g.advice) h += '<div class="result">' + mdRender(g.advice) + '</div>';
+      h += '</div>';
+    });
+    h += '</div>';
+    box.innerHTML = h;
+    renderMathIn(box);
+    highlightIn(box);
+  }
+  function runGaps(onDone) {
+    var items = collectGapItems();
+    if (!items.length) {
+      alert('本卷没有失分题，无需诊断。');
+      if (onDone) onDone(null);
+      return;
+    }
+    var btn = $('gaps-btn'), old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '诊断中…'; }
+    var res = currentRes || (currentD && currentD.lastResult) || {};
+    post('/path/gaps', { items: items, score: res.score != null ? res.score : '' }).then(function (resp) {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+      currentD.gaps = resp;
+      currentD.gapsAt = Date.now();
+      persistQuiz(currentSlug, currentD);
+      renderGaps(resp);
+      if (onDone) onDone(resp);
+    }).catch(function (e) {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+      var box = $('gaps-area');
+      if (box) box.innerHTML = '<div class="lerr">诊断失败：' + esc(e.message) + '</div>';
+      if (onDone) onDone(null);
+    });
+  }
+  // 题目 point（「L<k> 标题」）→ plan.nodes[k-1].id；失败再按标题兜底
+  function pointToNid(point, plan) {
+    if (!plan || !plan.nodes) return null;
+    var s = String(point == null ? '' : point).trim();
+    var m = s.match(/^L(\d+)/);
+    if (m) {
+      var k = parseInt(m[1], 10);
+      if (k >= 1 && k <= plan.nodes.length) return plan.nodes[k - 1].id;
+    }
+    for (var i = 0; i < plan.nodes.length; i++) {
+      var t = String(plan.nodes[i].title || '');
+      if (t && s.indexOf(t) >= 0) return plan.nodes[i].id;
+    }
+    return null;
+  }
+  function buildWeaknesses(items, gaps, plan) {
+    var byNid = {}, titleOf = {};
+    plan.nodes.forEach(function (n) { titleOf[n.id] = n.title || ''; });
+    function slot(nid) {
+      if (!byNid[nid]) byNid[nid] = { nid: nid, title: titleOf[nid] || '', reasons: [], points: [] };
+      return byNid[nid];
+    }
+    // 诊断点按 unit（同样「L<k>」）归到对应节点
+    ((gaps && gaps.gaps) || []).forEach(function (g) {
+      var nid = pointToNid(g.unit, plan);
+      if (!nid) return;
+      var s = slot(nid);
+      (g.points || []).forEach(function (p) { if (s.points.indexOf(p) < 0) s.points.push(p); });
+    });
+    // 失分题按 point 归到对应节点，拼错题摘要
+    items.forEach(function (it) {
+      var nid = pointToNid(it.unit, plan);
+      if (!nid) return;   // 映射失败跳过该单元
+      var s = slot(nid);
+      s.reasons.push(it.q + (it.explain ? ' → ' + it.explain : ''));
+    });
+    return Object.keys(byNid).map(function (nid) {
+      var s = byNid[nid];
+      var reason = s.reasons.join('；').slice(0, 500) || ('本卷在该单元失分（' + (titleOf[nid] || nid) + '）');
+      return { nid: nid, title: s.title, reason: reason, points: s.points };
+    });
+  }
+  function runRefine() {
+    var btn = $('refine-btn');
+    if (!currentD) return;
+    var srcSlug = currentD.sourceSlug;
+    if (!srcSlug) { alert('这张测验地图没有关联的学习地图，无法细化。'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = '细化中…'; }
+    var restore = function () { if (btn) { btn.disabled = false; btn.textContent = '按薄弱点细化学习地图'; } };
+    var fail = function (msg) {
+      restore();
+      var box = $('refine-area');
+      if (box) box.innerHTML = '<div class="lerr">细化失败：' + esc(msg) + '</div>';
+    };
+    var go = function () {
+      return fetchEntries().then(function (entries) {
+        currentEntries = entries;
+        var mraw = entryVal(entries || {}, MAP_PREFIX + srcSlug);
+        var m = null;
+        try { m = JSON.parse(mraw); } catch (e) { m = null; }
+        if (!m || !m.plan || !m.plan.nodes || !m.plan.nodes.length) { fail('找不到对应学习地图的路径'); return; }
+        var weaknesses = buildWeaknesses(collectGapItems(), currentD.gaps, m.plan);
+        if (!weaknesses.length) { fail('失分题无法映射到学习地图单元'); return; }
+        return post('/path/refine', {
+          key: USER_PATH + MAP_PREFIX + srcSlug,
+          spec: m.spec || {}, plan: m.plan, weaknesses: weaknesses
+        }).then(function (r) {
+          restore();
+          var box = $('refine-area');
+          if (box) box.innerHTML =
+            '<div class="result ok">已在学习地图追加 ' + ((r && r.added) || 0) + ' 个细化单元</div>' +
+            '<div class="foot"><a class="btn" href="learning-path.html?t=' + encodeURIComponent(srcSlug) + '">去学习地图 →</a></div>';
+        });
+      }).catch(function (e) { fail(e.message); });
+    };
+    if (currentD.gaps) { go(); return; }
+    // 没有诊断数据：先自动跑一次诊断，成功后再细化
+    runGaps(function (resp) { if (resp) go(); else restore(); });
+  }
+
+  // ============================ 选择模式 ============================
+  function renderSelect() {
+    var main = $('main');
+    main.innerHTML = '<p class="tip">加载资料…</p>';
+    fetchEntries().then(function (entries) {
+      var maps = [], quizzes = [];
+      Object.keys(entries).forEach(function (k) {
+        var biz = stripUser(k);   // 先剥用户前缀
+        var v = entries[k];
+        if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
+        if (biz.indexOf(MAP_PREFIX) === 0 && biz !== LAST_KEY) {
+          var d = null; try { d = JSON.parse(v); } catch (e) { d = null; }
+          var it = { slug: biz.slice(MAP_PREFIX.length), topic: '', total: 0, done: 0 };
+          if (d && typeof d === 'object') {
+            if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;
+            it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
+            if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
+            var ns = d.nodeState || {};
+            for (var nid in ns) { if (ns[nid] && ns[nid].completed) it.done++; }
+          } else { it.topic = it.slug; }
+          maps.push(it);
+        } else if (biz.indexOf(QUIZ_PREFIX) === 0) {
+          var qd = null; try { qd = JSON.parse(v); } catch (e) { qd = null; }
+          if (!qd || typeof qd !== 'object') return;
+          var at = qd.attempts || [];
+          quizzes.push({ slug: biz.slice(QUIZ_PREFIX.length), title: qd.title || biz.slice(QUIZ_PREFIX.length),
+                         count: (qd.questions || []).length,
+                         last: (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number')
+                               ? at[at.length - 1].score : null });
+        }
+      });
+      maps.sort(function (a, b) { return a.topic.localeCompare(b.topic, 'zh'); });
+      quizzes.sort(function (a, b) { return (b.last || 0) - (a.last || 0); });
+
+      var h = '<div class="card"><div class="mode-h"><p class="eyebrow" style="margin:0">从学习地图生成测验</p>' +
+              '<span class="qcount">' + maps.length + ' 张学习地图</span></div>';
+      h += '<p class="muted">选择一张学习地图，按其知识点与你的学习情况生成一整套测验（8~16 道，合计 100 分）。</p>';
+      if (!maps.length) {
+        h += '<p class="lempty">暂无学习地图——先去 <a href="learning-path.html?new=1">生成一张学习地图</a>。</p>';
+      } else {
+        maps.forEach(function (m) {
+          h += '<div class="lrow"><span class="lt"><span class="t">' + esc(m.topic) + '</span>' +
+               '<span class="m">' + m.total + ' 节点 · 已完成 ' + m.done + '</span></span>' +
+               '<button class="btn" type="button" data-gen="' + esc(USER_PATH + MAP_PREFIX + m.slug) + '">生成测验</button></div>';
+        });
+      }
+      h += '</div>';
+
+      h += '<div class="card"><div class="mode-h"><p class="eyebrow" style="margin:0">已有测验地图</p>' +
+           '<span class="qcount">' + quizzes.length + ' 张测验地图</span></div>';
+      if (!quizzes.length) {
+        h += '<p class="lempty">暂无测验地图——从上面选一张学习地图生成一套吧。</p>';
+      } else {
+        quizzes.forEach(function (q) {
+          var meta = '共 ' + q.count + ' 题' + (q.last != null ? ' · 最近 ' + q.last + ' 分' : '');
+          h += '<a class="lrow" href="quiz-map.html?t=' + encodeURIComponent(q.slug) + '">' +
+               '<span class="lt"><span class="t">' + esc(q.title) + '</span><span class="m">' + esc(meta) + '</span></span>' +
+               '<span class="go">打开 →</span></a>';
+        });
+      }
+      h += '</div>';
+      main.innerHTML = h;
+      main.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest ? e.target.closest('[data-gen]') : null;
+        if (b) genQuizMap(b);
+      });
+    }).catch(function () {
+      main.innerHTML = '<div class="lerr">无法连接服务端（' + esc(API) + '）——请稍后刷新重试。</div>';
+    });
+  }
+
+  function genQuizMap(btn) {
+    var key = btn.getAttribute('data-gen');
+    if (!key) return;
+    if (!confirm('确认根据这张学习地图和你的学习情况生成一套测验？\n（按知识点出题 8~16 道，合计 100 分；生成后打开作答）')) return;
+    var old = btn.textContent;
+    btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）';
+    post('/path/quizmap', { key: key }).then(function (r) {
+      location.href = 'quiz-map.html?t=' + encodeURIComponent(r.slug);
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = old;
+      alert('生成测验失败：' + e.message);
+    });
+  }
+
+  // ============================ 入口 ============================
+  function boot() {
+    var slug = param('t');
+    if (slug) { renderView(slug); } else { renderSelect(); }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+
+</script>
+</body>
+</html>

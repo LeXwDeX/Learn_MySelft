@@ -190,19 +190,6 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .quiz-box .q .q-points{color:var(--soft,#7a8399);font-size:12.5px;font-weight:400}
 .quiz-box textarea{width:100%;min-height:140px;font-family:var(--sans);font-size:13.5px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:#fff;color:var(--ink);resize:vertical;outline:none}
 .quiz-box textarea:focus{border-color:var(--accent)}
-/* ---- 放大答题（模态框） ---- */
-#quiz-modal{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(45,49,66,.38)}
-#quiz-modal[hidden]{display:none}
-.qm-card{background:#fff;border:1px solid var(--rule);border-radius:10px;width:min(880px,92vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(45,49,66,.18)}
-.qm-head{flex:none;display:flex;align-items:center;gap:12px;padding:16px 22px;border-bottom:1px solid var(--rule)}
-.qm-head .eyebrow{margin:0}
-.qm-head h3{margin:0;font-family:var(--serif);font-weight:400;font-size:19px}
-.qm-close{margin-left:auto;border:1px solid var(--rule);background:#fff;border-radius:6px;width:30px;height:30px;font-size:16px;color:var(--muted);cursor:pointer}
-.qm-close:hover{border-color:var(--accent);color:var(--accent)}
-.qm-body{flex:1 1 auto;overflow-y:auto;padding:16px 22px}
-.qm-body .quiz-box textarea{min-height:170px}
-.qm-foot{flex:none;display:flex;gap:10px;justify-content:flex-end;align-items:center;padding:14px 22px;border-top:1px solid var(--rule);background:#fbfbfb;border-radius:0 0 10px 10px}
-.qm-hint{margin-right:auto;color:var(--soft);font-size:12px}
 .result{margin-top:8px;font-size:13px;border-left:2px solid var(--accent);padding-left:10px;white-space:pre-wrap}
 .result.ok{border-left-color:var(--ok)}
 .result.bad{border-left-color:#b23a48}
@@ -368,6 +355,291 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 <script src="./highlight/highlight.min.js"></script>
 <script>
 /* 页面内联脚本（由生成器注入） */
+/* Shared, single-file-embedded quiz workspace. Drafts are scoped to issued rounds. */
+(function () {
+  'use strict';
+  var dialog, view, returnFocus, opening = 0;
+  var records = {}, chains = {};
+  var clientId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function byId(id) { return dialog.querySelector('#' + id); }
+  function round() { return view.quiz.rounds[view.index]; }
+  function roundConfig() { return Object.assign({}, view.config, {key: round().storageKey || view.config.key}); }
+  function localKey(config, id) { return 'quiz-draft-v1:' + JSON.stringify([config.key, config.nodeId || '', id]); }
+  function api(config, endpoint, body, keepalive) {
+    var payload = JSON.stringify(body);
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, endpoint === '/path/quiz' ? 240000 : 20000);
+    return fetch(config.api + endpoint, {
+      method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: payload,
+      keepalive: !!keepalive && new Blob([payload]).size <= 60000
+    }).then(function (response) {
+      return response.json().then(function (result) {
+        if (!response.ok || result.ok === false || result.error) throw new Error(result.error || '请求失败');
+        return result;
+      });
+    }).finally(function () { clearTimeout(timeout); });
+  }
+  function status(message, bad) {
+    byId('qd-save').textContent = message;
+    byId('qd-save').classList.toggle('qd-error', !!bad);
+  }
+  function reportRecord(record, message, bad) {
+    if (view && dialog.open && roundConfig().key === record.config.key && round().id === record.roundId) status(message, bad);
+  }
+  function transmit(record) {
+    if (record.timer) { clearTimeout(record.timer); record.timer = null; }
+    if (record.queued === record.version) return chains[record.key] || Promise.resolve();
+    var version = record.version, answers = record.answers.slice();
+    record.queued = version;
+    var previous = chains[record.key] || Promise.resolve();
+    var pending = previous.catch(function () {}).then(function () {
+      return api(record.config, '/path/quiz/draft', {
+        key: record.config.key, node: { id: record.config.nodeId || '' }, round_id: record.roundId,
+        answers: answers, client_id: clientId, sequence: version
+      }, true);
+    }).then(function (result) {
+      if (record.version === version) {
+        record.saved = true;
+        try {
+          var current = JSON.parse(localStorage.getItem(record.key) || 'null');
+          if (current && current.version === version) localStorage.removeItem(record.key);
+        } catch (error) { /* Server acknowledgement is authoritative even if local storage is unavailable. */ }
+        record.round.draft = result.draft;
+        reportRecord(record, '已自动保存到服务器', false);
+      }
+      return true;
+    }).catch(function (error) {
+      if (record.version === version) record.queued = null;
+      reportRecord(record, record.localSaved ? '已保存在本机，服务器同步失败；联网后重试' : '保存失败，请勿关闭页面：' + error.message, true);
+      return false;
+    });
+    chains[record.key] = pending;
+    return pending;
+  }
+  function captureDraft() {
+    if (!view || view.readOnly || view.busy) return;
+    var issued = round();
+    var answers = issued.questions.map(function (q, i) {
+      var field = dialog.querySelector('[name="qd-answer-' + i + '"]:checked') || byId('qd-answer-' + i);
+      return field ? field.value : '';
+    });
+    var config = roundConfig();
+    var key = localKey(config, issued.id);
+    var record = records[key] || { key: key, config: config, roundId: issued.id, round: issued, version: 0 };
+    record.version = Math.max(Date.now(), record.version + 1);
+    record.answers = answers; record.saved = false;
+    view.answers = answers;
+    issued.draft = { answers: answers };
+    try {
+      localStorage.setItem(key, JSON.stringify({ answers: answers, version: record.version }));
+      record.localSaved = true;
+      status('已保存在本机，正在同步…', false);
+    } catch (error) {
+      record.localSaved = false;
+      status('本机草稿不可用，正在保存到服务器…', true);
+    }
+    records[key] = record;
+    if (record.timer) clearTimeout(record.timer);
+    record.timer = setTimeout(function () { transmit(record); }, 400);
+    updateProgress();
+  }
+  function flushCurrent() {
+    if (!view || !view.quiz) return Promise.resolve(true);
+    var record = records[localKey(roundConfig(), round().id)];
+    return record && !record.saved ? transmit(record) : Promise.resolve(true);
+  }
+  function flushAll() {
+    Object.keys(records).forEach(function (key) { if (!records[key].saved) transmit(records[key]); });
+  }
+  function updateProgress() {
+    byId('qd-progress').textContent = view.answers.filter(function (a) { return a.trim(); }).length + ' / ' + round().questions.length + ' 题已作答';
+  }
+  function chooseDraft() {
+    var issued = round(), stored;
+    try { stored = JSON.parse(localStorage.getItem(localKey(roundConfig(), issued.id)) || 'null'); } catch (error) {}
+    var attempts = issued.attempts || [];
+    var draft = stored || issued.draft;
+    view.attempt = draft ? null : (attempts.length ? attempts[attempts.length - 1] : null);
+    view.readOnly = !!view.attempt;
+    view.answers = ((draft || view.attempt || {}).answers || []).slice();
+    while (view.answers.length < issued.questions.length) view.answers.push('');
+    view.localRecovery = !!stored;
+    if (stored) {
+      var config = roundConfig();
+      var key = localKey(config, issued.id);
+      var record = records[key] || { key: key, config: config, roundId: issued.id, round: issued };
+      record.answers = stored.answers; record.version = stored.version; record.localSaved = true; record.saved = false;
+      records[key] = record;
+    }
+  }
+  function render() {
+    var issued = round(), config = view.config, md = config.render || esc;
+    var result = view.attempt && (view.attempt.result || view.attempt);
+    byId('qd-title').textContent = config.title || '测验';
+    byId('qd-round').innerHTML = view.quiz.rounds.map(function (r, index) {
+      return '<option value="' + index + '"' + (index === view.index ? ' selected' : '') + '>第 ' + (index + 1) + ' 套' + (r.id === view.quiz.round_id ? ' · 最新' : '') + '</option>';
+    }).join('');
+    byId('qd-prev').disabled = view.index === 0 || view.busy;
+    byId('qd-next').disabled = view.index === view.quiz.rounds.length - 1 || view.busy;
+    byId('qd-round').disabled = view.busy;
+    byId('qd-attempt').innerHTML = '<option value="draft">当前草稿</option>' + (issued.attempts || []).map(function (a, index) {
+      var res = a.result || a;
+      return '<option value="' + index + '"' + (view.attempt === a ? ' selected' : '') + '>第 ' + (index + 1) + ' 次提交 · ' + esc(res.score) + ' 分</option>';
+    }).join('');
+    byId('qd-attempt').disabled = view.busy;
+    byId('qd-body').innerHTML = (result ? '<div class="qd-result"><strong>' + esc(result.score) + ' / 100 分</strong><span>' + (result.pass ? '已通过' : '继续巩固') + ' · ' + esc(result.feedback || '') + '</span></div>' : '') +
+      issued.questions.map(function (q, i) {
+        var grade = result && (result.per_question || [])[i];
+        var html = '<fieldset class="qd-question"><legend>第 ' + (i + 1) + ' 题 · ' + esc(q.points) + ' 分</legend><div class="qd-stem">' + md(q.q) + '</div>';
+        var rubric = q.rubric || [];
+        html += '<div class="qd-rubric"><b>评分标准</b> ' + (rubric.length ? rubric.map(function (c) { return esc(c.description) + '（' + esc(c.points) + '分）'; }).join('；') : '符合预设答案得满分，否则0分') + '</div>';
+        if (q.options && q.options.length) {
+          html += q.options.map(function (option, j) {
+            var letter = String.fromCharCode(65 + j);
+            return '<label class="qd-option"><input type="radio" name="qd-answer-' + i + '" value="' + letter + '"' + (view.answers[i] === letter ? ' checked' : '') + (view.readOnly || view.busy ? ' disabled' : '') + '><span>' + letter + '. ' + md(option) + '</span></label>';
+          }).join('');
+        } else {
+          html += '<label class="qd-input-label" for="qd-answer-' + i + '">你的作答</label><textarea id="qd-answer-' + i + '" maxlength="20000" rows="' + (q.type === 'short' ? 6 : 3) + '"' + (view.readOnly || view.busy ? ' readonly' : '') + ' placeholder="' + (q.type === 'short' ? '写下你的思路与结论…' : '写下你的答案…') + '">' + esc(view.answers[i]) + '</textarea>';
+        }
+        if (grade) html += '<div class="qd-grade"><b>得分 ' + esc(grade.earned == null ? '旧记录未提供' : grade.earned) + ' / ' + esc(grade.max_points == null ? q.points : grade.max_points) + '</b><div>' + md(grade.comment || '') + '</div></div>';
+        html += '<details class="qd-reference"><summary>查看参考答案与解析</summary><div>' + md(q.answer || '') + '</div><div>' + md(q.explain || '') + '</div></details></fieldset>';
+        return html;
+      }).join('');
+    byId('qd-submit').hidden = view.readOnly;
+    byId('qd-submit').disabled = !!view.busy;
+    byId('qd-submit').textContent = view.busy ? '逐项判分中…' : '提交本套';
+    byId('qd-retry').hidden = !view.readOnly;
+    byId('qd-retry').disabled = !!view.busy;
+    byId('qd-error').hidden = true;
+    updateProgress();
+    status(view.busy ? '已保存，正在按评分点判分…' : view.readOnly ? '历史提交已保存，此视图只读' : view.localRecovery ? '已恢复本机未同步草稿' : issued.draft ? '已恢复服务器草稿' : '输入后自动保存，可随时关闭', false);
+    if (config.decorate) config.decorate(byId('qd-body'));
+  }
+  function navigate(index) {
+    if (!view || view.busy) return;
+    flushCurrent();
+    view.index = index;
+    chooseDraft(); render();
+    byId('qd-body').scrollTop = 0;
+    if (view.localRecovery) flushCurrent();
+  }
+  function close() {
+    flushCurrent();
+    opening += 1;
+    dialog.close();
+    if (returnFocus && returnFocus.isConnected) returnFocus.focus();
+  }
+  function submit() {
+    if (!view || view.busy || view.readOnly) return;
+    captureDraft();
+    if (!view.answers.some(function (answer) { return answer.trim(); })) { byId('qd-error').textContent = '请至少回答一题再提交'; byId('qd-error').hidden = false; return; }
+    var active = view, config = roundConfig(), id = round().id, answers = view.answers.slice();
+    view.busy = true; render();
+    flushCurrent().then(function () {
+      return api(config, '/path/quiz', {key: config.key, node: {id: config.nodeId || ''}, round_id: id, answers: answers});
+    }).then(function (result) {
+      active.busy = false;
+      result.quiz.rounds.forEach(function (r) { r.storageKey = config.key; });
+      active.quiz.rounds = active.quiz.rounds.map(function (r) {
+        return result.quiz.rounds.find(function (updated) { return updated.id === r.id; }) || r;
+      });
+      active.index = active.quiz.rounds.findIndex(function (r) { return r.id === id; });
+      var issued = active.quiz.rounds[active.index];
+      active.attempt = issued.attempts.find(function (a) { return a.id === result.attempt_id; }) || issued.attempts[issued.attempts.length - 1];
+      active.readOnly = true; active.answers = answers;
+      var key = localKey(config, id);
+      delete records[key];
+      try { localStorage.removeItem(key); } catch (error) {}
+      if (active.config.onResult) active.config.onResult(result, config.key);
+      if (view === active) render();
+    }).catch(function (error) {
+      active.busy = false;
+      if (view === active) {
+        render(); byId('qd-error').textContent = '提交未完成，作答已保留：' + error.message; byId('qd-error').hidden = false;
+      }
+    });
+  }
+  function create() {
+    if (dialog) return;
+    var style = document.createElement('style');
+    style.textContent = '#quiz-workspace{padding:0;border:1px solid #d9dce3;border-radius:10px;width:min(1120px,94vw);height:92vh;max-width:none;max-height:none;color:var(--text,#2d3142);background:#fff;box-shadow:0 20px 70px #17203433}#quiz-workspace::backdrop{background:#24293866}#quiz-workspace .qd-layout{height:100%;display:flex;flex-direction:column}#quiz-workspace .qd-head{padding:18px 24px;border-bottom:1px solid #e6e8ed;display:flex;align-items:center;gap:18px}#quiz-workspace h2{margin:0;font-size:21px}#quiz-workspace .qd-close{margin-left:auto}#quiz-workspace .qd-nav{display:flex;align-items:center;gap:10px;padding:12px 24px;background:#fafbfc;border-bottom:1px solid #e6e8ed}#quiz-workspace select{padding:7px 10px;border:1px solid #d9dce3;border-radius:5px;background:#fff;font:inherit}#quiz-workspace #qd-attempt{margin-left:auto}#quiz-workspace #qd-body{overflow:auto;flex:1;padding:20px 32px;scrollbar-gutter:stable}#quiz-workspace .qd-question{border:1px solid #e1e4ea;border-radius:7px;padding:20px;margin:0 0 24px;min-width:0}#quiz-workspace legend{font-weight:650;padding:0 8px;color:#616c83}#quiz-workspace .qd-stem{font-size:16px;line-height:1.8;margin-bottom:12px}#quiz-workspace .qd-rubric{font-size:13px;line-height:1.6;color:#667085;background:#f6f7f9;padding:10px 12px;margin-bottom:14px}#quiz-workspace .qd-option{display:flex;gap:10px;border:1px solid #e1e4ea;border-radius:5px;margin:8px 0;padding:12px;align-items:flex-start;cursor:pointer}#quiz-workspace .qd-option:has(input:checked){border-color:var(--accent,#ef6c3e);background:#fff8f4}#quiz-workspace input[type=radio]{margin-top:5px;flex:none}#quiz-workspace .qd-input-label{display:block;font-size:13px;color:#667085;margin:10px 0 6px}#quiz-workspace textarea{box-sizing:border-box;width:100%;font-family:inherit;font-size:15px;line-height:1.7;padding:12px;resize:vertical;border:1px solid #cbd0db;border-radius:5px;min-height:90px}#quiz-workspace textarea:focus{outline:2px solid var(--accent,#ef6c3e);outline-offset:2px}#quiz-workspace .qd-reference{margin-top:14px;font-size:14px;line-height:1.8}#quiz-workspace summary{cursor:pointer;color:#667085}#quiz-workspace .qd-grade{border-left:3px solid var(--accent,#ef6c3e);padding:8px 12px;margin-top:14px;line-height:1.7}#quiz-workspace .qd-result{display:flex;gap:20px;align-items:center;padding:16px;background:#f6f7f9;margin-bottom:24px}#quiz-workspace .qd-result strong{font-size:24px;white-space:nowrap}#quiz-workspace .qd-foot{width:100%;max-width:none;box-sizing:border-box;margin:0;flex:none;border-top:1px solid #e6e8ed;padding:14px 24px;display:flex;gap:12px;align-items:center;background:#fafbfc}#quiz-workspace #qd-save{margin-right:auto;font-size:13px;color:#667085}#quiz-workspace .qd-error{color:#b42318!important}#quiz-workspace #qd-error{padding:10px 24px;background:#fff1ef;color:#b42318}#quiz-workspace [hidden]{display:none!important}#quiz-workspace button:focus-visible,#quiz-workspace select:focus-visible{outline:2px solid var(--accent,#ef6c3e);outline-offset:2px}';
+    style.textContent += '@media(max-width:600px){#quiz-workspace .qd-head{padding:12px;gap:8px;flex-wrap:wrap}#quiz-workspace h2{font-size:17px}#quiz-workspace .qd-nav{padding:10px;gap:6px;flex-wrap:wrap}#quiz-workspace #qd-attempt{margin-left:0}#quiz-workspace #qd-body{padding:12px}#quiz-workspace .qd-question{padding:12px}#quiz-workspace .qd-foot{padding:12px;gap:8px;flex-wrap:wrap}#quiz-workspace #qd-save{flex-basis:100%}}';
+    document.head.appendChild(style);
+    dialog = document.createElement('dialog'); dialog.id = 'quiz-workspace'; dialog.setAttribute('aria-labelledby', 'qd-title');
+    dialog.innerHTML = '<div class="qd-layout"><header class="qd-head"><h2 id="qd-title">测验</h2><span id="qd-progress"></span><button class="btn qd-close" id="qd-close" aria-label="保存并关闭测验">保存并关闭</button></header><nav class="qd-nav" aria-label="题集翻页"><button class="btn" id="qd-prev">上一套</button><select id="qd-round" aria-label="选择题集"></select><button class="btn" id="qd-next">下一套</button><select id="qd-attempt" aria-label="选择历史作答"></select></nav><div id="qd-body"></div><div id="qd-error" role="alert" hidden></div><footer class="qd-foot"><span id="qd-save" role="status" aria-live="polite"></span><button class="btn" id="qd-sync">重试保存</button><button class="btn" id="qd-retry" hidden>再做本套</button><button class="btn primary" id="qd-submit">提交本套</button></footer></div>';
+    document.body.appendChild(dialog);
+    dialog.addEventListener('cancel', function (event) { event.preventDefault(); close(); });
+    byId('qd-close').onclick = close;
+    byId('qd-prev').onclick = function () { navigate(view.index - 1); };
+    byId('qd-next').onclick = function () { navigate(view.index + 1); };
+    byId('qd-round').onchange = function () { navigate(Number(this.value)); };
+    byId('qd-attempt').onchange = function () {
+      if (!view || view.busy) return;
+      flushCurrent();
+      if (this.value === 'draft') {
+        view.attempt = null; view.readOnly = false;
+        view.answers = (round().draft || {}).answers || round().questions.map(function () { return ''; });
+      } else {
+        view.attempt = round().attempts[Number(this.value)]; view.readOnly = true;
+        view.answers = view.attempt.answers || round().questions.map(function () { return ''; });
+      }
+      render();
+    };
+    byId('qd-retry').onclick = function () {
+      if (!view || view.busy) return;
+      view.attempt = null; view.readOnly = false; view.answers = round().questions.map(function () { return ''; });
+      render(); captureDraft();
+    };
+    byId('qd-sync').onclick = flushCurrent;
+    byId('qd-submit').onclick = submit;
+    byId('qd-body').addEventListener('input', captureDraft);
+    byId('qd-body').addEventListener('change', captureDraft);
+    window.addEventListener('pagehide', flushAll);
+    window.addEventListener('online', flushAll);
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushAll(); });
+  }
+  window.QuizDialog = {
+    open: function (config) {
+      create();
+      if (view && view.busy) return Promise.resolve();
+      flushCurrent();
+      view = null;
+      var request = ++opening;
+      returnFocus = document.activeElement;
+      if (!dialog.open) dialog.showModal();
+      byId('qd-title').textContent = config.title || '测验';
+      byId('qd-body').textContent = '正在恢复题集与草稿…';
+      ['qd-prev', 'qd-next', 'qd-round', 'qd-attempt', 'qd-submit', 'qd-retry'].forEach(function (id) { byId(id).disabled = true; });
+      var keys = config.relatedKeys || [config.key];
+      return Promise.all(keys.map(function (key) {
+        var scoped = Object.assign({}, config, {key: key});
+        return api(scoped, '/path/quiz/state', {key: key, node: {id: config.nodeId || ''}}).then(function (quiz) {
+          quiz.rounds.forEach(function (r) { r.storageKey = key; });
+          return quiz;
+        });
+      })).then(function (quizzes) {
+        if (request !== opening || !dialog.open) return;
+        var quiz = quizzes[keys.indexOf(config.key)];
+        if (config.onLoad) config.onLoad(quiz);
+        quiz = Object.assign({}, quiz, {rounds: quizzes.reduce(function (all, q) { return all.concat(q.rounds); }, [])});
+        view = {config: config, quiz: quiz, index: Math.max(0, quiz.rounds.findIndex(function (r) { return r.id === (config.roundId || quiz.round_id); })), busy: false};
+        chooseDraft(); render();
+        if (view.localRecovery) flushCurrent();
+        byId('qd-close').focus();
+      }).catch(function (error) {
+        if (request !== opening || !dialog.open) return;
+        byId('qd-body').textContent = '无法打开题集：' + error.message;
+      });
+    }
+  };
+})();
+
+
 /* 学习路径 · 前端逻辑
  * 三阶段状态机：intake → research → learning
  * 后端契约：/path/intake /path/research /path/plan /path/node /path/quiz
@@ -377,7 +649,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   'use strict';
 
   var API = location.protocol + '//' + location.hostname + ':8101';
-  var TIMEOUT = 180000;               // 单次调用最长 180s（后端推理可能 30~90s）
+  var TIMEOUT = 360000;               // 单次调用最长 180s（后端推理可能 30~90s）
   var USER_PATH = 'u0/';              // 多用户口子——固定用户路径，将来替换为每用户 id
   var STORE_PREFIX = 'learn-path-v1-';
   var LAST_KEY = USER_PATH + 'learn-path-v1-last'; // 指向最近一次会话的 slug（带用户前缀）
@@ -495,32 +767,49 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 
   // ---------- 服务端读写（页面不做任何本地保存；所有数据只在服务端） ----------
   var pendingEntries = null, saveTimer = null;
+  var stateWrites = [], blockedStateKeys = {};
   function putState(entries) {
-    try {
-      fetch(API + '/state/put', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries: entries }), keepalive: true
-      }).catch(function () {
-        var retry = entries;
-        setTimeout(function () {
-          try {
-            fetch(API + '/state/put', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ entries: retry })
-            }).catch(function () {});
-          } catch (e) {}
-        }, 1500);
+    function send(keepalive) {
+      var allowed = {};
+      Object.keys(entries).forEach(function (key) {
+        if (!blockedStateKeys[key]) allowed[key] = entries[key];
       });
-    } catch (e) {}
-  }
-  // 注：/state/del 已改为与 /state/delete 同一密码校验（防绕过），普通流程不再调用此函数。
-  function delState(keys) {
-    try {
-      fetch(API + '/state/del', {
+      if (!Object.keys(allowed).length) return Promise.resolve();
+      var body = JSON.stringify({ entries: allowed });
+      return fetch(API + '/state/put', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keys: keys }), keepalive: true
-      }).catch(function () {});
-    } catch (e) {}
+        body: body, keepalive: !!keepalive && new Blob([body]).size <= 60000
+      }).then(function (r) {
+        if (!r.ok) throw new Error('保存失败（' + r.status + '）');
+      });
+    }
+    var write = send(true).catch(function () {
+      return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return send(false); });
+    }).catch(function (error) { console.warn('save failed', error); });
+    stateWrites.push(write);
+    write.then(function () { stateWrites = stateWrites.filter(function (item) { return item !== write; }); });
+    return write;
+  }
+  function deleteState(keys, password) {
+    keys.forEach(function (key) {
+      blockedStateKeys[key] = true;
+      if (pendingEntries) delete pendingEntries[key];
+    });
+    if (pendingEntries && !Object.keys(pendingEntries).length) pendingEntries = null;
+    // Drain earlier saves before the tombstone; subsequent callbacks cannot resurrect it.
+    return Promise.all(stateWrites.slice()).then(function () {
+      return fetch(API + '/state/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: keys, password: password })
+      });
+    }).then(function (r) { return r.json(); }).then(function (result) {
+      if (!result.ok) throw new Error(result.error || '删除失败');
+      return result;
+    }).catch(function (error) {
+      keys.forEach(function (key) { delete blockedStateKeys[key]; });
+      if (keys.indexOf(storeKey()) >= 0) save();
+      throw error;
+    });
   }
   function flushSave() {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
@@ -550,7 +839,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   function save() {
     try {
       // 没有主题就不写：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
-      if (!state.topic) return;
+      if (!state.topic || blockedStateKeys[storeKey()]) return;
       var payload = {
         stage: state.stage, topic: state.topic, history: state.history,
         spec: state.spec, queries: state.queries, sources: state.sources,
@@ -608,7 +897,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       // 状态自洽性：learning 必须有 plan
       if (state.stage === 'learning' && !state.plan) state.stage = 'research';
       if (state.stage === 'research' && !state.spec) state.stage = 'intake';
-      // 历史「untitled」空壳键修复：主题可读后迁移到正确键名（旧键不再删除——删除一律走带密码的 /state/delete；空壳键已被资料库列表过滤）
+      // 历史键修复：先保存正确键；旧副本保留，用户可通过密码删除。
       var fixSlug = slug(state.topic);
       if (s === 'untitled' && fixSlug && fixSlug !== 'untitled') {
         save();
@@ -710,13 +999,6 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   // ---------- 图状态 ----------
   // 显示层编号：学习单元 n1 → L1（内部 id / 数据键 / DOM id 一律不动）
   function dispId(id) { return String(id).replace(/^n(\d+)$/, 'L$1'); }
-  // 老题目没有 points 时的均分值：100/n 向下取整，余数从最后一题向前每题 +1（与服务端 _fix_points 一致）
-  function evenPts(n) {
-    var out = [], base = Math.floor(100 / n), rem = 100 % n;
-    for (var i = 0; i < n; i++) out.push(base);
-    for (var j = 0; j < rem; j++) out[n - 1 - j] += 1;
-    return out;
-  }
   function nodeById(id) {
     if (!state.plan) return null;
     for (var i = 0; i < state.plan.nodes.length; i++) if (state.plan.nodes[i].id === id) return state.plan.nodes[i];
@@ -728,26 +1010,15 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   }
   function isDone(id) { return !!(state.nodeState[id] && state.nodeState[id].completed); }
   function isUnlocked(id) {
-    var memo = {}, busy = {};
-    function reach(x) {
-      if (memo[x] !== undefined) return memo[x];
-      if (busy[x]) return false;   // 数据环保护
-      busy[x] = 1;
-      var nd = nodeById(x);
-      var r = false;
-      if (nd) {
-        if (nd.refine) {
-          // 细化/补救单元：原单元可达即可学（依赖已完成，或依赖本身可解锁）
-          r = depsOf(x).every(function (d) { return isDone(d) || reach(d); });
-        } else {
-          r = depsOf(x).every(function (d) { return isDone(d); });
-        }
-      }
-      busy[x] = 0;
-      memo[x] = r;
-      return r;
-    }
-    return reach(id);
+    var node = nodeById(id);
+    if (!node) return false;
+    return depsOf(id).every(function (dependency) {
+      if (isDone(dependency)) return true;
+      var parent = nodeById(dependency);
+      // Older refine-marked units point at the failed parent. Chained
+      // remediation still requires the preceding remedial unit to pass.
+      return !!(node.refine && parent && !parent.refine && depsOf(dependency).every(isDone));
+    });
   }
   function depTitles(id) {
     return depsOf(id).map(function (d) { var n = nodeById(d); return n ? n.title : dispId(d); });
@@ -1596,58 +1867,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   }
 
   // ---------- 自测题渲染（选择题点选 / 填空·简答文本作答） ----------
-  var choiceAns = {};   // { 题号: 字母 } —— 选择题当前选择
   var matTab = 'material';     // 单元内选项卡：material | quiz（仅前端内存）
   var matTabOwner = null;      // 当前选项卡归属的节点
   var lastQuizShown = null;    // {id, res} 最近一次提交结果（展示在「测验」tab 内）
-  function answerLine(q) {
-    if (q.options && q.options.length) {
-      return '<b>正确答案：</b>' + esc(String(q.answer == null ? '' : q.answer).toUpperCase().trim());
-    }
-    return '<b>参考答案：</b>' + mdRender(q.answer || '（暂无）');
-  }
-  function quizQHtml(q, i, radioPrefix, areaPrefix, cur, ptsArr, withAns) {
-    var pts = (q.points != null) ? q.points : (ptsArr ? ptsArr[i] : null);
-    var head = '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' +
-      (pts != null ? '<span class="q-points">（' + pts + ' 分）</span> ' : '') + mdRender(q.q) + '</p>';
-    var ansHtml = withAns ? '<div class="q-answer" hidden>' + answerLine(q) + '</div>' : '';
-    if (q.options && q.options.length) {
-      var opts = q.options.map(function (o, j) {
-        var letter = String.fromCharCode(65 + j);
-        var checked = choiceAns[i] === letter ? ' checked' : '';
-        return '<label class="qopt"><input type="radio" name="' + radioPrefix + i + '" value="' + letter + '"' + checked + '>' +
-          '<span>' + letter + '. ' + mdRender(o) + '</span></label>';
-      }).join('');
-      return head + '<div class="qopts">' + opts + '</div>' + ansHtml + '</div>';
-    }
-    return head + '<textarea id="' + areaPrefix + i + '" placeholder="' + (q.type === 'short' ? '写下你的思路和答案…' : '写下你的答案…') + '">' + (cur != null ? esc(cur) : '') + '</textarea>' + ansHtml + '</div>';
-  }
-  // 查看答案 / 收起答案（作用域内所有 .q-answer）
-  function toggleAnswers(scope, btn) {
-    var on = btn.getAttribute('data-on') === '1';
-    on = !on;
-    btn.setAttribute('data-on', on ? '1' : '0');
-    btn.textContent = on ? '收起答案' : '查看答案';
-    var els = scope.querySelectorAll('.q-answer');
-    for (var i = 0; i < els.length; i++) els[i].hidden = !on;
-    renderMathIn(scope);
-    highlightIn(scope);
-  }
-  function choiceChange(e) {
-    var t = e.target;
-    if (!t || t.type !== 'radio') return;
-    var m = (t.name || '').match(/^(opt|qmo)-(\d+)$/);
-    if (m) choiceAns[+m[2]] = t.value;
-  }
-  function syncChoiceRadios(scope) {
-    if (!scope) return;
-    var ins = scope.querySelectorAll('input[type=radio]');
-    for (var i = 0; i < ins.length; i++) {
-      var m = (ins[i].name || '').match(/^opt-(\d+)$/);
-      if (m && choiceAns[+m[1]] != null) ins[i].checked = (ins[i].value === choiceAns[+m[1]]);
-    }
-  }
-
   // 卡内渲染：所有查询都从卡片内容元素向下查（作用域隔离，避免串卡）
   function renderNodeDetail(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
@@ -1656,38 +1878,14 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     activeScope = scope;
     if (matTabOwner !== id) { matTab = 'material'; lastQuizShown = null; matTabOwner = id; }
     var shown = (lastQuizShown && lastQuizShown.id === id) ? lastQuizShown.res : null;
+    var persisted = (state.nodeState[id] || {}).lastResult;
+    if (!shown && persisted && persisted.round_id === (d.quiz || {}).round_id) shown = persisted;
     if (shown) matTab = 'quiz';
     var qs = ((d.quiz && d.quiz.questions) || []);
-    choiceAns = {};
-    var ptsArr = evenPts(qs.length);
-    var quizHtml = qs.map(function (q, i) {
-      return quizQHtml(q, i, 'opt-', 'ans-', null, ptsArr, true);
-    }).join('');
     var prev = state.nodeState[id] || {};
-    var prevResult = '';
-    var prevOk = prev.completed || !!(prev.lastResult && prev.lastResult.pass);
-    if (typeof prev.score === 'number') {
-      prevResult = '<div class="result ' + (prevOk ? 'ok' : 'bad') + '">' +
-        '<span class="score ' + (prevOk ? 'ok' : 'bad') + '">' + prev.score + '</span> 分' +
-        (prev.completed ? ' · 已通过' : (prevOk ? ' · 已通过（待完成）' : ' · 上次未通过')) + '</div>';
-    }
-    var actions = '';
-    if (shown) {
-      if (shown.pass && !isDone(id)) actions += '<button class="btn primary" id="complete-node" type="button">完成本节点并解锁下一节点</button>';
-      else if (shown.pass && isDone(id)) actions += '<span class="tip">✅ 已完成</span>';
-      else actions += '<button class="btn primary" id="redo-quiz" type="button">换新题，再试一次</button>';
-    } else {
-      if (qs.length && !isDone(id)) {
-        actions += '<button class="btn primary" id="submit-quiz" type="button">提交自测</button>';
-        actions += '<button class="btn" id="zoom-quiz" type="button">⤢ 放大答题</button>';
-      }
-      if (qs.length && !isDone(id) && typeof prev.score === 'number') actions += '<button class="btn" id="redo-quiz" type="button">换新题，再试一次</button>';
-      if (isDone(id)) actions += '<span class="tip">✅ 已完成</span>';
-    }
     // 自测未过（<60）：按薄弱点细化学习地图
     var lowScore = (typeof prev.score === 'number' && prev.score < 60) ||
       !!(prev.lastResult && typeof prev.lastResult.score === 'number' && prev.lastResult.score < 60);
-    if (qs.length && lowScore) actions += '<button class="btn" id="refine-node" type="button" style="font-size:12px">按薄弱点细化</button>';
     var matPane =
       '<div class="panel-sec"><h4>学习正文</h4><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
       listSection('要点', d.key_points) +
@@ -1695,13 +1893,20 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       listSection('易错点', d.misconceptions);
     var quizPane;
     if (qs.length) {
-      quizPane = '<div class="panel-sec"><div class="quiz-head">' +
-        '<span class="quiz-title">自测（' + qs.length + ' 题 · 满分 100 分）</span>' +
-        '<button class="btn quiet quiz-answers" type="button" data-on="0">查看答案</button></div>' +
-        '<div class="quiz-body" id="quiz-body">' + quizHtml + '</div>' +
-        prevResult +
-        (shown ? resultDetailHtml(id, shown) : '') +
-        '<div class="quiz-actions" id="quiz-actions">' + actions + '</div></div>';
+      var rounds = (d.quiz || {}).rounds || [];
+      var latest = (state.nodeState[id] || {}).lastResult;
+      if (latest && latest.round_id && latest.round_id !== d.quiz.round_id) latest = null;
+      quizPane = '<div class="panel-sec"><h4>单元测验</h4>' +
+        '<p class="tip">' + qs.length + '题 · 满分100分 · ' + (rounds.length || 1) + '套题已保存。完整题目、作答与批改在测验窗口查看。</p>' +
+        (latest ? '<p>最近成绩：<b>' + esc(latest.score) + '/100</b></p>' : '') +
+        '<div class="quiz-actions"><select id="quiz-round-select" aria-label="选择题集">' +
+          (rounds.length ? rounds.map(function (r, index) {
+            return '<option value="' + esc(r.id) + '"' + (r.id === d.quiz.round_id ? ' selected' : '') + '>第' + (index + 1) + '套' + (r.id === d.quiz.round_id ? ' · 最新' : '') + '</option>';
+          }).join('') : '<option value="">第1套</option>') + '</select>' +
+        '<button class="btn primary" id="open-quiz-workspace">打开测验</button>' +
+        '<button class="btn" id="redo-quiz">出一套新题</button>' +
+        (latest && latest.pass && !isDone(id) ? '<button class="btn" id="complete-node">完成本节点并解锁下一节点</button>' : '') +
+        (lowScore ? '<button class="btn" id="refine-node">按薄弱点细化</button>' : '') + '</div></div>';
     } else {
       quizPane = '<p class="tip">本单元暂无自测题。</p>';
     }
@@ -1727,15 +1932,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
         if (qp) qp.hidden = matTab !== 'quiz';
       });
     }
-    var ansBtn = scope.querySelector('.quiz-answers');
-    if (ansBtn) ansBtn.addEventListener('click', function () {
-      toggleAnswers(scope, this);
-    });
     setFoot('');
-    var bSubmit = scope.querySelector('#submit-quiz');
-    if (bSubmit) bSubmit.addEventListener('click', function () { submitQuiz(id); });
-    var bZoom = scope.querySelector('#zoom-quiz');
-    if (bZoom) bZoom.addEventListener('click', function () { openQuizModal(id); });
+    var openQuiz = scope.querySelector('#open-quiz-workspace');
+    if (openQuiz) openQuiz.addEventListener('click', function () { openQuizModal(id, scope.querySelector('#quiz-round-select').value); });
     var bRedo = scope.querySelector('#redo-quiz');
     if (bRedo) bRedo.addEventListener('click', function () { redoQuiz(id); });
     var bComp = scope.querySelector('#complete-node');
@@ -1745,123 +1944,32 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     requestAnimationFrame(drawEdges);
   }
 
-  // 提交后的逐题结果（渲染在「测验」tab 内；答案块由标题行「查看答案」统一控制）
-  function resultDetailHtml(id, res) {
-    var d = state.nodeDetail[id];
-    var qs = ((d.quiz && d.quiz.questions) || []);
-    var per = res.per_question || [];
-    var pts = evenPts(qs.length);
-    var detail = qs.map(function (q, i) {
-      var p = per[i] || {};
-      var pv = (q.points != null) ? q.points : pts[i];
-      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' +
-        (pv != null ? '<span class="q-points">（' + pv + ' 分）</span> ' : '') + mdRender(q.q) + '</p>' +
-        '<div class="result ' + (p.ok ? 'ok' : 'bad') + '">' +
-        '<strong>' + (p.ok ? '✓ 正确' : '✗ 有缺漏') + '</strong> ' + mdRender(p.comment || '') + '</div>' +
-        '<div class="q-answer" hidden>' + answerLine(q) + '</div></div>';
-    }).join('');
-    var cls = res.pass ? 'ok' : 'bad';
-    return '<div class="panel-sec"><h4>自测结果</h4>' +
-      '<div class="result ' + cls + '"><span class="score ' + cls + '">' + esc(res.score) + '</span> 分 — ' +
-      (res.pass ? '通过 ✅' : '未通过 ❌') + '</div>' +
-      (res.feedback ? '<p style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">' + mdRender(res.feedback) + '</p>' : '') +
-      '<div style="height:10px"></div>' + detail + '</div>';
-  }
-
-  // ---------- 放大答题（模态框） ----------
-  var modalNodeId = null;
-  function openQuizModal(id) {
+  // 所有题目、作答和历史批改均由共享弹窗呈现。
+  function openQuizModal(id, roundId) {
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
-    modalNodeId = id;
-    $('qm-title').textContent = 'NODE ' + dispId(id) + ' · ' + n.title + ' — 自测答题';
-    var qs = (d.quiz && d.quiz.questions) || [];
-    var ptsArr = evenPts(qs.length);
-    var scope = cardContentEl(id);
-    var h = qs.map(function (q, i) {
-      var el = scope ? scope.querySelector('#ans-' + i) : null;
-      var cur = el ? (el.value || '') : '';
-      return quizQHtml(q, i, 'qmo-', 'qma-', cur, ptsArr);
-    }).join('');
-    $('qm-body').innerHTML = h;
-    renderMathIn($('qm-body'));
-    highlightIn($('qm-body'));
-    qs.forEach(function (q, i) { bindAutoGrow($('qma-' + i)); });
-    $('quiz-modal').hidden = false;
-  }
-  function closeQuizModal(saveBack) {
-    if (saveBack && modalNodeId != null) {
-      var qs = (((state.nodeDetail[modalNodeId] || {}).quiz) || {}).questions || [];
-      var scope = cardContentEl(modalNodeId);
-      qs.forEach(function (q, i) {
-        var src = $('qma-' + i), dst = scope ? scope.querySelector('#ans-' + i) : null;
-        if (src && dst) dst.value = src.value;
-      });
-      syncChoiceRadios(scope);
-    }
-    $('quiz-modal').hidden = true;
-    modalNodeId = null;
-  }
-  function submitQuizFromModal() {
-    var id = modalNodeId;
-    closeQuizModal(true);
-    if (id != null) submitQuiz(id);
-  }
-
-  function submitQuiz(id) {
-    var n = nodeById(id), d = state.nodeDetail[id];
-    var scope = cardContentEl(id);
-    var qs = ((d.quiz && d.quiz.questions) || []);
-    var answers = qs.map(function (q, i) {
-      if (q.options && q.options.length) return choiceAns[i] || '';
-      var el = scope ? scope.querySelector('#ans-' + i) : null;
-      return el ? (el.value || '').trim() : '';
-    });
-    if (answers.every(function (a) { return !a; })) { alert('请至少回答一题再提交。'); return; }
-    var btn = scope ? scope.querySelector('#submit-quiz') : null;
-    if (btn) { btn.disabled = true; btn.textContent = '判分中…'; }
-    hideError();
-    post('/path/quiz', {
-      node: { title: n.title, essence: n.essence, objectives: n.objectives || [] },
-      questions: qs.map(function (q) {
-        var o = { q: q.q, answer: q.answer };
-        if (q.type) o.type = q.type;
-        if (q.options && q.options.length) o.options = q.options;
-        if (q.points) o.points = q.points;
-        return o;
-      }),
-      answers: answers
-    }).then(function (res) {
-      var st = state.nodeState[id] || {};
-      st.score = res.score;
-      st.lastResult = { score: res.score, pass: res.pass, feedback: res.feedback || '',
-                        per_question: res.per_question || [] };
-      st.lastAnswers = answers.map(function (a) { return String(a == null ? '' : a).slice(0, 600); }).slice(0, 16);
-      // pass=true 不自动完成，等用户点「完成本节点并解锁下一节点」
-      state.nodeState[id] = st;
-      save();
-      showQuizResult(id, res);
-    }).catch(function (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '提交自测'; }
-      showError('判分失败：' + e.message, function () { submitQuiz(id); });
+    return window.QuizDialog.open({
+      api: API, key: storeKey(), nodeId: id, roundId: roundId, title: n.title + ' · 单元测验',
+      render: mdRender, decorate: function (el) { renderMathIn(el); highlightIn(el); },
+      onLoad: function (quiz) { d.quiz = quiz; },
+      onResult: function (res) {
+        d.quiz = res.quiz;
+        if (res.round_id === d.quiz.round_id) {
+          var st = state.nodeState[id] || {};
+          st.score = res.score;
+          st.lastResult = {score: res.score, pass: res.pass, feedback: res.feedback,
+                           per_question: res.per_question, round_id: res.round_id};
+          state.nodeState[id] = st;
+        }
+        save(); renderPlan();
+      }
     });
   }
-
-  // 提交后：结果渲染在卡内「测验」tab 并自动切过去（重建卡片后恢复展开）
-  function showQuizResult(id, res) {
-    lastQuizShown = { id: id, res: res };
-    matTab = 'quiz';
-    renderPlan();
-  }
-
-  // 换新题重测：调用 /path/requiz 生成全新变式题，替换当前题集后重新渲染
+  // 换新题重测：服务端追加新轮次，保留原题与作答。
   function redoQuiz(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
     var quiz = d.quiz || {};
-    var used = ((quiz.used) || []).concat((quiz.questions || []).map(function (q) {
-      return { q: q.q, answer: q.answer };
-    }));
     var st = state.nodeState[id] || {};
     var scope = cardContentEl(id);
     var btn = scope ? scope.querySelector('#redo-quiz') : null;
@@ -1870,13 +1978,13 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     post('/path/requiz', {
       node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
       spec: state.spec,
-      used: used.slice(-12),
+      round_id: quiz.round_id,
       feedback: st.lastResult || null,
       key: storeKey()
     }).then(function (r) {
       var qs = (r && r.questions) || [];
       if (!qs.length) throw new Error('未获得新题');
-      d.quiz = { questions: qs, used: used.slice(-30) };
+      d.quiz = r;
       lastQuizShown = null;
       matTab = 'quiz';
       save();
@@ -1950,30 +2058,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 
   // ---------- 重新开始 ----------
   function restart() {
-    if (!confirm('确定要重新开始吗？（当前这一份会保留在资料库，不会删除）')) return;
-    try { history.replaceState(null, '', location.pathname); } catch (e) {}   // 去掉 ?t=，刷新不会载回旧资料
-    state = {
-      stage: 'intake', topic: '', history: [], spec: null, queries: [], sources: [],
-      brief: '', plan: null, nodeDetail: {}, nodeState: {}, aiHist: {}, pending: null
-    };
-    selectedId = null; busy = false;
-    expandedId = null; activeScope = null; generatingNode = null;
-    reviewFilter = false; aiBusy = false; resumeAttempts = 0;
-    genAllRunning = false; genAllPaused = false; genAllQueue = []; genAllRemaining = [];
-    if (genAllTimer) { clearTimeout(genAllTimer); genAllTimer = null; }
-    matTab = 'material'; matTabOwner = null; lastQuizShown = null;
-    hideResumeBar();
-    hideError();
-    $('chat-log').innerHTML = '';
-    $('spec-card').hidden = true;
-    $('research-card').hidden = true;
-    panelHead('AGENT', 'AI 学习助手', '点击左侧卡片展开学习，或点卡片上的「AI 辅助」与 AI 交互式学习。');
-    $('panel-body').innerHTML = '<p class="tip">选一个单元，AI 会带你交互式学习：讲解、追问、出小题检验你，不直接给答案。</p>';
-    setFoot('');
-    setStage('intake');
-    renderChat();
-    renderProgress();
-    setChatDisabled(false);
+    if (!confirm('确定要重新开始吗？当前学习资料会保留在资料库。')) return;
+    save(); flushSave();
+    Promise.all(stateWrites.slice()).then(function () { location.href = location.pathname + '?new=1'; });
   }
 
   // ---------- 学习资料库（服务端数据动态扫描） ----------
@@ -2115,12 +2202,10 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var target = delSlug;
     var key = delKey || (USER_PATH + STORE_PREFIX + target);
     var pass = ($('dm-pass') || {}).value || '';
-    fetch(API + '/state/delete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keys: [key], password: pass })
-    }).then(function (r) { return r.json(); }).then(function (j) {
+    var wasCurrent = key === storeKey();
+    var keys = wasCurrent ? [key, LAST_KEY, aiKey()] : [key];
+    deleteState(keys, pass).then(function (j) {
       if (j && j.ok) {
-        var wasCurrent = slug(state.topic || '') === target;
         closeDelModal();
         if (wasCurrent) { location.href = location.pathname + '?new=1'; return; }
         libRender();
@@ -2129,9 +2214,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
         var err = $('dm-err');
         if (err) { err.textContent = (j && j.error) || '删除失败'; err.hidden = false; }
       }
-    }).catch(function () {
+    }).catch(function (error) {
       var err = $('dm-err');
-      if (err) { err.textContent = '网络错误，请重试'; err.hidden = false; }
+      if (err) { err.textContent = error.message || '网络错误，请重试'; err.hidden = false; }
     });
   }
 
@@ -2146,14 +2231,6 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     $('errretry').addEventListener('click', function () { var f = retryFn; hideError(); if (f) f(); });
     window.addEventListener('resize', function () { if (state.plan) drawEdges(); });
     $('backend-label').textContent = API;
-    $('qm-x').addEventListener('click', function () { closeQuizModal(true); });
-    $('qm-cancel').addEventListener('click', function () { closeQuizModal(true); });
-    $('qm-submit').addEventListener('click', submitQuizFromModal);
-    document.addEventListener('change', choiceChange);   // 选择题点选（卡内/模态均适用）
-    $('quiz-modal').addEventListener('click', function (e) { if (e.target === this) closeQuizModal(true); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !$('quiz-modal').hidden) closeQuizModal(true);
-    });
     $('dm-cancel').addEventListener('click', closeDelModal);
     $('dm-ok').addEventListener('click', submitDel);
     $('dm-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitDel(); });
@@ -2208,21 +2285,6 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 
 </script>
 
-<div id="quiz-modal" hidden>
-  <div class="qm-card">
-    <div class="qm-head">
-      <p class="eyebrow">放大答题</p>
-      <h3 id="qm-title">自测</h3>
-      <button class="qm-close" id="qm-x" type="button" title="关闭">✕</button>
-    </div>
-    <div class="qm-body" id="qm-body"></div>
-    <div class="qm-foot">
-      <span class="qm-hint">关闭时自动保留已写内容</span>
-      <button class="btn" id="qm-cancel" type="button">保存并关闭</button>
-      <button class="btn primary" id="qm-submit" type="button">提交自测</button>
-    </div>
-  </div>
-</div>
 <div id="del-modal" hidden>
   <div class="dm-card">
     <div class="dm-body">

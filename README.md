@@ -6,6 +6,8 @@
 
 ---
 
+本次测验流程与评分规则见 [Quiz Harness](docs/QUIZ_HARNESS.md)：历史轮次保留、出题查重与独立验题、逐题评分点计分。
+
 ## 组成
 
 | 目录 | 组件 | 说明 |
@@ -41,7 +43,7 @@
 
 ```bash
 sudo mkdir -p /opt/study-assistant
-sudo cp study-assistant/study_assistant.py /opt/study-assistant/
+sudo cp study-assistant/study_assistant.py study-assistant/quiz_harness.py /opt/study-assistant/
 # 编辑 deploy/study-assistant.service：把 LLM_KEY 改为实际密钥（按需调整 LLM_BASE 等，见下表）
 sudo cp deploy/study-assistant.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now study-assistant

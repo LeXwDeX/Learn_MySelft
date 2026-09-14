@@ -21,7 +21,14 @@ def main():
     if "__APP_JS__" not in doc:
         raise SystemExit("模板缺少 __APP_JS__ 占位符")
 
+    with open(os.path.join(HERE, "quiz_dialog.js"), encoding="utf-8") as f:
+        dialog_js = f.read()
+    doc = doc.replace("__QUIZ_DIALOG_JS__", dialog_js)
     doc = doc.replace("__APP_JS__", app_js)
+    with open(os.path.join(HERE, "quiz_map_template.html"), encoding="utf-8") as f:
+        quiz_page = f.read().replace("__QUIZ_DIALOG_JS__", dialog_js)
+    with open(os.path.join(HERE, "quiz-map.html"), "w", encoding="utf-8") as f:
+        f.write(quiz_page)
     doc = doc.replace("__BUILD__", datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
 
     with open(OUT, "w", encoding="utf-8") as f:
