@@ -25,6 +25,8 @@ Agent 自由对话中的临时题目尚未自动转成结构化测验记录。�
 
 ## 回归
 
+发布使用本地验收，不依赖 GitHub CI/CD。执行 `scripts/check-local.sh`，行为修改还需隔离环境中的相关浏览器和实际接口回归；发布前备份，发布后核对版本与页面。
+
 ```sh
 python3 -m unittest discover -s tests -v
 node tests/test_frontend_regressions.js
