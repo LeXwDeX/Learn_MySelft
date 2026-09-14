@@ -10,7 +10,7 @@
 
 | 目录 | 组件 | 说明 |
 |------|------|------|
-| `knowledge-map/` | 知识地图 | 《初中数学 + 几何 知识体系 & 线性代数一周冲刺》交互式知识页。每个知识点卡片带「AI 辅助」按钮，点选后右侧常驻面板进入该单元的独立对话（每单元 = 每对话） |
+| `knowledge-map/` | 知识地图 | 将结构化知识数据生成为交互式知识页：单元卡片 + 四态进度标记 + 每单元独立 AI 对话（每单元 = 每对话）。数据自备（未随仓库提供），由 `gen_math_map.py` 生成 |
 | `learning-path/` | 学习路径 | 输入主题 → 对话式采集需求 → 主动研究（SearXNG 检索）→ 生成依赖路径图。节点按依赖解锁（前置全部完成才可学），自测通过（≥60 分）标记完成 |
 | `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask` `/suggest` `/compress` `/health` `/path/intake` `/path/research` `/path/plan` `/path/node` `/path/quiz` `/state/all` `/state/put` `/state/del` |
 | `home/` | 固定首页 | 学习工具固定入口（部署为 `<站点>/learn/`）；`state_sync.js` 为全站学习数据同步脚本（部署为 `<站点>/state_sync.js`） |
@@ -56,7 +56,8 @@ R=/path/to/static-root
 mkdir -p $R/learn $R/diagram-design/learning-path
 cp home/index.html                     $R/learn/index.html
 cp home/state_sync.js                  $R/state_sync.js
-cp knowledge-map/math-knowledge-map.html $R/diagram-design/learning-path/junior-math-linalg.html
+# 知识地图页（可选）：先用「生成器」把自备数据生成为页面，再把产物放到：
+#   $R/diagram-design/learning-path/<你的页面名>.html
 cp learning-path/learning-path.html    $R/diagram-design/learning-path/learning-path.html
 # KaTeX（公式渲染，第三方 0.18.7，未收录本仓库）：从 npm 镜像取 dist 解压到：
 #   $R/diagram-design/learning-path/katex/
@@ -68,7 +69,7 @@ cp learning-path/learning-path.html    $R/diagram-design/learning-path/learning-
 ### 3. 生成器（页面内容改动后重新生成）
 
 ```bash
-python3 knowledge-map/gen_math_map.py         # math_data.py → math-knowledge-map.html + .json
+python3 knowledge-map/gen_math_map.py         # 自备数据（math_data.py）→ 页面 + 种子 JSON
 cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js → learning-path.html
 ```
 
@@ -122,3 +123,4 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 ## 版本
 
 - **v1.0**（2026-09-14）：首个发布版。知识地图 + 学习路径全流程（采集 / 研究 / 路径图 / 门控自测）+ `/state/*` 服务端数据同步。修复项：untitled 根因治理、卡片布局与间距、KaTeX 公式渲染、空回复重试、输出预算 384K。
+- 仓库整理：移除测试资料（示例知识地图数据与产物），仅保留工具与文档；模板与生成器去品牌化。

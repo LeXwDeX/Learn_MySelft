@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-"""生成《初中数学+几何 知识体系 & 线性代数一周冲刺》交互式知识地图。
+"""交互式知识地图生成器：读取同目录数据文件 math_data.py → 生成页面 + 种子 JSON。
 
-模板用占位符替换（不用 f-string），避免 CSS/JS 花括号转义问题。
+数据文件需自备（仓库未附数据）；模板用占位符替换（不用 f-string），避免 CSS/JS 花括号转义问题。
 """
 import json, html, os, importlib.util
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # 复用数据模块
-spec = importlib.util.spec_from_file_location("data", os.path.join(HERE, "math_data.py"))
+DATA = os.path.join(HERE, "math_data.py")
+if not os.path.exists(DATA):
+    raise SystemExit("未找到数据文件 math_data.py —— 请先在 knowledge-map/ 下提供你的数据（格式见 README）。")
+spec = importlib.util.spec_from_file_location("data", DATA)
 data_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(data_mod)
 DOMAINS, NODES, LINALG = data_mod.DOMAINS, data_mod.NODES, data_mod.LINALG
@@ -82,9 +85,9 @@ for day, title, core, checks, (q, a, why), prereqs in LINALG:
 linalg_html = (
     '<section class="domain tabpanel" data-tab="linalg" data-label="线代 7 天冲刺">'
     '<p class="eyebrow">Sprint · 7 Days</p>'
-    '<h2 style="margin-bottom:6px">线性代数一周冲刺</h2>'
+    '<h2 style="margin-bottom:6px">7 天冲刺</h2>'
     '<p class="sub" style="margin-bottom:18px">每天一个主题，当天必须通过检验自测才进入下一天。'
-    '标了「需先补」的初中知识点，卡住时就切到对应标签页点开那张卡片。</p>'
+    '标了「需先补」的知识点，卡住时就切到对应标签页点开那张卡片。</p>'
     + linalg_html + '</section>'
 )
 
@@ -94,7 +97,7 @@ doc = doc.replace("__DOMAINS__", domains_html)
 doc = doc.replace("__LINALG__", linalg_html)
 doc = doc.replace("__NCOUNT__", str(len(NODES)))
 
-out = "/home/suntao/math-knowledge-map.html"
+out = os.path.join(HERE, "math-knowledge-map.html")
 with open(out, "w", encoding="utf-8") as f:
     f.write(doc)
 print("生成完成:", out, os.path.getsize(out), "bytes")
@@ -107,6 +110,6 @@ seed = {
     "linalg_7day": [{"day": d, "title": t, "core": c, "checks": k,
                      "quiz": {"q": q, "a": a, "why": w}, "prereqs": p} for d, t, c, k, (q, a, w), p in LINALG],
 }
-with open("/home/suntao/math-knowledge-map.json", "w", encoding="utf-8") as f:
+with open(os.path.join(HERE, "math-knowledge-map.json"), "w", encoding="utf-8") as f:
     json.dump(seed, f, ensure_ascii=False, indent=2)
-print("种子 JSON:", os.path.getsize("/home/suntao/math-knowledge-map.json"), "bytes")
+print("种子 JSON:", os.path.getsize(os.path.join(HERE, "math-knowledge-map.json")), "bytes")
