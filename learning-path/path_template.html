@@ -40,6 +40,7 @@ body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);f
 .btn.primary{border-color:var(--accent);background:var(--accent);color:#fff;font-weight:600}
 .btn.primary:hover{filter:brightness(1.05)}
 .btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn.on{border-color:var(--accent);background:var(--accent-tint);color:var(--accent);font-weight:600}
 a.home-link{text-decoration:none;display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap}
 .wrap{padding:26px 0 90px}
 .content-row{display:flex;align-items:flex-start;max-width:var(--max-w);margin:0 auto}
@@ -49,6 +50,8 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .muted{color:var(--muted);font-size:13.5px}
 .errbar{display:flex;gap:12px;align-items:center;background:#fff4ef;border:1px solid rgba(235,108,54,.4);border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px;margin:0 0 16px;font-size:13.5px;color:#8a4b2a}
 .errbar[hidden]{display:none}
+.resumebar{display:flex;gap:12px;align-items:center;background:#f0f7f2;border:1px solid rgba(47,125,93,.4);border-left:3px solid var(--ok);border-radius:6px;padding:10px 14px;margin:0 0 16px;font-size:13.5px;color:#2f5d47}
+.resumebar[hidden]{display:none}
 .stage[hidden]{display:none}
 
 /* ---- 采集 ---- */
@@ -105,6 +108,64 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--muted);margin:14px 0 0}
 .legend i{width:10px;height:4px;border-radius:2px;display:inline-block;margin-right:6px}
 .empty-note{color:var(--soft);font-size:13.5px}
+/* 单元状态标记（卡片） */
+.node-caret{font-family:var(--mono);font-size:11px;color:var(--soft);flex:none;width:12px;text-align:center}
+.node-head .ai-mini{margin-left:auto;font-size:11px;padding:3px 10px;border-color:rgba(235,108,54,.45);color:var(--accent);flex:none}
+.node.selected{border-color:var(--soft);box-shadow:0 0 0 2px var(--accent-tint)}
+.node.expanded{box-shadow:0 10px 26px -18px rgba(45,49,66,.45)}
+.node-foot{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:9px;border-top:1px dashed var(--rule)}
+.node-foot .marks{display:flex;gap:5px;flex-wrap:wrap}
+.mark-btn{font-family:var(--sans);border:1px solid var(--rule);background:#fff;border-radius:5px;color:var(--soft);cursor:pointer;padding:2px 8px;line-height:1.6;flex:none}
+.mark-btn.mini{font-size:11px}
+.mark-btn.big{font-size:12.5px;padding:4px 11px}
+.mark-btn:hover{border-color:var(--accent);color:var(--accent)}
+.mark-btn.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+/* 卡内内容（手风琴展开区） */
+.node-content{margin-top:12px;padding-top:14px;border-top:1px solid var(--rule);cursor:default}
+.node-content[hidden]{display:none}
+.node-content .quiz-box textarea{min-height:150px}
+.node .notes{font-size:14px;line-height:1.9}
+.mark-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+/* 面板视图切换（学习材料 / AI 辅助） */
+.panel-view{display:flex;gap:6px;margin-top:11px}
+.panel-view[hidden]{display:none}
+.pv-tab{font-family:var(--sans);font-size:12.5px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:4px 12px;color:var(--muted);cursor:pointer}
+.pv-tab:hover{border-color:var(--soft)}
+.pv-tab.on{border-color:var(--ink);color:var(--ink);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)}
+/* AI 辅助对话 */
+.ai-msgs{min-height:120px;max-height:56vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px;margin-bottom:12px;padding-right:2px}
+.ai-msg{display:flex}
+.ai-msg.user{justify-content:flex-end}
+.ai-msg.assistant{justify-content:flex-start}
+.ai-bubble{max-width:88%;padding:9px 12px;border-radius:9px;font-size:13.5px;line-height:1.7;word-break:break-word;white-space:pre-wrap}
+.ai-msg.user .ai-bubble{background:var(--accent-tint);border:1px solid rgba(235,108,54,.35);color:#7a3a1a;border-bottom-right-radius:3px}
+.ai-msg.assistant .ai-bubble{background:#fbfbfb;border:1px solid var(--rule);border-bottom-left-radius:3px}
+.ai-msg.assistant .ai-bubble pre.md-code{white-space:pre}
+.ai-empty{color:var(--soft);font-size:13px}
+.ai-empty p{margin:0 0 8px}
+.ai-chip{display:block;width:100%;text-align:left;font-family:var(--sans);font-size:13px;border:1px solid var(--rule);background:#fff;border-radius:7px;padding:8px 11px;color:var(--muted);cursor:pointer;margin:0 0 7px}
+.ai-chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-tint)}
+.ai-compose{display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--rule);padding-top:12px}
+.ai-compose textarea{flex:1 1 auto;min-height:46px;max-height:220px;font-family:var(--sans);font-size:13.5px;padding:8px 11px;border:1px solid var(--rule);border-radius:7px;background:#fff;color:var(--ink);resize:vertical;outline:none}
+.ai-compose textarea:focus{border-color:var(--accent)}
+.ai-note{color:var(--soft);font-size:11.5px;margin:8px 0 0}
+/* 自测折叠 / 查看答案 */
+.quiz-head{display:flex;align-items:center;gap:10px;margin:0 0 7px}
+.quiz-title{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft)}
+.quiz-toggle{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);background:none;border:0;padding:0;cursor:pointer}
+.quiz-toggle:hover{color:var(--accent)}
+.quiz-head .btn.quiet{margin-left:auto;font-size:11px;padding:3px 9px;color:var(--soft)}
+.quiz-head .btn.quiet:hover{border-color:var(--accent);color:var(--accent)}
+.quiz-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
+/* 单元内选项卡：学习资料 / 测验（与 .pv-tab 同风格，但独立命名） */
+.mat-tabs-head{display:flex;gap:6px;margin:0 0 12px}
+.mat-tab{font-family:var(--sans);font-size:12.5px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:4px 13px;color:var(--muted);cursor:pointer}
+.mat-tab:hover{border-color:var(--soft)}
+.mat-tab.on{border-color:var(--ink);color:var(--ink);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)}
+.mat-pane[hidden]{display:none}
+.ai-intro{margin:0 0 10px;color:var(--soft);font-size:12px;line-height:1.6}
+.q-answer{margin-top:8px;padding:7px 10px;background:#fbfbfb;border:1px dashed var(--rule);border-radius:6px;font-size:12.5px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+.q-answer b{color:var(--soft);font-weight:600}
 
 /* ---- 右面板 ---- */
 .panel{position:sticky;top:var(--toolbar-h);flex:0 0 420px;width:420px;height:calc(100vh - var(--toolbar-h));background:#fff;border-left:1px solid var(--rule);box-shadow:-12px 0 24px -20px rgba(45,49,66,.4);display:flex;flex-direction:column;overflow:hidden;z-index:4}
@@ -217,6 +278,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       <span class="ptext" id="progress-text">已完成 0/0</span>
     </div>
     <button class="btn" id="quizmap-btn" type="button" hidden>生成测验</button>
+    <button class="btn" id="review-filter-btn" type="button" hidden>只看需复习 (0)</button>
     <div class="lib-wrap" id="lib-wrap">
       <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>
       <div class="lib-pop" id="lib-pop" hidden></div>
@@ -228,6 +290,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 <div class="wrap">
   <div class="content-row">
     <main class="main">
+      <div class="resumebar" id="resume-bar" hidden></div>
       <div class="errbar" id="errbar" hidden>
         <span id="errtext"></span>
         <button class="btn" id="errretry" type="button">重试</button>
@@ -285,12 +348,12 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 
     <aside class="panel" id="node-panel">
       <div class="panel-head">
-        <p class="pid" id="panel-id">NODE DETAIL</p>
-        <h3 id="panel-title">节点详情</h3>
-        <p class="pess" id="panel-ess">点击左侧任意节点，查看学习材料与自测。</p>
+        <p class="pid" id="panel-id">AGENT</p>
+        <h3 id="panel-title">AI 学习助手</h3>
+        <p class="pess" id="panel-ess">点击左侧卡片展开学习，或点卡片上的「AI 辅助」与 AI 交互式学习。</p>
       </div>
       <div class="panel-body" id="panel-body">
-        <p class="tip">路径图生成后，点击一个「可学习」的节点开始。锁定节点需要先完成它的前置节点。</p>
+        <p class="tip">选一个单元，AI 会带你交互式学习：讲解、追问、出小题检验你，不直接给答案。</p>
       </div>
       <div class="panel-foot" id="panel-foot" hidden></div>
     </aside>

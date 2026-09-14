@@ -170,12 +170,42 @@ def _state_stage_result(key, stage):
     return None
 
 
+def _state_write_key(key, value):
+    """把单个 key 的原始值写入服务端（与 Handler._state_put 同一存储格式）。"""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with STATE_LOCK:
+        with open(os.path.join(STATE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json"),
+                  "w", encoding="utf-8") as f:
+            json.dump({"key": key, "v": value, "ts": int(time.time() * 1000)}, f, ensure_ascii=False)
+
+
+def _state_merge_put(mkey, patch):
+    """生成写穿：读材料 → dict 合并 patch → 写回。失败只告警，不影响响应。
+
+    这样即使页面在生成途中关闭，结果也已经落库，重开自动取回。
+    """
+    try:
+        mkey = (mkey or "").strip()
+        if not mkey or not isinstance(patch, dict):
+            return False
+        m = _state_material(mkey)
+        if m is None:
+            print("[warn] state merge put skipped (no material): %s" % mkey, file=sys.stderr)
+            return False
+        m.update(patch)
+        _state_write_key(mkey, json.dumps(m, ensure_ascii=False))
+        return True
+    except Exception as e:
+        print("[warn] state merge put failed: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+        return False
+
+
 # ============================================================================
 # 学习路径：system prompt 集中管理
 # ============================================================================
 # kind: intake / research_queries / research_brief / plan / node / quiz
 _PATH_SYSTEM = {
-    "intake": """你是一位学习助手，正在通过对话确认学习者要掌握的知识点范围与深度，最终产出一份需求单（Spec）。
+    "intake": """你是一位老师，正在通过对话确认学生要掌握的知识点范围与深度，最终产出一份需求单（Spec）。
 
 你每轮只能输出下面两种格式之一（严格、不要任何多余文字）：
 ASK: <一个中文问题>          —— 信息还不够时，一次只问一个问题
@@ -190,9 +220,9 @@ SPEC 的 JSON 字段（全部必填）：
 
 采集纪律：
 1. 一次只问 1 个问题，问题要短、具体、口语化。
-2. 重点采集：知识点的范围与深度（要覆盖哪些部分、学到什么程度）/ 现有基础 / 偏好形式（例子、练习、理论、图）。不要询问可投入时间、学习周期、日程安排类问题——知识点怎么划分、怎么排序由你按学科合理结构自行设计；也不要问「学来做什么/是不是为了面试」这类动机问题，目标就是掌握知识点的范围与深度。
+2. 重点采集：知识点的范围与深度（要覆盖哪些部分、学到什么程度）/ 现有基础 / 偏好形式（例子、练习、理论、图）。你是老师、对方是学生：你的问题必须面向学生本人、学生能用自身情况回答；不要问任何面向老师的问题——例如把对方当成课程规划者的「准备学几周」「每天投入几小时」「怎么安排日程/教学计划」这类问题一律不要问；知识点怎么划分、怎么排序由你按学科合理结构自行设计。也不要问「学来做什么/是不是为了面试」这类动机问题，目标就是掌握知识点的范围与深度。
 3. 已经知道的信息不要再问；不得重复或近似重复已经问过的问题（包括同义改写、同样的句式模板），需要继续采集时换新角度或问尚未覆盖的信息（范围与深度 / 现有基础 / 偏好形式）。
-4. 用户已经回答满 4 轮后，必须输出 SPEC，不得再问。
+4. 学生已经回答满 4 轮后，必须输出 SPEC，不得再问。
 5. 若 topic 已经给出，第一个问题必须针对这个 topic：优先确认知识点的范围与深度；对编程/技术类主题，还应追问关键模块范围（例如面向对象（方法、接口）、并发、标准库与工程化等），一次只问一个。
 6. 问题句式自然多变，避免模板化（如总是「……比如 A、B，还是 C？」）；重新提问时必须与之前问过的问题明显不同。""",
     "research_queries": """你在为一个学习路径做前期检索。根据需求单，给出 3~5 条用于搜索引擎（SearXNG）的中文或英文检索式。
@@ -227,7 +257,7 @@ SPEC 的 JSON 字段（全部必填）：
 规则：
 1. study_notes 为正文，≤1200 字，可用 `## ` 小标题与行内 $...$ 公式；只写纯文本/markdown，禁止输出 HTML 标签。
 2. key_points 3~5 条；examples 2~3 条；misconceptions 2~3 条。
-3. quiz.questions 固定 6 题，顺序固定：第 1~4 题选择题（type="choice"）：每题恰好 4 个选项（options 数组，只写选项文本、不要「A.」之类前缀），answer 为正确选项字母（A/B/C/D，四题正确项字母要分散、不要集中在同一个字母），explain 说明正确项为何对、干扰项错在哪；第 5 题填空题（type="fill"）：空格用 ____ 表示，answer 为参考答案（多种可接受表述用 ｜ 分隔）；第 6 题简答题（type="short"）：题干明确要求学生给出「思路」和「答案」两部分（如「请写出你的思路和答案」），answer 为参考答案（分「思路」与「答案」两部分，共 2~4 条要点）。每题都必须给 explain（解析）。4 道选择题要覆盖本节点不同的核心知识点、难度从易到难，干扰项要有迷惑性（用常见错误思路设置）。所有题目必须是学生题：面向学生本人、考查本节点知识、能明确判对错；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题。每题必须给 points（分值，整数）：6 题合计恰好 100 分（建议：选择题每题 10~15 分；填空题 15~20 分；简答题 25~40 分）。
+3. quiz.questions 固定 6 题，顺序固定：第 1~4 题选择题（type="choice"）：每题恰好 4 个选项（options 数组，只写选项文本、不要「A.」之类前缀），answer 为正确选项字母（A/B/C/D，四题正确项字母要分散、不要集中在同一个字母），explain 说明正确项为何对、干扰项错在哪；第 5 题填空题（type="fill"）：空格用 ____ 表示，answer 为参考答案（多种可接受表述用 ｜ 分隔）；第 6 题简答题（type="short"）：题干明确要求学生给出「思路」和「答案」两部分（如「请写出你的思路和答案」），answer 为参考答案（分「思路」与「答案」两部分，共 2~4 条要点）。每题都必须给 explain（解析）。4 道选择题要覆盖本节点不同的核心知识点、难度从易到难，干扰项要有迷惑性（用常见错误思路设置）。所有题目都必须是老师出给学生的题：面向学生本人、学生能直接作答、考查本节点知识、能明确判对错；凡是把学生当成老师/规划者来提问的（替他人做规划、安排日程、课程设计、诊断他人之类）一律不要出。每题必须给 points（分值，整数）：6 题合计恰好 100 分（建议：选择题每题 10~15 分；填空题 15~20 分；简答题 25~40 分）。
 4. 面向零基础，多举具体例子。
 5. 公式统一用 LaTeX 并包在 $...$ 里（前端用 KaTeX 渲染）：向量写 \\mathbf{x}，范数写 \\|\\mathbf{x}\\|，点积写 \\cdot，矩阵写 \\mathbf{A}；不要用 \\( \\)、\\[ \\] 或 $$ 定界。
 6. **每个例子里的数值计算必须自己验算一遍再输出**（如 (1,2,3)·(4,0,2)=1×4+2×0+3×2=10；范数 \\|\\mathbf{x}\\|_2=\\sqrt{\\mathbf{x}\\cdot\\mathbf{x}}），凡算错即为重大缺陷。
@@ -264,7 +294,7 @@ func main() {
 {"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"...","points":40},{"type":"fill","q":"...","answer":"...","explain":"...","points":30},{"type":"short","q":"...","answer":"...","explain":"...","points":30}]}
 
 规则：
-1. 出 6 道全新题，结构固定：第 1~4 题选择题（每题 4 个选项、answer 为字母 A/B/C/D，四题正确项字母要分散）、第 5 题填空题、第 6 题简答题（题干明确要求学生给出「思路」和「答案」两部分）；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。题目必须是学生题：面向学生本人、能明确判对错；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题；6 题分值合计恰好 100 分。
+1. 出 6 道全新题，结构固定：第 1~4 题选择题（每题 4 个选项、answer 为字母 A/B/C/D，四题正确项字母要分散）、第 5 题填空题、第 6 题简答题（题干明确要求学生给出「思路」和「答案」两部分）；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。题目必须是老师出给学生的题：面向学生本人、学生能直接作答、能明确判对错；凡是把学生当成老师/规划者来提问的（替他人做规划、安排日程、课程设计、诊断他人之类）一律不要出；6 题分值合计恰好 100 分。
 2. 严禁与「已出过的题目」相同或近似：题目情境、数字、问法、考察角度都必须变化；允许针对同一考点出变式题，但不得照搬。
 3. 结合「上次批改要点」，优先覆盖学生暴露的薄弱点：先补错，再巩固。
 4. 每题必须给 answer（参考答案）、explain（解析）与 points（分值，整数）；6 题 points 合计恰好 100。选择题 explain 说明正确项与干扰项；简答题 answer 分「思路」与「答案」两部分给出。
@@ -281,11 +311,14 @@ func main() {
 1. 覆盖：按地图的节点顺序出题，每个节点至少 1 题；节点多于 14 个时只覆盖最重要的 14 个节点。总题数 8~16。point 引用地图单元时用「L<编号> <标题>」形式（编号与「学习地图」页展示一致，地图内部 id n1 对应展示 L1）。
 2. 结合学习者情况：某节点「未完成」或「自测得分 < 80」的，可对该节点多出 1 题（重点考察）；已完成且得分高的节点 1 题即可。
 3. 题型：选择题为主（每题 4 个选项、单选），穿插 2~4 道填空题、1~2 道简答题（简答题题干明确要求给出「思路」和「答案」两部分）。选择题正确项字母要分散；干扰项用常见错误思路设置。
-4. 题目必须是「给学习者做的题」：直接考察知识点本身；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题。
+4. 题目必须是「老师出给学生本人做的题」：直接考察知识点本身、学生能直接作答；凡是把学生当成老师/规划者来提问的（替他人做规划、安排日程、课程设计、诊断他人之类）一律不要出。
 5. 每题必须给 answer（参考答案）、explain（解析）与 points（分值，整数）：全部题目 points 合计恰好 100 分（按题量与题型加权）。
 6. 公式统一用 $...$ 的 LaTeX（前端 KaTeX 渲染），不要用 \\( \\)、\\[ \\] 或 $$ 定界。代码用 ``` 围栏代码块完整给出，不要压成一行。
 7. 数值必须自行验算正确。
-8. 前端渲染能力（只用以下语法）：```语言 围栏代码块、行内 `代码`、**加粗**、$...$ 行内 LaTeX。不要用表格、图片、HTML 标签。""",
+8. 前端渲染能力（只用以下语法）：```语言 围栏代码块、行内 `代码`、**加粗**、$...$ 行内 LaTeX。不要用表格、图片、HTML 标签。
+9. 这是给**同一学员**的**专属**测验：**优先针对「最近自测」中判错的题所在的考点/误区出新题**（同一误区换角度再考）；其次选未测且已解锁的节点。
+10. 参考「作答摘录」反映的水平与思路（如简答题的思路是否完整）调整考察深度：答得浅的考点加深检验；高分且无错题的考点只少量抽查。
+11. 保持现有 JSON 结构与出题规模不变（8~16 题、合计 100 分、每题标分值、题型结构与分组规则照旧）。""",
 }
 
 
@@ -300,7 +333,7 @@ SYSTEM_TMPL = """你是一位严谨、耐心的学习辅导老师，正在辅导
 - 单元编号与名称：{unit_id} {unit_title}
 - 所属知识域：{domain}
 - 本单元的本质：{essence}
-- 本单元必须掌握的要点：
+{notes_block}- 本单元必须掌握的要点：
 {musts}
 - 本单元常见陷阱（学生最容易错的地方）：
 {traps}
@@ -407,12 +440,21 @@ def _block(title, items, limit, fallback="  （无）"):
     return "\n".join(out)
 
 
+def _notes_block(notes):
+    """单元学习正文（节选）：用于让 AI 就正文做交互式讲解与追问；空则不显示。"""
+    n = clip(notes, 6000)
+    if not n:
+        return ""
+    return "- 本单元学习正文（节选，可用于讲解与追问）：\n" + n + "\n"
+
+
 def build_system(ctx):
     return SYSTEM_TMPL.format(
         unit_id=clip(ctx.get("unit_id"), 20),
         unit_title=clip(ctx.get("unit_title"), 80),
         domain=clip(ctx.get("domain"), 40),
         essence=clip(ctx.get("essence"), 300),
+        notes_block=_notes_block(ctx.get("notes")),
         musts=_block("必会", ctx.get("musts"), 8),
         traps=_block("陷阱", ctx.get("traps"), 6),
         quizzes=_block("自测", ctx.get("quizzes"), 4),
@@ -425,6 +467,7 @@ def build_suggest_system(ctx):
         unit_title=clip(ctx.get("unit_title"), 80),
         domain=clip(ctx.get("domain"), 40),
         essence=clip(ctx.get("essence"), 300),
+        notes_block=_notes_block(ctx.get("notes")),
         musts=_block("必会", ctx.get("musts"), 8),
         traps=_block("陷阱", ctx.get("traps"), 6),
     )
@@ -1025,6 +1068,7 @@ class Handler(BaseHTTPRequestHandler):
                     _gen_gate_finish(gate_key, _gate, err="research failed")
                 raise
             out = {"queries": queries, "sources": sources, "brief": clip(brief, 2000)}
+            _state_merge_put(mkey, out)   # 写穿：页面关闭也能取回
             if gate_key:
                 _gen_cache_put(gate_key, out)
                 _gen_gate_finish(gate_key, _gate, out=out)
@@ -1076,6 +1120,7 @@ class Handler(BaseHTTPRequestHandler):
                     _gen_gate_finish(gate_key, _gate, err="plan generation failed")
                 self._json(502, {"error": "plan generation failed: need >=6 valid nodes", "plan": plan})
                 return
+            _state_merge_put(mkey, {"plan": plan, "stage": "learning"})   # 写穿
             if gate_key:
                 _gen_cache_put(gate_key, plan)
                 _gen_gate_finish(gate_key, _gate, out=plan)
@@ -1138,6 +1183,14 @@ class Handler(BaseHTTPRequestHandler):
                     _gen_gate_finish(gate_key, _gate, err="node detail generation failed")
                 self._json(502, {"error": "node detail generation failed"})
                 return
+            try:
+                _m0 = _state_material(mkey) or {}
+                _nd = _m0.get("nodeDetail") if isinstance(_m0.get("nodeDetail"), dict) else {}
+                _nd = dict(_nd)
+                _nd[node_id] = detail
+                _state_merge_put(mkey, {"nodeDetail": _nd})   # 写穿
+            except Exception as _e:
+                print("[warn] node state merge failed: %s" % _e, file=sys.stderr)
             if gate_key:
                 _gen_cache_put(gate_key, detail)
                 _gen_gate_finish(gate_key, _gate, out=detail)
@@ -1266,6 +1319,23 @@ class Handler(BaseHTTPRequestHandler):
                 kp = _str_list(d.get("key_points"), 3, 200)
                 if kp:
                     item["要点"] = kp
+                # 「专属测验」依据：最近一次自测的逐题对错 + 作答摘录（未测 → None）
+                lr = st.get("lastResult") if isinstance(st.get("lastResult"), dict) else {}
+                per = lr.get("per_question") if isinstance(lr.get("per_question"), list) else []
+                item["最近自测"] = {
+                    "得分": int(score) if isinstance(score, (int, float)) else None,
+                    "逐题": [{"i": i + 1, "正确": bool(x.get("ok")), "点评": clip(x.get("comment"), 300)}
+                             for i, x in enumerate(per[:12]) if isinstance(x, dict)],
+                } if score is not None else None
+                la = st.get("lastAnswers")
+                if isinstance(la, list):
+                    excerpts = {}
+                    for i, a in enumerate(la[:12]):
+                        s = clip(str(a), 500)
+                        if s.strip():
+                            excerpts[str(i + 1)] = s
+                    if excerpts:
+                        item["作答摘录"] = excerpts
                 out_nodes.append(item)
             if not out_nodes:
                 _gen_gate_finish(gate_key, _gate, err="plan required")
@@ -1273,7 +1343,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             done_set = set(n["id"] for n in out_nodes if n["情况"]["已完成"])
             done_n = len(done_set)
-            score_parts, weak = [], []
+            score_parts, weak, node_notes = [], [], []
             for n in out_nodes:
                 sc = n["情况"]["得分"]
                 if sc is not None:
@@ -1281,8 +1351,16 @@ class Handler(BaseHTTPRequestHandler):
                 unlocked = all(dep in done_set for dep in n["依赖"])
                 if (isinstance(sc, (int, float)) and sc < 80) or (not n["情况"]["已完成"] and unlocked):
                     weak.append(n["id"])
-            learner = "共 %d 个节点；已完成 %d；自测得分：%s；薄弱（<80 或未完成且已解锁）：%s" % (
-                len(out_nodes), done_n, "、".join(score_parts) or "（暂无）", "、".join(weak) or "（无）")
+                # 每个节点标注：已测/未测、分数、错题数（供「专属测验」优先针对错题）
+                qm_info = n.get("最近自测") or {}
+                wrong_n = sum(1 for x in (qm_info.get("逐题") or []) if not x.get("正确"))
+                if sc is None:
+                    node_notes.append("%s 未测" % n["id"])
+                else:
+                    node_notes.append("%s 已测 %d分 错%d题" % (n["id"], sc, wrong_n))
+            learner = "共 %d 个节点；已完成 %d；自测得分：%s；薄弱（<80 或未完成且已解锁）：%s；逐节点：%s" % (
+                len(out_nodes), done_n, "、".join(score_parts) or "（暂无）",
+                "、".join(weak) or "（无）", "；".join(node_notes))
             payload = {
                 "学习地图": {"title": map_title, "summary": clip(plan.get("summary"), 300),
                           "nodes": out_nodes},
