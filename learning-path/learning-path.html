@@ -172,6 +172,20 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 .lib-foot a:hover{text-decoration:underline}
 .lib-count{font-family:var(--mono);font-size:10.5px;color:var(--soft)}
 .lib-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:10px 2px 4px}
+/* ---- 删除资料（需密码） ---- */
+.lib-row{display:flex;align-items:stretch;gap:6px;margin:2px 0}
+.lib-row .lib-item{flex:1 1 auto;margin:0;min-width:0}
+.lib-del{flex:none;border:1px solid var(--rule);background:#fff;border-radius:6px;width:34px;color:var(--soft);cursor:pointer;font-size:14px;line-height:1;padding:0}
+.lib-del:hover{border-color:#c0392b;color:#c0392b}
+#del-modal{position:fixed;inset:0;z-index:110;display:flex;align-items:center;justify-content:center;background:rgba(45,49,66,.38)}
+#del-modal[hidden]{display:none}
+.dm-card{background:#fff;border:1px solid var(--rule);border-radius:10px;width:min(430px,92vw);box-shadow:0 18px 50px rgba(45,49,66,.18)}
+.dm-body{padding:18px 22px 8px;font-size:14px;line-height:1.7}
+.dm-tip{color:var(--soft);font-size:12.5px;margin:6px 0 0}
+.dm-pass{width:100%;box-sizing:border-box;margin-top:10px;padding:9px 12px;border:1px solid var(--rule);border-radius:6px;font-size:14px;font-family:var(--sans)}
+.dm-pass:focus{outline:none;border-color:var(--accent)}
+.dm-err{color:#c0392b;font-size:12.5px;margin:8px 0 0}
+.dm-foot{display:flex;gap:10px;justify-content:flex-end;padding:14px 22px;border-top:1px solid var(--rule);background:#fbfbfb;border-radius:0 0 10px 10px}
 </style>
 <link rel="stylesheet" href="./katex/katex.min.css">
 <link rel="stylesheet" href="./highlight/github.min.css">
@@ -1145,8 +1159,11 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
         for (var i = 0; i < items.length; i++) {
           var it = items[i], meta = STAGE_LABEL[it.stage] || it.stage || '';
           if (it.stage === 'learning') meta = it.total ? (it.done + '/' + it.total + ' 节点完成') : '路径已生成';
-          h += '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
-               '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>';
+          h += '<div class="lib-row">' +
+               '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
+               '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>' +
+               '<button class="lib-del" type="button" data-slug="' + esc(it.slug) + '" data-topic="' + esc(it.topic) + '" title="删除这份资料">🗑</button>' +
+               '</div>';
         }
       }
       h += '<div class="lib-foot">' +
@@ -1166,10 +1183,53 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       e.stopPropagation();
       if (pop.hidden) { libRender(); pop.hidden = false; } else { pop.hidden = true; }
     });
+    pop.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest ? e.target.closest('.lib-del') : null;
+      if (b) { e.stopPropagation(); openDelModal(b.getAttribute('data-slug'), b.getAttribute('data-topic')); }
+    });
     document.addEventListener('click', function (e) {
-      if (!pop.hidden && wrap && !wrap.contains(e.target)) pop.hidden = true;
+      var dm = $('del-modal');
+      if (!pop.hidden && wrap && !wrap.contains(e.target) && !(dm && !dm.hidden && dm.contains(e.target))) pop.hidden = true;
     });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') pop.hidden = true; });
+  }
+
+  // ---------- 删除资料（需密码；校验在服务端） ----------
+  var delSlug = null;
+  function openDelModal(s, topic) {
+    delSlug = s;
+    $('dm-topic').textContent = topic || s;
+    var err = $('dm-err'); if (err) err.hidden = true;
+    var inp = $('dm-pass'); if (inp) inp.value = '';
+    $('del-modal').hidden = false;
+    if (inp) inp.focus();
+  }
+  function closeDelModal() {
+    $('del-modal').hidden = true;
+    delSlug = null;
+  }
+  function submitDel() {
+    if (!delSlug) return;
+    var target = delSlug;
+    var pass = ($('dm-pass') || {}).value || '';
+    fetch(API + '/state/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys: [STORE_PREFIX + target], password: pass })
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) {
+        var wasCurrent = slug(state.topic || '') === target;
+        closeDelModal();
+        if (wasCurrent) { location.href = location.pathname + '?new=1'; return; }
+        libRender();
+        var pop = $('lib-pop'); if (pop) pop.hidden = false;
+      } else {
+        var err = $('dm-err');
+        if (err) { err.textContent = (j && j.error) || '删除失败'; err.hidden = false; }
+      }
+    }).catch(function () {
+      var err = $('dm-err');
+      if (err) { err.textContent = '网络错误，请重试'; err.hidden = false; }
+    });
   }
 
   // ---------- 初始化 ----------
@@ -1189,6 +1249,13 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     $('quiz-modal').addEventListener('click', function (e) { if (e.target === this) closeQuizModal(true); });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && !$('quiz-modal').hidden) closeQuizModal(true);
+    });
+    $('dm-cancel').addEventListener('click', closeDelModal);
+    $('dm-ok').addEventListener('click', submitDel);
+    $('dm-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitDel(); });
+    $('del-modal').addEventListener('click', function (e) { if (e.target === this) closeDelModal(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !$('del-modal').hidden) closeDelModal();
     });
     libBind();
 
@@ -1238,6 +1305,20 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       <span class="qm-hint">关闭时自动保留已写内容</span>
       <button class="btn" id="qm-cancel" type="button">保存并关闭</button>
       <button class="btn primary" id="qm-submit" type="button">提交自测</button>
+    </div>
+  </div>
+</div>
+<div id="del-modal" hidden>
+  <div class="dm-card">
+    <div class="dm-body">
+      <p style="margin:0">删除学习资料「<b id="dm-topic"></b>」？</p>
+      <p class="dm-tip">删除后将从服务端移除，无法恢复。请输入删除密码：</p>
+      <input class="dm-pass" id="dm-pass" type="password" autocomplete="off" placeholder="删除密码">
+      <p class="dm-err" id="dm-err" hidden>密码错误，请重试。</p>
+    </div>
+    <div class="dm-foot">
+      <button class="btn" id="dm-cancel" type="button">取消</button>
+      <button class="btn primary" id="dm-ok" type="button">确认删除</button>
     </div>
   </div>
 </div>

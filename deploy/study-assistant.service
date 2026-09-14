@@ -10,6 +10,8 @@ Environment=LLM_BASE=http://192.168.33.110:8000/v1
 # LLM_KEY：部署时替换为内部网关密钥（仓库不保存密钥）
 Environment=LLM_KEY=CHANGE_ME
 Environment=LLM_MODEL=deepseek
+# 删除密码：部署时注入真实值（仓库不保存）；未配置则 /state/delete 拒绝删除
+Environment=DELETE_PASSWORD=CHANGE_ME
 ExecStart=/usr/bin/python3 /opt/study-assistant/study_assistant.py
 Restart=always
 RestartSec=3

@@ -172,6 +172,20 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 .lib-foot a:hover{text-decoration:underline}
 .lib-count{font-family:var(--mono);font-size:10.5px;color:var(--soft)}
 .lib-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:10px 2px 4px}
+/* ---- 删除资料（需密码） ---- */
+.lib-row{display:flex;align-items:stretch;gap:6px;margin:2px 0}
+.lib-row .lib-item{flex:1 1 auto;margin:0;min-width:0}
+.lib-del{flex:none;border:1px solid var(--rule);background:#fff;border-radius:6px;width:34px;color:var(--soft);cursor:pointer;font-size:14px;line-height:1;padding:0}
+.lib-del:hover{border-color:#c0392b;color:#c0392b}
+#del-modal{position:fixed;inset:0;z-index:110;display:flex;align-items:center;justify-content:center;background:rgba(45,49,66,.38)}
+#del-modal[hidden]{display:none}
+.dm-card{background:#fff;border:1px solid var(--rule);border-radius:10px;width:min(430px,92vw);box-shadow:0 18px 50px rgba(45,49,66,.18)}
+.dm-body{padding:18px 22px 8px;font-size:14px;line-height:1.7}
+.dm-tip{color:var(--soft);font-size:12.5px;margin:6px 0 0}
+.dm-pass{width:100%;box-sizing:border-box;margin-top:10px;padding:9px 12px;border:1px solid var(--rule);border-radius:6px;font-size:14px;font-family:var(--sans)}
+.dm-pass:focus{outline:none;border-color:var(--accent)}
+.dm-err{color:#c0392b;font-size:12.5px;margin:8px 0 0}
+.dm-foot{display:flex;gap:10px;justify-content:flex-end;padding:14px 22px;border-top:1px solid var(--rule);background:#fbfbfb;border-radius:0 0 10px 10px}
 </style>
 <link rel="stylesheet" href="./katex/katex.min.css">
 <link rel="stylesheet" href="./highlight/github.min.css">
@@ -295,6 +309,20 @@ __APP_JS__
       <span class="qm-hint">关闭时自动保留已写内容</span>
       <button class="btn" id="qm-cancel" type="button">保存并关闭</button>
       <button class="btn primary" id="qm-submit" type="button">提交自测</button>
+    </div>
+  </div>
+</div>
+<div id="del-modal" hidden>
+  <div class="dm-card">
+    <div class="dm-body">
+      <p style="margin:0">删除学习资料「<b id="dm-topic"></b>」？</p>
+      <p class="dm-tip">删除后将从服务端移除，无法恢复。请输入删除密码：</p>
+      <input class="dm-pass" id="dm-pass" type="password" autocomplete="off" placeholder="删除密码">
+      <p class="dm-err" id="dm-err" hidden>密码错误，请重试。</p>
+    </div>
+    <div class="dm-foot">
+      <button class="btn" id="dm-cancel" type="button">取消</button>
+      <button class="btn primary" id="dm-ok" type="button">确认删除</button>
     </div>
   </div>
 </div>

@@ -863,8 +863,11 @@
         for (var i = 0; i < items.length; i++) {
           var it = items[i], meta = STAGE_LABEL[it.stage] || it.stage || '';
           if (it.stage === 'learning') meta = it.total ? (it.done + '/' + it.total + ' 节点完成') : '路径已生成';
-          h += '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
-               '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>';
+          h += '<div class="lib-row">' +
+               '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
+               '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>' +
+               '<button class="lib-del" type="button" data-slug="' + esc(it.slug) + '" data-topic="' + esc(it.topic) + '" title="删除这份资料">🗑</button>' +
+               '</div>';
         }
       }
       h += '<div class="lib-foot">' +
@@ -884,10 +887,53 @@
       e.stopPropagation();
       if (pop.hidden) { libRender(); pop.hidden = false; } else { pop.hidden = true; }
     });
+    pop.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest ? e.target.closest('.lib-del') : null;
+      if (b) { e.stopPropagation(); openDelModal(b.getAttribute('data-slug'), b.getAttribute('data-topic')); }
+    });
     document.addEventListener('click', function (e) {
-      if (!pop.hidden && wrap && !wrap.contains(e.target)) pop.hidden = true;
+      var dm = $('del-modal');
+      if (!pop.hidden && wrap && !wrap.contains(e.target) && !(dm && !dm.hidden && dm.contains(e.target))) pop.hidden = true;
     });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') pop.hidden = true; });
+  }
+
+  // ---------- 删除资料（需密码；校验在服务端） ----------
+  var delSlug = null;
+  function openDelModal(s, topic) {
+    delSlug = s;
+    $('dm-topic').textContent = topic || s;
+    var err = $('dm-err'); if (err) err.hidden = true;
+    var inp = $('dm-pass'); if (inp) inp.value = '';
+    $('del-modal').hidden = false;
+    if (inp) inp.focus();
+  }
+  function closeDelModal() {
+    $('del-modal').hidden = true;
+    delSlug = null;
+  }
+  function submitDel() {
+    if (!delSlug) return;
+    var target = delSlug;
+    var pass = ($('dm-pass') || {}).value || '';
+    fetch(API + '/state/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys: [STORE_PREFIX + target], password: pass })
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) {
+        var wasCurrent = slug(state.topic || '') === target;
+        closeDelModal();
+        if (wasCurrent) { location.href = location.pathname + '?new=1'; return; }
+        libRender();
+        var pop = $('lib-pop'); if (pop) pop.hidden = false;
+      } else {
+        var err = $('dm-err');
+        if (err) { err.textContent = (j && j.error) || '删除失败'; err.hidden = false; }
+      }
+    }).catch(function () {
+      var err = $('dm-err');
+      if (err) { err.textContent = '网络错误，请重试'; err.hidden = false; }
+    });
   }
 
   // ---------- 初始化 ----------
@@ -907,6 +953,13 @@
     $('quiz-modal').addEventListener('click', function (e) { if (e.target === this) closeQuizModal(true); });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && !$('quiz-modal').hidden) closeQuizModal(true);
+    });
+    $('dm-cancel').addEventListener('click', closeDelModal);
+    $('dm-ok').addEventListener('click', submitDel);
+    $('dm-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitDel(); });
+    $('del-modal').addEventListener('click', function (e) { if (e.target === this) closeDelModal(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !$('del-modal').hidden) closeDelModal();
     });
     libBind();
 

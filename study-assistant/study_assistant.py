@@ -68,6 +68,7 @@ STATE_DIR = os.environ.get("STATE_DIR", os.path.join(os.path.dirname(os.path.abs
 STATE_LOCK = threading.Lock()
 STATE_MAX_KEYS = 2000            # 单次请求键数上限
 STATE_MAX_VALUE = 2_000_000      # 单键值长度上限（字符）
+DELETE_PASSWORD = os.environ.get("DELETE_PASSWORD", "")   # 「删除资料」按钮密码（/state/delete 校验）；未配置则拒绝删除
 
 # ============================================================================
 # 学习路径：system prompt 集中管理
@@ -714,7 +715,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/state/all"):
             self._json(200, {"ok": True, "entries": self._state_all()})
         elif self.path.startswith("/health"):
-            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/state/all", "/state/put", "/state/del"]})
+            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/state/all", "/state/put", "/state/del", "/state/delete"]})
         else:
             self._json(404, {"error": "not found"})
 
@@ -960,6 +961,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
+        # 删除资料（学习资料库 🗑 按钮）：与 /state/del 分开、必须校验密码；注意放在 put/del 分支之前
+        if path.startswith("/state/delete"):
+            if not DELETE_PASSWORD:
+                self._json(503, {"ok": False, "error": "服务端未配置删除密码"})
+                return
+            try:
+                body = self._read_body()
+            except Exception as e:
+                self._json(400, {"error": "bad json: %s" % e})
+                return
+            if body.get("password") != DELETE_PASSWORD:
+                self._json(403, {"ok": False, "error": "密码错误"})
+                return
+            keys = body.get("keys") or []
+            entries = {k: None for k in keys if isinstance(k, str)}
+            n = self._state_put(entries)
+            self._json(200, {"ok": True, "n": n})
+            return
         # 学习数据同步端点：浏览器端全量推送（含删除墓碑）
         if path.startswith("/state/put") or path.startswith("/state/del"):
             try:
