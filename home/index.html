@@ -108,7 +108,7 @@ footer .fixed{color:var(--ink)}
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function stageLabel(s) {
-    return ({ intake: '阶段 A · 需求采集', research: '阶段 B · 主动研究', learning: '阶段 C · 学习路径' })[s] || s || '';
+    return ({ intake: '阶段 I · 需求采集', research: '阶段 R · 主动研究', learning: '阶段 L · 学习路径' })[s] || s || '';
   }
   function render(items) {
     var box = document.getElementById('lib-list'), cnt = document.getElementById('lib-n');

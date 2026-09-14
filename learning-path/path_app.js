@@ -261,7 +261,7 @@
   function hideError() { $('errbar').hidden = true; retryFn = null; }
 
   // ---------- 阶段/进度 ----------
-  var STAGE_LABEL = { intake: '阶段 A · 需求采集', research: '阶段 B · 主动研究', learning: '阶段 C · 学习路径' };
+  var STAGE_LABEL = { intake: '阶段 I · 需求采集', research: '阶段 R · 主动研究', learning: '阶段 L · 学习路径' };
   function setStage(s) {
     state.stage = s;
     viewStage(s);
