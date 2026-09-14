@@ -178,7 +178,7 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
 .lib-count{font-family:var(--mono);font-size:10.5px;color:var(--soft)}
 .lib-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:10px 2px 4px}
 </style>
-<script src="/state_sync.js?v=1"></script>
+<script src="/state_sync.js?v=2"></script>
 </head>
 <body>
 <div class="layout">
@@ -836,7 +836,8 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
         try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
         var it = { slug: k.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
         if (d && typeof d === 'object') {
-          it.topic = d.topic || it.slug;
+          if (!d.topic && !d.plan && (!d.history || !d.history.length)) continue;   // 跳过历史空壳
+          it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
           it.stage = d.stage || '';
           if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
           var ns = d.nodeState || {};

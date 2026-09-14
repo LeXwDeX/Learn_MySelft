@@ -59,6 +59,8 @@
   // ---------- 持久化 ----------
   function save() {
     try {
+      // 没有主题就不落盘：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
+      if (!state.topic) return;
       var payload = {
         stage: state.stage, topic: state.topic, history: state.history,
         spec: state.spec, queries: state.queries, sources: state.sources,
@@ -83,9 +85,11 @@
       var raw = localStorage.getItem(STORE_PREFIX + s);
       if (!raw) return false;
       var d = JSON.parse(raw);
-      if (!d || !d.topic) return false;
+      if (!d || typeof d !== 'object') return false;
       state.stage = d.stage || 'intake';
-      state.topic = d.topic || '';
+      // 兼容修复：历史状态可能缺 topic 字段 → 依次从 plan/spec 恢复，而不是拒绝加载
+      state.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || '';
+      if (!state.topic) return false;   // 真·空壳（由 cleanupLegacy 负责清理）
       state.history = d.history || [];
       state.spec = d.spec || null;
       state.queries = d.queries || [];
@@ -97,9 +101,56 @@
       // 状态自洽性：learning 必须有 plan
       if (state.stage === 'learning' && !state.plan) state.stage = 'research';
       if (state.stage === 'research' && !state.spec) state.stage = 'intake';
+      // 历史「untitled」空壳键修复：主题可读后迁移到正确键名（旧键走正常删除=同步墓碑；
+      // 其它设备拉到的净效果 = 旧键删除 + 新键到手，数据不丢）
+      var fixSlug = slug(state.topic);
+      if (s === 'untitled' && fixSlug && fixSlug !== 'untitled') {
+        localStorage.removeItem(STORE_PREFIX + 'untitled');
+        save();
+        s = fixSlug;
+      }
       try { localStorage.setItem(LAST_KEY, s); } catch (e) {}
       return true;
     } catch (e) { return false; }
+  }
+
+  // ---------- 历史数据兼容修复 ----------
+  // 空壳状态：无主题、无路径、无对话 —— 历史脏数据（如 learn-path-v1-untitled 空壳），直接清理
+  function isJunkState(d) {
+    return !d || typeof d !== 'object' || (!d.topic && !d.plan && (!d.history || !d.history.length));
+  }
+  // 原始删除：绕过同步层，不产生删除墓碑（防止误删其它设备上同名键的真实数据）
+  function rawRemove(k) {
+    try {
+      if (typeof window.__syncRawRemove === 'function') { window.__syncRawRemove(k); return; }
+      Storage.prototype.removeItem.call(localStorage, k);
+    } catch (e) { try { localStorage.removeItem(k); } catch (e2) {} }
+  }
+  // 启动时清理历史空壳 + 修正「最近打开」指针（指向已删/空壳时重指或清除）
+  function cleanupLegacy() {
+    var best = '';
+    try {
+      for (var i = localStorage.length - 1; i >= 0; i--) {
+        var k = localStorage.key(i);
+        if (!k || k.indexOf(STORE_PREFIX) !== 0 || k === LAST_KEY) continue;
+        var d = null;
+        try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
+        if (isJunkState(d)) { rawRemove(k); continue; }
+        if (!best || (d && d.stage === 'learning')) best = k.slice(STORE_PREFIX.length);
+      }
+      var last = localStorage.getItem(LAST_KEY);
+      if (last) {
+        var ok = false;
+        try {
+          var raw = localStorage.getItem(STORE_PREFIX + last);
+          ok = !!raw && !isJunkState(JSON.parse(raw));
+        } catch (e) { ok = false; }
+        if (!ok) {
+          if (best) localStorage.setItem(LAST_KEY, best);
+          else rawRemove(LAST_KEY);
+        }
+      }
+    } catch (e) {}
   }
 
   // ---------- 网络 ----------
@@ -624,7 +675,8 @@
         try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
         var it = { slug: k.slice(STORE_PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
         if (d && typeof d === 'object') {
-          it.topic = d.topic || it.slug;
+          if (!d.topic && !d.plan && (!d.history || !d.history.length)) continue;   // 跳过历史空壳
+          it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
           it.stage = d.stage || '';
           if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
           var ns = d.nodeState || {};
@@ -691,6 +743,7 @@
     $('backend-label').textContent = API;
     libBind();
 
+    cleanupLegacy();   // 历史数据修复：清理空壳状态、修正「最近打开」指针
     // ?new=1：强制新开（不恢复历史；已有资料仍保留在「学习资料库」里）
     var fresh = false;
     try { fresh = !!new URLSearchParams(location.search).get('new'); } catch (e) {}

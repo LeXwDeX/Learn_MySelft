@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>学习工具 · 固定入口</title>
-<script src="/state_sync.js?v=1"></script>
+<script src="/state_sync.js?v=2"></script>
 <style>
 :root{
   --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
@@ -22,7 +22,7 @@ body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);f
 h1{font-family:var(--serif);font-weight:400;font-size:38px;margin:0 0 10px;letter-spacing:.01em}
 .sub{color:var(--muted);margin:0 0 30px;max-width:76ch}
 .rule{height:1px;background:var(--rule);border:0;margin:0 0 30px}
-.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:stretch}
+.grid{display:grid;grid-template-columns:1fr;gap:18px;align-items:stretch}
 a.tool{display:flex;flex-direction:column;background:var(--paper2);border:1px solid var(--rule);border-top:3px solid var(--rule);border-radius:8px;padding:24px 26px;text-decoration:none;color:inherit}
 a.tool:hover{border-color:var(--soft);border-top-color:var(--accent)}
 .tool .no{font-family:var(--mono);font-size:11px;color:var(--soft);letter-spacing:.14em;text-transform:uppercase}
@@ -66,8 +66,20 @@ footer .fixed{color:var(--ink)}
   <hr class="rule">
 
   <div class="grid">
+    <a class="tool" href="/diagram-design/learning-path/learning-path.html">
+      <span class="no">01 · Learning Path · 学习路径</span>
+      <h2>学习资料生成器</h2>
+      <p class="desc">输入一个主题 → 对话采集需求 → 主动研究检索 → 生成带依赖门控的学习路径图；每个节点配讲义、要点、易错与自测。</p>
+      <ul>
+        <li>生成过的资料会自动出现在<b>本页下方</b>和页面右上角「学习资料库 ▾」里，点击直开</li>
+        <li>每份资料独立对话与进度，自动同步保存到服务端</li>
+      </ul>
+      <p class="path">/diagram-design/learning-path/learning-path.html</p>
+      <span class="go">打开学习路径 →</span>
+    </a>
+
     <a class="tool" href="/diagram-design/learning-path/junior-math-linalg.html">
-      <span class="no">01 · Knowledge Map · 知识地图</span>
+      <span class="no">02 · Knowledge Map · 知识地图</span>
       <h2>初中数学到线性代数</h2>
       <p class="desc">32 个知识点，按「命题与逻辑 → 数与式 → 方程 → 函数 → 几何 → 统计」的依赖顺序排列；每个知识点只做三件事：看本质、避陷阱、过自测。</p>
       <ul>
@@ -77,18 +89,6 @@ footer .fixed{color:var(--ink)}
       </ul>
       <p class="path">/diagram-design/learning-path/junior-math-linalg.html</p>
       <span class="go">打开知识地图 →</span>
-    </a>
-
-    <a class="tool" href="/diagram-design/learning-path/learning-path.html">
-      <span class="no">02 · Learning Path · 学习路径</span>
-      <h2>学习资料生成器</h2>
-      <p class="desc">输入一个主题 → 对话采集需求 → 主动研究检索 → 生成带依赖门控的学习路径图；每个节点配讲义、要点、易错与自测。</p>
-      <ul>
-        <li>生成过的资料会自动出现在<b>本页下方</b>和页面右上角「学习资料库 ▾」里，点击直开</li>
-        <li>每份资料独立对话与进度，自动同步保存到服务端</li>
-      </ul>
-      <p class="path">/diagram-design/learning-path/learning-path.html</p>
-      <span class="go">打开学习路径 →</span>
     </a>
   </div>
 
@@ -131,7 +131,8 @@ footer .fixed{color:var(--ink)}
       try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
       var it = { slug: k.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
       if (d && typeof d === 'object') {
-        it.topic = d.topic || it.slug;
+        if (!d.topic && !d.plan && (!d.history || !d.history.length)) continue;   // 跳过历史空壳
+        it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
         it.stage = d.stage || '';
         if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
         var ns = d.nodeState || {};
@@ -148,7 +149,7 @@ footer .fixed{color:var(--ink)}
   if (cnt) cnt.textContent = items.length ? ('共 ' + items.length + ' 份') : '';
   if (!box) return;
   if (!items.length) {
-    box.innerHTML = '<p class="lempty">还没扫描到生成的学习资料——点上面「学习路径」生成一个吧。（数据存在本机浏览器里）</p>';
+    box.innerHTML = '<p class="lempty">还没扫描到生成的学习资料——点上面「学习路径」生成一个吧。（学习数据自动同步到服务端）</p>';
     return;
   }
   var h = '';
