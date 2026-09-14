@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+<script src="/learn/assets/user-session.js"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>测验地图 · 按知识点出题 → 在线作答 → 自动判分</title>
@@ -112,7 +113,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
     var payload = JSON.stringify(body);
     var controller = new AbortController();
     var timeout = setTimeout(function () { controller.abort(); }, endpoint === '/path/quiz' ? 240000 : 20000);
-    return fetch(config.api + endpoint, {
+    return window.LearnUser.fetch(config.api + endpoint, {
       method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: payload,
       keepalive: !!keepalive && new Blob([payload]).size <= 60000
     }).then(function (response) {
@@ -199,11 +200,13 @@ pre.md-code code.hljs{background:transparent;padding:0}
   }
   function chooseDraft() {
     var issued = round(), stored;
-    try { stored = JSON.parse(localStorage.getItem(localKey(roundConfig(), issued.id)) || 'null'); } catch (error) {}
+    if (!view.config.readOnly) {
+      try { stored = JSON.parse(localStorage.getItem(localKey(roundConfig(), issued.id)) || 'null'); } catch (error) {}
+    }
     var attempts = issued.attempts || [];
     var draft = stored || issued.draft;
     view.attempt = draft ? null : (attempts.length ? attempts[attempts.length - 1] : null);
-    view.readOnly = !!view.attempt;
+    view.readOnly = view.config.readOnly || !!view.attempt;
     view.answers = ((draft || view.attempt || {}).answers || []).slice();
     while (view.answers.length < issued.questions.length) view.answers.push('');
     view.localRecovery = !!stored;
@@ -251,11 +254,11 @@ pre.md-code code.hljs{background:transparent;padding:0}
     byId('qd-submit').hidden = view.readOnly;
     byId('qd-submit').disabled = !!view.busy;
     byId('qd-submit').textContent = view.busy ? '逐项判分中…' : '提交本套';
-    byId('qd-retry').hidden = !view.readOnly;
+    byId('qd-retry').hidden = view.config.readOnly || !view.readOnly;
     byId('qd-retry').disabled = !!view.busy;
     byId('qd-error').hidden = true;
     updateProgress();
-    status(view.busy ? '已保存，正在按评分点判分…' : view.readOnly ? '历史提交已保存，此视图只读' : view.localRecovery ? '已恢复本机未同步草稿' : issued.draft ? '已恢复服务器草稿' : '输入后自动保存，可随时关闭', false);
+    status(view.busy ? '已保存，正在按评分点判分…' : view.config.readOnly ? '管理员只读查看' : view.readOnly ? '历史提交已保存，此视图只读' : view.localRecovery ? '已恢复本机未同步草稿' : issued.draft ? '已恢复服务器草稿' : '输入后自动保存，可随时关闭', false);
     if (config.decorate) config.decorate(byId('qd-body'));
   }
   function navigate(index) {
@@ -320,7 +323,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
       if (!view || view.busy) return;
       flushCurrent();
       if (this.value === 'draft') {
-        view.attempt = null; view.readOnly = false;
+        view.attempt = null; view.readOnly = !!view.config.readOnly;
         view.answers = (round().draft || {}).answers || round().questions.map(function () { return ''; });
       } else {
         view.attempt = round().attempts[Number(this.value)]; view.readOnly = true;
@@ -330,7 +333,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
     };
     byId('qd-retry').onclick = function () {
       if (!view || view.busy) return;
-      view.attempt = null; view.readOnly = false; view.answers = round().questions.map(function () { return ''; });
+      view.attempt = null; view.readOnly = !!view.config.readOnly; view.answers = round().questions.map(function () { return ''; });
       render(); captureDraft();
     };
     byId('qd-sync').onclick = flushCurrent;
@@ -389,7 +392,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
 
   var API = location.protocol + '//' + location.hostname + ':8101';
   var TIMEOUT = 360000;
-  var USER_PATH = 'u0/';              // 多用户口子——固定用户路径，将来替换为每用户 id
+  var USER_PATH = window.LearnUser.userId + '/';
   var QUIZ_PREFIX = 'quiz-map-v1-';
   var MAP_PREFIX = 'learn-path-v1-';
   var LAST_KEY = 'learn-path-v1-last';
@@ -458,7 +461,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
   function post(path, body) {
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
-    return fetch(API + path, {
+    return window.LearnUser.fetch(API + path, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body), signal: ctrl.signal
     }).then(function (r) {
@@ -473,7 +476,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
     });
   }
   function fetchEntries() {
-    return fetch(API + '/state/all', { cache: 'no-store' })
+    return window.LearnUser.fetch(API + '/state/all', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (j) { return (j && j.entries) || {}; });
   }
@@ -535,7 +538,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
     var related = Object.keys(currentEntries).filter(function (key) {
       try { return JSON.parse(currentEntries[key]).sourceKey === d.sourceKey; } catch (error) { return false; }
     }).sort(function (a, b) { return (JSON.parse(currentEntries[a]).created || 0) - (JSON.parse(currentEntries[b]).created || 0); });
-    return window.QuizDialog.open({relatedKeys: related, api: API, key: USER_PATH + QUIZ_PREFIX + slug, title: d.title,
+    return window.QuizDialog.open({readOnly: window.LearnUser.readOnly, relatedKeys: related, api: API, key: USER_PATH + QUIZ_PREFIX + slug, title: d.title,
       render: mdRender, decorate: function (el) { renderMathIn(el); highlightIn(el); },
       onLoad: function (quiz) { Object.assign(d, quiz); currentD = d; },
       onResult: function (res, key) { if (key !== USER_PATH + QUIZ_PREFIX + slug) return; Object.assign(d, res.quiz); currentD = d; currentQs = d.questions; showResult(res); }
@@ -582,7 +585,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
   function persistQuiz(slug, d) {
     var entries = {};
     entries[USER_PATH + QUIZ_PREFIX + slug] = JSON.stringify(d);
-    return fetch(API + '/state/put', {
+    return window.LearnUser.fetch(API + '/state/put', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entries: entries }), keepalive: true
     }).catch(function () { /* 回写失败不阻断作答 */ });
@@ -819,8 +822,9 @@ pre.md-code code.hljs{background:transparent;padding:0}
     var slug = param('t');
     if (slug) { renderView(slug); } else { renderSelect(); }
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  function init() { window.LearnUser.ready.then(boot); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 
 </script>

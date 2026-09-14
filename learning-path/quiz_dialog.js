@@ -17,7 +17,7 @@
     var payload = JSON.stringify(body);
     var controller = new AbortController();
     var timeout = setTimeout(function () { controller.abort(); }, endpoint === '/path/quiz' ? 240000 : 20000);
-    return fetch(config.api + endpoint, {
+    return window.LearnUser.fetch(config.api + endpoint, {
       method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: payload,
       keepalive: !!keepalive && new Blob([payload]).size <= 60000
     }).then(function (response) {
@@ -104,11 +104,13 @@
   }
   function chooseDraft() {
     var issued = round(), stored;
-    try { stored = JSON.parse(localStorage.getItem(localKey(roundConfig(), issued.id)) || 'null'); } catch (error) {}
+    if (!view.config.readOnly) {
+      try { stored = JSON.parse(localStorage.getItem(localKey(roundConfig(), issued.id)) || 'null'); } catch (error) {}
+    }
     var attempts = issued.attempts || [];
     var draft = stored || issued.draft;
     view.attempt = draft ? null : (attempts.length ? attempts[attempts.length - 1] : null);
-    view.readOnly = !!view.attempt;
+    view.readOnly = view.config.readOnly || !!view.attempt;
     view.answers = ((draft || view.attempt || {}).answers || []).slice();
     while (view.answers.length < issued.questions.length) view.answers.push('');
     view.localRecovery = !!stored;
@@ -156,11 +158,11 @@
     byId('qd-submit').hidden = view.readOnly;
     byId('qd-submit').disabled = !!view.busy;
     byId('qd-submit').textContent = view.busy ? '逐项判分中…' : '提交本套';
-    byId('qd-retry').hidden = !view.readOnly;
+    byId('qd-retry').hidden = view.config.readOnly || !view.readOnly;
     byId('qd-retry').disabled = !!view.busy;
     byId('qd-error').hidden = true;
     updateProgress();
-    status(view.busy ? '已保存，正在按评分点判分…' : view.readOnly ? '历史提交已保存，此视图只读' : view.localRecovery ? '已恢复本机未同步草稿' : issued.draft ? '已恢复服务器草稿' : '输入后自动保存，可随时关闭', false);
+    status(view.busy ? '已保存，正在按评分点判分…' : view.config.readOnly ? '管理员只读查看' : view.readOnly ? '历史提交已保存，此视图只读' : view.localRecovery ? '已恢复本机未同步草稿' : issued.draft ? '已恢复服务器草稿' : '输入后自动保存，可随时关闭', false);
     if (config.decorate) config.decorate(byId('qd-body'));
   }
   function navigate(index) {
@@ -225,7 +227,7 @@
       if (!view || view.busy) return;
       flushCurrent();
       if (this.value === 'draft') {
-        view.attempt = null; view.readOnly = false;
+        view.attempt = null; view.readOnly = !!view.config.readOnly;
         view.answers = (round().draft || {}).answers || round().questions.map(function () { return ''; });
       } else {
         view.attempt = round().attempts[Number(this.value)]; view.readOnly = true;
@@ -235,7 +237,7 @@
     };
     byId('qd-retry').onclick = function () {
       if (!view || view.busy) return;
-      view.attempt = null; view.readOnly = false; view.answers = round().questions.map(function () { return ''; });
+      view.attempt = null; view.readOnly = !!view.config.readOnly; view.answers = round().questions.map(function () { return ''; });
       render(); captureDraft();
     };
     byId('qd-sync').onclick = flushCurrent;

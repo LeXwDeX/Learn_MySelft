@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 -m http.server 8100 --directory /DATA/AppData/zixueshe-web --bind 0.0.0.0
+ExecStart=/usr/bin/python3 /opt/study-assistant/web_server.py --port 8100 --directory /DATA/AppData/zixueshe-web
 Restart=always
 RestartSec=5
 

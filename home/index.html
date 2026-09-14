@@ -2,230 +2,58 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>自学社 · 固定入口</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自学社 · 学习与用户管理</title>
+<script src="/learn/assets/user-session.js"></script>
 <style>
-:root{
-  --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
-  --soft:#7a8399; --rule:rgba(45,49,66,.12); --accent:#eb6c36;
-  --accent-tint:rgba(235,108,54,.08); --ok:#2f7d5d;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-  --serif:Georgia,"Songti SC","SimSun",serif;
-  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
-  --min-page-w:1360px; --max-w:1616px;
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.65;min-width:var(--min-page-w)}
-.wrap{max-width:var(--max-w);margin:0 auto;padding:56px 32px 72px}
-.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin:0 0 10px}
-h1{font-family:var(--serif);font-weight:400;font-size:38px;margin:0 0 10px;letter-spacing:.01em}
-.sub{color:var(--muted);margin:0 0 30px;max-width:76ch}
-.rule{height:1px;background:var(--rule);border:0;margin:0 0 30px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:stretch}
-a.tool.wide{grid-column:1/-1}
-a.tool{display:flex;flex-direction:column;background:var(--paper2);border:1px solid var(--rule);border-top:3px solid var(--rule);border-radius:8px;padding:24px 26px;text-decoration:none;color:inherit}
-a.tool:hover{border-color:var(--soft);border-top-color:var(--accent)}
-.tool .no{font-family:var(--mono);font-size:11px;color:var(--soft);letter-spacing:.14em;text-transform:uppercase}
-.tool h2{font-family:var(--serif);font-weight:400;font-size:24px;margin:10px 0 8px}
-.tool .desc{color:var(--muted);font-size:14px;margin:0 0 14px}
-.tool ul{margin:0 0 18px;padding-left:18px}
-.tool li{font-size:13.5px;margin:3px 0}
-.tool li::marker{color:var(--accent)}
-.tool .path{font-family:var(--mono);font-size:11px;color:var(--soft);margin-bottom:14px;word-break:break-all}
-.tool .go{margin-top:auto;font-family:var(--mono);font-size:12.5px;color:var(--accent)}
-a.tool:hover .go{text-decoration:underline}
-
-/* ---- 学习资料库（动态扫描区块）---- */
-.libsec{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:22px 26px;margin-top:18px}
-.libsec-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px}
-.libsec h2{font-family:var(--serif);font-weight:400;font-size:22px;margin:0}
-.hint{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft)}
-.libn{font-family:var(--mono);font-size:11px;color:var(--soft);margin-left:auto}
-.librows{display:flex;flex-direction:column;gap:8px}
-a.lrow{display:flex;align-items:center;justify-content:space-between;gap:16px;background:#fff;border:1px solid var(--rule);border-radius:6px;padding:12px 16px;text-decoration:none;color:inherit}
-a.lrow:hover{border-color:var(--accent)}
-.lrow .lt{display:flex;flex-direction:column;gap:2px;min-width:0}
-.lrow .t{font-size:14.5px;font-weight:600}
-.lrow .m{font-family:var(--mono);font-size:11px;color:var(--soft)}
-.lrow .go{font-family:var(--mono);font-size:12px;color:var(--accent);flex:none}
-a.lrow:hover .go{text-decoration:underline}
-.lempty{color:var(--soft);font-size:13.5px;margin:2px 0}
-
-.note{margin:18px 0 0;background:var(--paper2);border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:6px;padding:14px 18px;color:var(--muted);font-size:13.5px}
-.note b{color:var(--ink)}
-.note .k{font-family:var(--mono);font-size:12px;color:var(--ink);border:1px solid var(--rule);border-radius:4px;padding:1px 6px;background:#fff}
-footer{margin-top:44px;border-top:1px solid var(--rule);padding-top:14px;font-family:var(--mono);font-size:11px;color:var(--soft);display:flex;flex-wrap:wrap;gap:6px 22px}
-footer .fixed{color:var(--ink)}
+:root{--paper:#f5f5f5;--ink:#2d3142;--muted:#667085;--rule:#e0e3e9;--accent:#eb6c36;--green:#2f7d5d;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);font:15px/1.65 var(--sans);color:var(--ink)}.wrap{max-width:1240px;margin:auto;padding:42px 28px 60px}h1{font-size:32px;font-weight:600;margin:5px 0 12px}h2{font-size:21px;margin:0}h3{font-size:18px;margin:0}.eyebrow{font-size:12px;letter-spacing:.12em;color:var(--accent);margin:0}.muted{color:var(--muted)}.lead{max-width:75ch;margin:0 0 28px}.card{background:#fff;border:1px solid var(--rule);border-radius:9px;padding:24px}.section{margin-top:24px}.section-head{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:18px}.section-head .end{margin-left:auto}.btn{display:inline-flex;justify-content:center;align-items:center;gap:6px;min-height:36px;padding:7px 15px;border:1px solid var(--rule);border-radius:6px;background:white;font:14px var(--sans);text-decoration:none;color:var(--ink);cursor:pointer}.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn:disabled{opacity:.5;cursor:default}.btn:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:3px}input{font:15px var(--sans);color:var(--ink);padding:10px 12px;border:1px solid #cfd4dc;border-radius:6px;max-width:100%}label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}.field{margin:18px 0}.field input:not([type=checkbox]){width:100%}.field small{font-weight:400;color:var(--muted);display:block;margin-top:5px}.login{max-width:440px;margin:30px auto 60px;padding:30px}.login .btn{width:100%;margin-top:8px}.error{color:#b42318;white-space:pre-wrap;margin:12px 0}.success{color:var(--green)}.user-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.person{padding:20px;display:flex;flex-direction:column;gap:13px}.person-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.avatar{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:#fff1e9;color:#ac4a22;font-weight:700}.badge{font-size:12px;padding:2px 8px;border-radius:4px;background:#f1f3f5;color:var(--muted)}.badge.off{background:#fff1ef;color:#b42318}.person p{margin:0;font-size:13px;color:var(--muted)}.stats{display:flex;gap:18px;border-top:1px solid #eee;padding-top:12px;font-size:13px;color:var(--muted)}.stats b{display:block;font-size:21px;font-weight:550;color:var(--ink)}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}.tool-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.tool{text-decoration:none;color:inherit;border-top:3px solid #e3e5e9}.tool:hover{border-top-color:var(--accent)}.tool .icon{color:var(--accent);font-size:12px}.tool p{font-size:14px;color:var(--muted);margin-bottom:18px}.tool .go{font-size:13px;color:var(--accent)}.library{display:grid;grid-template-columns:1fr 1fr;gap:24px}.row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-top:1px solid #eee;text-decoration:none;color:inherit}.row:first-of-type{margin-top:14px}.row small{display:block;color:var(--muted);font-size:12px}.row .go{color:var(--accent);font-size:13px;white-space:nowrap}.empty{font-size:14px;color:var(--muted);margin:16px 0}#user-search{width:230px}dialog{width:min(470px,94vw);padding:26px;border:1px solid var(--rule);border-radius:10px;color:var(--ink)}dialog::backdrop{background:#28314266}dialog .actions{justify-content:flex-end;margin-top:24px}.checkline{display:flex;gap:10px;align-items:center}.checkline input{width:18px;height:18px}footer{margin-top:36px;font-size:12px;color:var(--muted)}[hidden]{display:none!important}@media(max-width:900px){.user-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tool-grid{grid-template-columns:1fr}.library{grid-template-columns:1fr}}@media(max-width:580px){.wrap{padding:28px 16px}.user-grid{grid-template-columns:1fr}h1{font-size:27px}.section-head .end{margin-left:0}.login{padding:22px}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <p class="eyebrow">ZiXueShe · 固定入口</p>
-  <h1>学习工具主页</h1>
-  <p class="sub">学习资料生成 · AI 引导式问答。全部学习入口都在这一页，<b>本地址为固定入口，可直接收藏</b>。</p>
-  <hr class="rule">
-
-  <div class="grid">
-    <a class="tool" href="/diagram-design/learning-path/learning-path.html">
-      <span class="no">01 · Learning Map · 学习地图</span>
-      <h2>学习地图生成器</h2>
-      <p class="desc">输入一个主题 → 对话确认知识点范围与深度 → 主动研究检索 → 生成带依赖门控的<b>学习地图</b>；每个<b>知识点</b>配讲义、要点、易错与自测。</p>
-      <ul>
-        <li>生成过的资料会自动出现在<b>本页下方</b>和页面右上角「学习资料库 ▾」里，点击直开</li>
-        <li>每份资料独立对话与进度；数据只在服务端，打开页面即远程加载</li>
-      </ul>
-      <p class="path">/diagram-design/learning-path/learning-path.html</p>
-      <span class="go">打开学习地图 →</span>
-    </a>
-
-    <a class="tool" href="/diagram-design/learning-path/quiz-map.html">
-      <span class="no">02 · Quiz Map · 测验地图</span>
-      <h2>测验地图生成器</h2>
-      <p class="desc">从任意一张学习地图出发，按知识点与你的学习情况生成整套测验；在线作答、自动判分，结果计入学习情况。</p>
-      <ul>
-        <li>生成后可直接在<b>测验地图</b>页在线作答，自动判分</li>
-        <li>每张测验地图独立保存；数据只在服务端，页面不做任何本地保存</li>
-      </ul>
-      <p class="path">/diagram-design/learning-path/quiz-map.html</p>
-      <span class="go">打开测验地图 →</span>
-    </a>
-
-    <a class="tool wide" href="/diagram-design/learning-path/junior-math-linalg.html">
-      <span class="no">03 · Knowledge Map · 知识地图</span>
-      <h2>数学知识地图</h2>
-      <p class="desc">32 个知识点（初中数学到线性代数 7 天冲刺），含四态标记与单元级 AI 辅助。</p>
-      <ul>
-        <li>每个知识点只做三件事：<b>看懂本质、避开陷阱、通过自测</b></li>
-        <li>四态标记（未学 / 学习中 / 已掌握 / 需复习）+ 单元级 AI 问答，进度同步服务端</li>
-      </ul>
-      <p class="path">/diagram-design/learning-path/junior-math-linalg.html</p>
-      <span class="go">打开知识地图 →</span>
-    </a>
-
-  </div>
-
-  <section class="libsec">
-    <div class="libsec-head">
-      <h2>学习资料库</h2>
-      <span class="hint">动态扫描 · 服务端数据</span>
-      <span class="libn" id="lib-n"></span>
-    </div>
-    <div class="librows" style="margin-bottom:16px">
-      <p class="hint" style="margin:0 0 8px">常驻资料</p>
-      <a class="lrow" href="/diagram-design/learning-path/junior-math-linalg.html">
-        <span class="lt"><span class="t">数学知识地图</span><span class="m">初中数学 → 线性代数 · 32 知识点 · 常驻</span></span>
-        <span class="go">打开 →</span>
-      </a>
-    </div>
-    <div class="librows" id="lib-list"></div>
+<main class="wrap">
+  <p class="eyebrow">ZiXueShe · 自学社</p>
+  <h1 id="page-title">你的学习，从这里开始</h1>
+  <p class="lead muted" id="page-subtitle">登录后进入自己的学习空间，资料、对话、测验和学习进度独立保存。</p>
+  <section class="card login" id="login-panel" hidden>
+    <h2>登录自学社</h2>
+    <form id="login-form">
+      <div class="field"><label for="login-username">账号</label><input id="login-username" name="username" autocomplete="username" required maxlength="32"></div>
+      <div class="field"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="256"></div>
+      <p class="error" id="login-error" role="alert" hidden></p>
+      <button class="btn primary" id="login-submit" type="submit">登录</button>
+    </form>
+    <p class="muted" style="font-size:13px;margin-bottom:0">还没有账号？请联系管理员创建。</p>
   </section>
-
-  <p class="note"><b>学习资料库 ▾</b> —— 右上角「学习资料库」动态扫描你生成过的资料；本页上方也会自动列出你的学习路径。<b>所有学习数据（进度、对话、生成的资料）都保存在服务端（33.146）</b>，页面不做任何本地保存、每次打开远程加载；打开页面后如看不到最新版，按 <span class="k">Ctrl+F5</span> 强刷。</p>
-
-  <footer>
-    <span class="fixed">固定入口：http://192.168.33.146:8100/learn/</span>
-    <span>静态站 33.146:8100</span>
-    <span>AI 后端 study-assistant · 33.146:8101</span>
-    <span>源码仓库 ZiXueShe</span>
-  </footer>
-</div>
-<script>
-/* 学习资料库 · 服务端动态扫描（页面不做任何本地保存，数据只在服务端） */
-(function () {
-  'use strict';
-  var API = location.protocol + '//' + location.hostname + ':8101';
-  var USER_PATH = 'u0/';   // 多用户口子——固定用户路径；扫描前先剥掉
-  var PREFIX = 'learn-path-v1-', LAST = 'learn-path-v1-last';
-  var QUIZ_PREFIX = 'quiz-map-v1-';
-  function stripUser(k) {
-    return (typeof k === 'string' && k.indexOf(USER_PATH) === 0) ? k.slice(USER_PATH.length) : k;
-  }
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-  function stageLabel(s) {
-    return ({ intake: '阶段 I · 需求采集', research: '阶段 R · 主动研究', learning: '阶段 L · 学习路径' })[s] || s || '';
-  }
-  function render(maps, quizzes) {
-    var box = document.getElementById('lib-list'), cnt = document.getElementById('lib-n');
-    var total = maps.length + quizzes.length;
-    if (cnt) cnt.textContent = total ? ('共 ' + total + ' 份') : '';
-    if (!box) return;
-    var h = '';
-    h += '<p class="hint" style="margin:4px 0 8px">学习地图 · ' + maps.length + '</p>';
-    if (!maps.length) {
-      h += '<p class="lempty">暂无学习地图——点上面「学习地图生成器」生成一个吧。</p>';
-    } else {
-      for (var j = 0; j < maps.length; j++) {
-        var t = maps[j], m = stageLabel(t.stage);
-        if (t.stage === 'learning') m = t.total ? (t.done + '/' + t.total + ' 节点完成') : '路径已生成';
-        h += '<a class="lrow" href="/diagram-design/learning-path/learning-path.html?t=' + encodeURIComponent(t.slug) + '">' +
-             '<span class="lt"><span class="t">' + esc(t.topic) + '</span><span class="m">' + esc(m) + '</span></span>' +
-             '<span class="go">打开 →</span></a>';
-      }
-    }
-    h += '<p class="hint" style="margin:18px 0 8px">测验地图 · ' + quizzes.length + '</p>';
-    if (!quizzes.length) {
-      h += '<p class="lempty">暂无测验地图——在学习地图里点「生成测验」。</p>';
-    } else {
-      for (var k = 0; k < quizzes.length; k++) {
-        var q = quizzes[k];
-        var meta = '共 ' + q.count + ' 题' + (q.last != null ? ' · 最近 ' + q.last + ' 分' : '') +
-                   (q.source ? ' · 来自《' + q.source + '》' : '');
-        h += '<a class="lrow" href="/diagram-design/learning-path/quiz-map.html?t=' + encodeURIComponent(q.slug) + '">' +
-             '<span class="lt"><span class="t">' + esc(q.title) + '</span><span class="m">' + esc(meta) + '</span></span>' +
-             '<span class="go">打开 →</span></a>';
-      }
-    }
-    box.innerHTML = h;
-  }
-  fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-    var entries = (j && j.entries) || {}, maps = [], quizzes = [], mapTopics = {};
-    Object.keys(entries).forEach(function (k) {
-      var biz = stripUser(k);   // 先剥用户前缀，再按原业务键逻辑
-      if (biz.indexOf(PREFIX) !== 0 || biz === LAST) return;
-      var v = entries[k];
-      if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
-      var d = null;
-      try { d = JSON.parse(v); } catch (e) { d = null; }
-      var it = { slug: biz.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
-      if (d && typeof d === 'object') {
-        if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;   // 跳过历史空壳
-        it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
-        it.stage = d.stage || '';
-        if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
-        var ns = d.nodeState || {};
-        for (var id in ns) { if (ns[id] && ns[id].completed) it.done++; }
-      } else { it.topic = it.slug; }
-      mapTopics[k] = it.topic;
-      maps.push(it);
-    });
-    Object.keys(entries).forEach(function (k) {
-      var biz = stripUser(k);   // 先剥用户前缀
-      if (biz.indexOf(QUIZ_PREFIX) !== 0) return;
-      var v = entries[k];
-      if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
-      var d = null;
-      try { d = JSON.parse(v); } catch (e) { d = null; }
-      if (!d || typeof d !== 'object') return;
-      var at = d.attempts || [];
-      var last = (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number') ? at[at.length - 1].score : null;
-      quizzes.push({ slug: biz.slice(QUIZ_PREFIX.length), title: d.title || biz.slice(QUIZ_PREFIX.length),
-                     count: (d.questions || []).length, last: last,
-                     source: mapTopics[d.sourceKey] || d.sourceSlug || '' });
-    });
-    maps.sort(function (a, b) {
-      var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
-      return pa - pb || b.done - a.done;
-    });
-    quizzes.sort(function (a, b) { return (b.last || 0) - (a.last || 0); });
-    render(maps, quizzes);
-  }).catch(function () {
-    var box = document.getElementById('lib-list');
-    if (box) box.innerHTML = '<p class="lempty">无法连接服务端（33.146:8101）——请稍后刷新重试。</p>';
-  });
-})();
-</script>
+  <section id="admin-panel" class="section" hidden>
+    <div class="section-head"><h2>所有用户 <span id="user-count" class="badge"></span></h2><input class="end" id="user-search" type="search" placeholder="搜索姓名或账号" aria-label="搜索用户"><button class="btn primary" id="create-user">＋ 创建用户</button></div>
+    <p id="admin-error" class="error" role="alert" hidden></p>
+    <div class="user-grid" id="user-list"></div>
+  </section>
+  <div id="workspace" hidden>
+    <section class="section"><div class="section-head"><h2 id="tools-title">学习入口</h2></div>
+      <div class="tool-grid">
+        <a class="card tool" data-page="learning-path.html?new=1" href="#"><span class="icon">01 · 学习地图</span><h3>从一个目标开始</h3><p>确认学习范围，生成路线，逐个单元学习、讨论与自测。</p><span class="go">打开学习地图 →</span></a>
+        <a class="card tool" data-page="quiz-map.html" href="#"><span class="icon">02 · 测验地图</span><h3>看看掌握得怎样</h3><p>根据学习情况生成综合测验，回看作答，针对薄弱点继续学习。</p><span class="go">打开测验地图 →</span></a>
+        <a class="card tool" data-page="junior-math-linalg.html" href="#"><span class="icon">03 · 知识地图</span><h3>梳理数学基础</h3><p>从初中数学到线性代数，记录掌握状态，与 AI 讨论知识点。</p><span class="go">打开数学知识地图 →</span></a>
+      </div>
+    </section>
+    <section class="section card"><div class="section-head"><h2>学习资料库</h2><span class="muted" id="library-count"></span></div><p id="library-error" class="error" role="alert" hidden></p><div class="library"><div><h3>学习地图</h3><div id="map-list"></div></div><div><h3>测验地图</h3><div id="quiz-list"></div></div></div></section>
+  </div>
+  <footer>固定入口 · <a href="/learn/">自学社首页</a> · 学习资料保存在服务器，换设备登录后可继续。</footer>
+</main>
+<dialog id="user-dialog" aria-labelledby="user-dialog-title">
+  <h2 id="user-dialog-title">创建用户</h2>
+  <form id="user-form">
+    <div class="field"><label for="user-name">显示名称</label><input id="user-name" required maxlength="60" autocomplete="off"></div>
+    <div class="field"><label for="user-username">登录账号</label><input id="user-username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9][a-zA-Z0-9_.\-]{2,31}" autocomplete="off"><small>3至32位字母、数字、点、短横线或下划线；创建后不变。</small></div>
+    <div class="field"><label for="user-password" id="user-password-label">初始密码</label><input id="user-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"><small id="password-hint">至少8个字符。</small></div>
+    <div class="field" id="user-active-field" hidden><label class="checkline"><input id="user-active" type="checkbox">允许此用户登录</label><small>停用会退出该用户的现有会话，保留全部学习资料。</small></div>
+    <p class="error" id="user-error" role="alert" hidden></p>
+    <div class="actions"><button class="btn" id="user-cancel" type="button">取消</button><button class="btn primary" id="user-save" type="submit">创建用户</button></div>
+  </form>
+</dialog>
+<dialog id="password-dialog" aria-labelledby="password-title"><h2 id="password-title">修改我的密码</h2><form id="password-form"><div class="field"><label for="old-password">当前密码</label><input id="old-password" type="password" required autocomplete="current-password"></div><div class="field"><label for="new-password">新密码</label><input id="new-password" type="password" required minlength="8" maxlength="256" autocomplete="new-password"></div><p class="muted" style="font-size:13px">修改后所有设备需要重新登录。</p><p id="password-error" class="error" role="alert" hidden></p><div class="actions"><button type="button" class="btn" id="password-cancel">取消</button><button type="submit" class="btn primary" id="password-save">保存并重新登录</button></div></form></dialog>
+<script src="/learn/assets/home.js"></script>
 </body>
 </html>
