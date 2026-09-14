@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>自学社 · 固定入口</title>
-<script src="/state_sync.js?v=3"></script>
 <style>
 :root{
   --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
@@ -72,7 +71,7 @@ footer .fixed{color:var(--ink)}
       <p class="desc">输入一个主题 → 对话采集需求 → 主动研究检索 → 生成带依赖门控的学习路径图；每个节点配讲义、要点、易错与自测。</p>
       <ul>
         <li>生成过的资料会自动出现在<b>本页下方</b>和页面右上角「学习资料库 ▾」里，点击直开</li>
-        <li>每份资料独立对话与进度，自动同步保存到服务端</li>
+        <li>每份资料独立对话与进度；数据只在服务端，打开页面即远程加载</li>
       </ul>
       <p class="path">/diagram-design/learning-path/learning-path.html</p>
       <span class="go">打开学习路径 →</span>
@@ -83,13 +82,13 @@ footer .fixed{color:var(--ink)}
   <section class="libsec">
     <div class="libsec-head">
       <h2>学习资料库</h2>
-      <span class="hint">动态扫描 · 自动同步到服务端</span>
+      <span class="hint">动态扫描 · 服务端数据</span>
       <span class="libn" id="lib-n"></span>
     </div>
     <div class="librows" id="lib-list"></div>
   </section>
 
-  <p class="note"><b>学习资料库 ▾</b> —— 右上角「学习资料库」动态扫描你生成过的资料；本页上方也会自动列出你的学习路径。<b>所有学习数据（进度、对话、生成的资料）都实时同步保存到服务端（33.146）</b>，换设备打开自动恢复；打开页面后如看不到最新版，按 <span class="k">Ctrl+F5</span> 强刷。</p>
+  <p class="note"><b>学习资料库 ▾</b> —— 右上角「学习资料库」动态扫描你生成过的资料；本页上方也会自动列出你的学习路径。<b>所有学习数据（进度、对话、生成的资料）都保存在服务端（33.146）</b>，页面不做任何本地保存、每次打开远程加载；打开页面后如看不到最新版，按 <span class="k">Ctrl+F5</span> 强刷。</p>
 
   <footer>
     <span class="fixed">固定入口：http://192.168.33.146:8100/learn/</span>
@@ -99,9 +98,10 @@ footer .fixed{color:var(--ink)}
   </footer>
 </div>
 <script>
-/* 学习资料库 · 动态扫描（同源 localStorage 中已生成的学习路径） */
+/* 学习资料库 · 服务端动态扫描（页面不做任何本地保存，数据只在服务端） */
 (function () {
   'use strict';
+  var API = location.protocol + '//' + location.hostname + ':8101';
   var PREFIX = 'learn-path-v1-', LAST = 'learn-path-v1-last';
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -110,16 +110,35 @@ footer .fixed{color:var(--ink)}
   function stageLabel(s) {
     return ({ intake: '阶段 A · 需求采集', research: '阶段 B · 主动研究', learning: '阶段 C · 学习路径' })[s] || s || '';
   }
-  var items = [];
-  try {
-    for (var i = 0; i < localStorage.length; i++) {
-      var k = localStorage.key(i);
-      if (!k || k.indexOf(PREFIX) !== 0 || k === LAST) continue;
+  function render(items) {
+    var box = document.getElementById('lib-list'), cnt = document.getElementById('lib-n');
+    if (cnt) cnt.textContent = items.length ? ('共 ' + items.length + ' 份') : '';
+    if (!box) return;
+    if (!items.length) {
+      box.innerHTML = '<p class="lempty">还没扫描到生成的学习资料——点上面「学习资料生成器」生成一个吧。（数据保存在服务端）</p>';
+      return;
+    }
+    var h = '';
+    for (var j = 0; j < items.length; j++) {
+      var t = items[j], m = stageLabel(t.stage);
+      if (t.stage === 'learning') m = t.total ? (t.done + '/' + t.total + ' 节点完成') : '路径已生成';
+      h += '<a class="lrow" href="/diagram-design/learning-path/learning-path.html?t=' + encodeURIComponent(t.slug) + '">' +
+           '<span class="lt"><span class="t">' + esc(t.topic) + '</span><span class="m">' + esc(m) + '</span></span>' +
+           '<span class="go">打开 →</span></a>';
+    }
+    box.innerHTML = h;
+  }
+  fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    var entries = (j && j.entries) || {}, items = [];
+    Object.keys(entries).forEach(function (k) {
+      if (k.indexOf(PREFIX) !== 0 || k === LAST) return;
+      var v = entries[k];
+      if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
       var d = null;
-      try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
+      try { d = JSON.parse(v); } catch (e) { d = null; }
       var it = { slug: k.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
       if (d && typeof d === 'object') {
-        if (!d.topic && !d.plan && (!d.history || !d.history.length)) continue;   // 跳过历史空壳
+        if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;   // 跳过历史空壳
         it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
         it.stage = d.stage || '';
         if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
@@ -127,28 +146,16 @@ footer .fixed{color:var(--ink)}
         for (var id in ns) { if (ns[id] && ns[id].completed) it.done++; }
       } else { it.topic = it.slug; }
       items.push(it);
-    }
-  } catch (e) {}
-  items.sort(function (a, b) {
-    var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
-    return pa - pb || b.done - a.done;
+    });
+    items.sort(function (a, b) {
+      var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
+      return pa - pb || b.done - a.done;
+    });
+    render(items);
+  }).catch(function () {
+    var box = document.getElementById('lib-list');
+    if (box) box.innerHTML = '<p class="lempty">无法连接服务端（33.146:8101）——请稍后刷新重试。</p>';
   });
-  var box = document.getElementById('lib-list'), cnt = document.getElementById('lib-n');
-  if (cnt) cnt.textContent = items.length ? ('共 ' + items.length + ' 份') : '';
-  if (!box) return;
-  if (!items.length) {
-    box.innerHTML = '<p class="lempty">还没扫描到生成的学习资料——点上面「学习资料生成器」生成一个吧。（学习数据自动同步到服务端）</p>';
-    return;
-  }
-  var h = '';
-  for (var j = 0; j < items.length; j++) {
-    var t = items[j], m = stageLabel(t.stage);
-    if (t.stage === 'learning') m = t.total ? (t.done + '/' + t.total + ' 节点完成') : '路径已生成';
-    h += '<a class="lrow" href="/diagram-design/learning-path/learning-path.html?t=' + encodeURIComponent(t.slug) + '">' +
-         '<span class="lt"><span class="t">' + esc(t.topic) + '</span><span class="m">' + esc(m) + '</span></span>' +
-         '<span class="go">打开 →</span></a>';
-  }
-  box.innerHTML = h;
 })();
 </script>
 </body>

@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var API = 'http://192.168.33.146:8101';
+  var API = location.protocol + '//' + location.hostname + ':8101';
   var TIMEOUT = 180000;               // 单次调用最长 180s（后端推理可能 30~90s）
   var STORE_PREFIX = 'learn-path-v1-';
   var LAST_KEY = 'learn-path-v1-last'; // 指向最近一次会话的 slug
@@ -56,10 +56,62 @@
   function storeKey() { return STORE_PREFIX + slug(state.topic); }
   function domain(u) { try { return new URL(u).hostname; } catch (e) { return u; } }
 
-  // ---------- 持久化 ----------
+  // ---------- 服务端读写（页面不做任何本地保存；所有数据只在服务端） ----------
+  var pendingEntries = null, saveTimer = null;
+  function putState(entries) {
+    try {
+      fetch(API + '/state/put', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries: entries }), keepalive: true
+      }).catch(function () {
+        var retry = entries;
+        setTimeout(function () {
+          try {
+            fetch(API + '/state/put', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ entries: retry })
+            }).catch(function () {});
+          } catch (e) {}
+        }, 1500);
+      });
+    } catch (e) {}
+  }
+  function delState(keys) {
+    try {
+      fetch(API + '/state/del', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: keys }), keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  function flushSave() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (!pendingEntries) return;
+    var entries = pendingEntries; pendingEntries = null;
+    putState(entries);
+  }
+  function flushBeacon() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (!pendingEntries) return;
+    var payload = JSON.stringify({ entries: pendingEntries }); pendingEntries = null;
+    try {
+      if (navigator.sendBeacon) {
+        if (navigator.sendBeacon(API + '/state/put', new Blob([payload], { type: 'text/plain;charset=UTF-8' }))) return;
+      }
+    } catch (e) {}
+    try {
+      fetch(API + '/state/put', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: payload, keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  window.addEventListener('pagehide', flushBeacon);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushBeacon(); });
+
   function save() {
     try {
-      // 没有主题就不落盘：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
+      // 没有主题就不写：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
       if (!state.topic) return;
       var payload = {
         stage: state.stage, topic: state.topic, history: state.history,
@@ -67,29 +119,33 @@
         brief: state.brief, plan: state.plan,
         nodeDetail: state.nodeDetail, nodeState: state.nodeState
       };
-      localStorage.setItem(storeKey(), JSON.stringify(payload));
-      localStorage.setItem(LAST_KEY, slug(state.topic));
+      pendingEntries = {};
+      pendingEntries[storeKey()] = JSON.stringify(payload);
+      pendingEntries[LAST_KEY] = slug(state.topic);
+      if (!saveTimer) saveTimer = setTimeout(flushSave, 350);
     } catch (e) { console.warn('save failed', e); }
   }
   function clearSave() {
-    try { localStorage.removeItem(storeKey()); localStorage.removeItem(LAST_KEY); } catch (e) {}
+    delState([storeKey(), LAST_KEY]);
   }
-  function loadSave() {
-    try {
+  function serverLoad() {
+    return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok || !j.entries) return false;
+      var entries = j.entries;
       // 支持 ?t=<slug> 深链（从「学习资料库」直接打开某份资料）；无参则恢复最近一次
       var s = null;
       try { s = new URLSearchParams(location.search).get('t'); } catch (e2) { s = null; }
-      if (s && !localStorage.getItem(STORE_PREFIX + s)) s = null;   // 指定的资料不存在则回退
-      if (!s) s = localStorage.getItem(LAST_KEY);
+      if (s && typeof entries[STORE_PREFIX + s] !== 'string') s = null;   // 指定的资料不存在则回退
+      if (!s && typeof entries[LAST_KEY] === 'string') s = entries[LAST_KEY];
       if (!s) return false;
-      var raw = localStorage.getItem(STORE_PREFIX + s);
-      if (!raw) return false;
-      var d = JSON.parse(raw);
+      var raw = entries[STORE_PREFIX + s];
+      if (typeof raw !== 'string') return false;
+      var d; try { d = JSON.parse(raw); } catch (e3) { return false; }
       if (!d || typeof d !== 'object') return false;
       state.stage = d.stage || 'intake';
       // 兼容修复：历史状态可能缺 topic 字段 → 依次从 plan/spec 恢复，而不是拒绝加载
       state.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || '';
-      if (!state.topic) return false;   // 真·空壳（由 cleanupLegacy 负责清理）
+      if (!state.topic) return false;
       state.history = d.history || [];
       state.spec = d.spec || null;
       state.queries = d.queries || [];
@@ -101,55 +157,31 @@
       // 状态自洽性：learning 必须有 plan
       if (state.stage === 'learning' && !state.plan) state.stage = 'research';
       if (state.stage === 'research' && !state.spec) state.stage = 'intake';
-      // 历史「untitled」空壳键修复：主题可读后迁移到正确键名（旧键走正常删除=同步墓碑；
-      // 其它设备拉到的净效果 = 旧键删除 + 新键到手，数据不丢）
+      // 历史「untitled」空壳键修复：主题可读后迁移到正确键名（旧键删除）
       var fixSlug = slug(state.topic);
       if (s === 'untitled' && fixSlug && fixSlug !== 'untitled') {
-        localStorage.removeItem(STORE_PREFIX + 'untitled');
+        delState([STORE_PREFIX + 'untitled']);
         save();
         s = fixSlug;
       }
-      try { if (localStorage.getItem(LAST_KEY) !== s) localStorage.setItem(LAST_KEY, s); } catch (e) {}
+      if (entries[LAST_KEY] !== s) {
+        var o = {}; o[LAST_KEY] = s; putState(o);
+      }
       return true;
-    } catch (e) { return false; }
+    }).catch(function () { return false; });
   }
 
-  // ---------- 历史数据兼容修复 ----------
-  // 空壳状态：无主题、无路径、无对话 —— 历史脏数据（如 learn-path-v1-untitled 空壳），直接清理
-  function isJunkState(d) {
-    return !d || typeof d !== 'object' || (!d.topic && !d.plan && (!d.history || !d.history.length));
-  }
-  // 原始删除：绕过同步层，不产生删除墓碑（防止误删其它设备上同名键的真实数据）
-  function rawRemove(k) {
+  // ---------- 浏览器本地清理 ----------
+  // 页面已不再本地保存任何数据（数据只在服务端）；启动时把历史遗留的本地键清干净
+  function purgeLocalLegacy() {
     try {
-      if (typeof window.__syncRawRemove === 'function') { window.__syncRawRemove(k); return; }
-      Storage.prototype.removeItem.call(localStorage, k);
-    } catch (e) { try { localStorage.removeItem(k); } catch (e2) {} }
-  }
-  // 启动时清理历史空壳 + 修正「最近打开」指针（指向已删/空壳时重指或清除）
-  function cleanupLegacy() {
-    var best = '';
-    try {
-      for (var i = localStorage.length - 1; i >= 0; i--) {
+      var kill = [];
+      for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (!k || k.indexOf(STORE_PREFIX) !== 0 || k === LAST_KEY) continue;
-        var d = null;
-        try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
-        if (isJunkState(d)) { rawRemove(k); continue; }
-        if (!best || (d && d.stage === 'learning')) best = k.slice(STORE_PREFIX.length);
+        if (k && (k.indexOf(STORE_PREFIX) === 0 || k.indexOf('__sync') === 0)) kill.push(k);
       }
-      var last = localStorage.getItem(LAST_KEY);
-      if (last) {
-        var ok = false;
-        try {
-          var raw = localStorage.getItem(STORE_PREFIX + last);
-          ok = !!raw && !isJunkState(JSON.parse(raw));
-        } catch (e) { ok = false; }
-        if (!ok) {
-          if (best) localStorage.setItem(LAST_KEY, best);
-          else rawRemove(LAST_KEY);
-        }
-      }
+      for (var j = 0; j < kill.length; j++) { try { localStorage.removeItem(kill[j]); } catch (e) {} }
+      try { sessionStorage.removeItem('__sync_reloads'); } catch (e) {}
     } catch (e) {}
   }
 
@@ -690,18 +722,19 @@
     setChatDisabled(false);
   }
 
-  // ---------- 学习资料库（动态扫描 localStorage） ----------
-  function scanMaterials() {
-    var out = [];
-    try {
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        if (!k || k.indexOf(STORE_PREFIX) !== 0 || k === LAST_KEY) continue;
+  // ---------- 学习资料库（服务端数据动态扫描） ----------
+  function fetchMaterials() {
+    return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      var entries = (j && j.entries) || {}, out = [];
+      Object.keys(entries).forEach(function (k) {
+        if (k.indexOf(STORE_PREFIX) !== 0 || k === LAST_KEY) return;
+        var v = entries[k];
+        if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
         var d = null;
-        try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
+        try { d = JSON.parse(v); } catch (e) { d = null; }
         var it = { slug: k.slice(STORE_PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
         if (d && typeof d === 'object') {
-          if (!d.topic && !d.plan && (!d.history || !d.history.length)) continue;   // 跳过历史空壳
+          if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;   // 跳过历史空壳
           it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
           it.stage = d.stage || '';
           if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
@@ -709,42 +742,46 @@
           for (var id in ns) { if (ns[id] && ns[id].completed) it.done++; }
         } else { it.topic = it.slug; }
         out.push(it);
-      }
-    } catch (e) {}
-    out.sort(function (a, b) {
-      var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
-      return pa - pb || b.done - a.done;
-    });
-    return out;
+      });
+      out.sort(function (a, b) {
+        var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
+        return pa - pb || b.done - a.done;
+      });
+      return out;
+    }).catch(function () { return []; });
   }
   function libRender() {
     var pop = $('lib-pop');
     if (!pop) return;
-    var items = scanMaterials();
-    var cnt = $('lib-count');
-    if (cnt) cnt.textContent = ' (' + items.length + ')';
-    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 自动同步</i></p>';
-    h += '<p class="lib-sub">学习路径（动态扫描）</p>';
-    if (!items.length) {
-      h += '<p class="lib-empty">暂无生成的学习路径——去生成一个吧。</p>';
-    } else {
-      for (var i = 0; i < items.length; i++) {
-        var it = items[i], meta = STAGE_LABEL[it.stage] || it.stage || '';
-        if (it.stage === 'learning') meta = it.total ? (it.done + '/' + it.total + ' 节点完成') : '路径已生成';
-        h += '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
-             '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>';
+    pop.innerHTML = '<p class="lib-h"><span>学习资料库</span><i>服务端数据</i></p><p class="lib-sub">加载中…</p>';
+    fetchMaterials().then(function (items) {
+      var cnt = $('lib-count');
+      if (cnt) cnt.textContent = ' (' + items.length + ')';
+      var h = '<p class="lib-h"><span>学习资料库</span><i>服务端动态扫描</i></p>';
+      h += '<p class="lib-sub">学习路径</p>';
+      if (!items.length) {
+        h += '<p class="lib-empty">暂无生成的学习路径——去生成一个吧。</p>';
+      } else {
+        for (var i = 0; i < items.length; i++) {
+          var it = items[i], meta = STAGE_LABEL[it.stage] || it.stage || '';
+          if (it.stage === 'learning') meta = it.total ? (it.done + '/' + it.total + ' 节点完成') : '路径已生成';
+          h += '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
+               '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>';
+        }
       }
-    }
-    h += '<div class="lib-foot">' +
-         '<a href="learning-path.html?new=1">＋ 生成新的学习路径</a>' +
-         '</div>';
-    pop.innerHTML = h;
+      h += '<div class="lib-foot">' +
+           '<a href="learning-path.html?new=1">＋ 生成新的学习路径</a>' +
+           '</div>';
+      pop.innerHTML = h;
+    });
   }
   function libBind() {
     var btn = $('lib-btn'), pop = $('lib-pop'), wrap = $('lib-wrap');
     if (!btn || !pop) return;
-    var cnt = $('lib-count');
-    if (cnt) { var n = scanMaterials().length; cnt.textContent = ' (' + n + ')'; }
+    fetchMaterials().then(function (items) {
+      var cnt = $('lib-count');
+      if (cnt) cnt.textContent = ' (' + items.length + ')';
+    });
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (pop.hidden) { libRender(); pop.hidden = false; } else { pop.hidden = true; }
@@ -756,16 +793,8 @@
   }
 
   // ---------- 初始化 ----------
-  // 等待状态同步“加载即拉”完成（最多 2 秒）再启动，防旧数据覆盖竞态
-  function init() {
-    var done = false;
-    function go() { if (done) return; done = true; boot(); }
-    try {
-      if (window.__syncReady && typeof window.__syncReady.then === 'function') {
-        window.__syncReady.then(go, go); setTimeout(go, 2000);
-      } else { go(); }
-    } catch (e) { go(); }
-  }
+  // 页面不做任何本地保存；每次打开都从服务端远程加载
+  function init() { boot(); }
   function boot() {
     $('chat-send').addEventListener('click', sendMessage);
     $('chat-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
@@ -776,31 +805,32 @@
     $('backend-label').textContent = API;
     libBind();
 
-    cleanupLegacy();   // 历史数据修复：清理空壳状态、修正「最近打开」指针
+    purgeLocalLegacy();   // 清理历史遗留的浏览器本地数据（页面已不再本地保存任何东西）
     // ?new=1：强制新开（不恢复历史；已有资料仍保留在「学习资料库」里）
     var fresh = false;
     try { fresh = !!new URLSearchParams(location.search).get('new'); } catch (e) {}
-    var restored = fresh ? false : loadSave();
-    if (restored) {
-      renderChat();
-      if (state.spec) renderSpecCard();
-      if (state.stage === 'learning' && state.plan) {
-        setStage('learning');
-        renderPlan();
-      } else if (state.stage === 'research') {
-        setStage('research');
-        renderResearch();
-        $('research-status').innerHTML = '上次研究已完成或中断，<button class="btn" id="resume-research" type="button">继续生成路径</button>';
-        var rb = $('resume-research');
-        if (rb) rb.addEventListener('click', function () { startResearch(); });
+    (fresh ? Promise.resolve(false) : serverLoad()).then(function (restored) {
+      if (restored) {
+        renderChat();
+        if (state.spec) renderSpecCard();
+        if (state.stage === 'learning' && state.plan) {
+          setStage('learning');
+          renderPlan();
+        } else if (state.stage === 'research') {
+          setStage('research');
+          renderResearch();
+          $('research-status').innerHTML = '上次研究已完成或中断，<button class="btn" id="resume-research" type="button">继续生成路径</button>';
+          var rb = $('resume-research');
+          if (rb) rb.addEventListener('click', function () { startResearch(); });
+        } else {
+          setStage('intake');
+        }
       } else {
         setStage('intake');
+        renderChat();
       }
-    } else {
-      setStage('intake');
-      renderChat();
-    }
-    renderProgress();
+      renderProgress();
+    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
