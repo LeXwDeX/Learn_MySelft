@@ -144,12 +144,11 @@
     return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j || !j.ok || !j.entries) return false;
       var entries = j.entries;
-      // 支持 ?t=<slug> 深链（从「学习资料库」直接打开某份资料）；无参则恢复最近一次
+      // 支持 ?t=<slug> 深链（从「学习资料库」直接打开某份资料）；无参则从零开始新生成
       var s = null;
       try { s = new URLSearchParams(location.search).get('t'); } catch (e2) { s = null; }
       if (s && typeof entries[STORE_PREFIX + s] !== 'string') s = null;   // 指定的资料不存在则回退
-      if (!s && typeof entries[LAST_KEY] === 'string') s = entries[LAST_KEY];
-      if (!s) return false;
+      if (!s) return false;   // 无参数 = 全新开始；已有资料请从「学习资料库」进入
       var raw = entries[STORE_PREFIX + s];
       if (typeof raw !== 'string') return false;
       var d; try { d = JSON.parse(raw); } catch (e3) { return false; }
