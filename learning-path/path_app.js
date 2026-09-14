@@ -407,7 +407,7 @@
     $('research-status').hidden = false;
     $('research-status').innerHTML = '<span class="spinner"></span>正在生成检索式并查询资料…';
     hideError();
-    post('/path/research', { spec: state.spec })
+    post('/path/research', { spec: state.spec, key: storeKey() })
       .then(function (r) {
         state.queries = r.queries || [];
         state.sources = r.sources || [];
@@ -415,7 +415,7 @@
         save();
         renderResearch();
         $('research-status').innerHTML = '<span class="spinner"></span>研究完成，正在生成学习路径…';
-        return post('/path/plan', { spec: state.spec, brief: state.brief });
+        return post('/path/plan', { spec: state.spec, brief: state.brief, key: storeKey() });
       })
       .then(function (plan) {
         if (!plan || !plan.nodes || plan.nodes.length < 6) throw new Error('路径节点不足 6 个，请重试');
@@ -576,7 +576,8 @@
     post('/path/node', {
       spec: state.spec,
       node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
-      dep_titles: depTitles(id)
+      dep_titles: depTitles(id),
+      key: storeKey()
     }).then(function (detail) {
       state.nodeDetail[id] = detail; save();
       if (selectedId === id) renderNodeDetail(id);
@@ -635,7 +636,7 @@
       }).join('');
       return head + '<div class="qopts">' + opts + '</div></div>';
     }
-    return head + '<textarea id="' + areaPrefix + i + '" placeholder="写下你的答案…">' + (cur != null ? esc(cur) : '') + '</textarea></div>';
+    return head + '<textarea id="' + areaPrefix + i + '" placeholder="' + (q.type === 'short' ? '写下你的思路和答案…' : '写下你的答案…') + '">' + (cur != null ? esc(cur) : '') + '</textarea></div>';
   }
   function choiceChange(e) {
     var t = e.target;
@@ -808,10 +809,11 @@
     if (btn) { btn.disabled = true; btn.textContent = '正在出新题…'; }
     hideError();
     post('/path/requiz', {
-      node: { title: n.title, essence: n.essence, objectives: n.objectives || [] },
+      node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
       spec: state.spec,
       used: used.slice(-12),
-      feedback: st.lastResult || null
+      feedback: st.lastResult || null,
+      key: storeKey()
     }).then(function (r) {
       var qs = (r && r.questions) || [];
       if (!qs.length) throw new Error('未获得新题');

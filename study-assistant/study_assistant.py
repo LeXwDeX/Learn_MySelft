@@ -70,6 +70,106 @@ STATE_MAX_KEYS = 2000            # 单次请求键数上限
 STATE_MAX_VALUE = 2_000_000      # 单键值长度上限（字符）
 DELETE_PASSWORD = os.environ.get("DELETE_PASSWORD", "")   # 「删除资料」按钮密码（/state/delete 校验）；未配置则拒绝删除
 
+# ---- 生成单飞：同一份资料同一操作并发只执行一次；结果近时缓存 + 服务端状态直读 ----
+GEN_CACHE_TTL = 1800          # 成品结果近时缓存（秒）
+GEN_CACHE_TTL_SHORT = 90      # 「换新题」类求新操作的短窗去重（秒）
+GEN_WAIT_MAX = 150            # 等待在先生成结果的最长秒数（< 前端 180s 超时）
+GEN_GATE_STALE = 600          # 单飞闸门超过该秒数视为领先者已失联，允许接管
+_GEN_LOCK = threading.Lock()
+_GEN_GATES = {}               # key -> {"ev": Event, "out": obj|None, "err": str|None, "ts": float}
+_GEN_CACHE = {}               # key -> (out, ts)
+
+
+def _gen_cache_get(key, ttl=GEN_CACHE_TTL):
+    now = time.time()
+    with _GEN_LOCK:
+        hit = _GEN_CACHE.get(key)
+        if hit and now - hit[1] < ttl:
+            return hit[0]
+        if hit:
+            _GEN_CACHE.pop(key, None)
+    return None
+
+
+def _gen_cache_put(key, out):
+    with _GEN_LOCK:
+        _GEN_CACHE[key] = (out, time.time())
+        if len(_GEN_CACHE) > 300:
+            for k, _ in sorted(_GEN_CACHE.items(), key=lambda kv: kv[1][1])[:100]:
+                _GEN_CACHE.pop(k, None)
+
+
+def _gen_gate_join(key):
+    """并发单飞：返回 (gate, owner)。owner=True 的请求负责生成，然后 `_gen_gate_finish`。"""
+    now = time.time()
+    with _GEN_LOCK:
+        g = _GEN_GATES.get(key)
+        if g is not None and now - g["ts"] > GEN_GATE_STALE:
+            g = None      # 领先者失联/卡死：允许接管
+        if g is None:
+            g = {"ev": threading.Event(), "out": None, "err": None, "ts": now}
+            _GEN_GATES[key] = g
+            return g, True
+    return g, False
+
+
+def _gen_gate_finish(key, gate, out=None, err=None):
+    """收口单飞闸门：所有等待者拿到同一结果。"""
+    gate["out"], gate["err"] = out, err
+    with _GEN_LOCK:
+        _GEN_GATES.pop(key, None)
+    gate["ev"].set()
+
+
+def _state_read_key(key):
+    """读服务端单个 key 的原始值字符串（不存在/墓碑 → None）。"""
+    try:
+        with STATE_LOCK:
+            with open(os.path.join(STATE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json"), "r", encoding="utf-8") as f:
+                d = json.load(f)
+    except Exception:
+        return None
+    return d.get("v") if isinstance(d, dict) else None
+
+
+def _state_material(key):
+    v = _state_read_key(key)
+    if not isinstance(v, str):
+        return None
+    try:
+        m = json.loads(v)
+    except Exception:
+        return None
+    return m if isinstance(m, dict) else None
+
+
+def _state_node_detail(key, nid):
+    """资料里已存有该节点的生成结果则直接返回（保证「只生成一次」）。"""
+    m = _state_material(key)
+    if not m:
+        return None
+    d = (m.get("nodeDetail") or {}).get(nid)
+    return d if isinstance(d, dict) and d else None
+
+
+def _state_stage_result(key, stage):
+    """资料里已存有该阶段结果则直接返回。"""
+    m = _state_material(key)
+    if not m:
+        return None
+    if stage == "research":
+        if m.get("brief") and m.get("queries"):
+            return {"queries": m.get("queries") or [], "sources": m.get("sources") or [],
+                    "brief": m.get("brief") or ""}
+        return None
+    if stage == "plan":
+        pl = m.get("plan")
+        if isinstance(pl, dict) and isinstance(pl.get("nodes"), list) and len(pl["nodes"]) >= 6:
+            return pl
+        return None
+    return None
+
+
 # ============================================================================
 # 学习路径：system prompt 集中管理
 # ============================================================================
@@ -126,7 +226,7 @@ SPEC 的 JSON 字段（全部必填）：
 规则：
 1. study_notes 为正文，≤1200 字，可用 `## ` 小标题与行内 $...$ 公式；只写纯文本/markdown，禁止输出 HTML 标签。
 2. key_points 3~5 条；examples 2~3 条；misconceptions 2~3 条。
-3. quiz.questions 固定 6 题，顺序固定：第 1~4 题选择题（type="choice"）：每题恰好 4 个选项（options 数组，只写选项文本、不要「A.」之类前缀），answer 为正确选项字母（A/B/C/D），explain 说明正确项为何对、干扰项错在哪；第 5 题填空题（type="fill"）：空格用 ____ 表示，answer 为参考答案（多种可接受表述用 ｜ 分隔）；第 6 题简答题（type="short"）：题干要求「简要说明/解释」，answer 为 2~4 条评分要点。每题都必须给 explain（解析）。4 道选择题要覆盖本节点不同的核心知识点、难度从易到难，干扰项要有迷惑性（用常见错误思路设置）。
+3. quiz.questions 固定 6 题，顺序固定：第 1~4 题选择题（type="choice"）：每题恰好 4 个选项（options 数组，只写选项文本、不要「A.」之类前缀），answer 为正确选项字母（A/B/C/D，四题正确项字母要分散、不要集中在同一个字母），explain 说明正确项为何对、干扰项错在哪；第 5 题填空题（type="fill"）：空格用 ____ 表示，answer 为参考答案（多种可接受表述用 ｜ 分隔）；第 6 题简答题（type="short"）：题干明确要求学生给出「思路」和「答案」两部分（如「请写出你的思路和答案」），answer 为参考答案（分「思路」与「答案」两部分，共 2~4 条要点）。每题都必须给 explain（解析）。4 道选择题要覆盖本节点不同的核心知识点、难度从易到难，干扰项要有迷惑性（用常见错误思路设置）。所有题目必须是学生题：面向学生本人、考查本节点知识、能明确判对错；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题。
 4. 面向零基础，多举具体例子。
 5. 公式统一用 LaTeX 并包在 $...$ 里（前端用 KaTeX 渲染）：向量写 \\mathbf{x}，范数写 \\|\\mathbf{x}\\|，点积写 \\cdot，矩阵写 \\mathbf{A}；不要用 \\( \\)、\\[ \\] 或 $$ 定界。
 6. **每个例子里的数值计算必须自己验算一遍再输出**（如 (1,2,3)·(4,0,2)=1×4+2×0+3×2=10；范数 \\|\\mathbf{x}\\|_2=\\sqrt{\\mathbf{x}\\cdot\\mathbf{x}}），凡算错即为重大缺陷。
@@ -150,7 +250,7 @@ func main() {
 {"pass":true,"score":85,"feedback":"...","per_question":[{"ok":true,"comment":"..."}]}
 
 规则：
-1. 输入中每题可能带 type：choice=选择题——学生作答为选项字母（A/B/C/D），与参考答案完全一致（忽略大小写与空白）才算对，否则判错，并在 comment 写明「正确答案是 X」与一句话原因；fill=填空题——按语义等价判分：与参考答案含义一致、数值正确即算对，允许措辞差异；short=简答题——对照参考答案的评分要点判断覆盖程度：要点完整=对、部分覆盖=在 comment 指出缺什么、完全跑题或空白=错。未标注 type 的题按简答/文本题处理。
+1. 输入中每题可能带 type：choice=选择题——学生作答为选项字母（A/B/C/D），与参考答案完全一致（忽略大小写与空白）才算对，否则判错，并在 comment 写明「正确答案是 X」与一句话原因；fill=填空题——按语义等价判分：与参考答案含义一致、数值正确即算对，允许措辞差异；short=简答题——题干要求学生给出「思路」和「答案」两部分；对照参考答案的评分要点判断覆盖程度：思路与答案两部分基本齐全=对；只覆盖一部分=在 comment 指出缺什么（欠思路还是欠答案）；完全跑题或空白=错。未标注 type 的题按简答/文本题处理。
 2. score 为百分制整数。
 3. per_question 数量与题目数一致、顺序一致。
 4. pass 规则：score>=60 且没有任何一题完全跑题（完全答非所问/空白）时为 true，否则 false。
@@ -163,10 +263,10 @@ func main() {
 {"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"..."},{"type":"fill","q":"...","answer":"...","explain":"..."},{"type":"short","q":"...","answer":"...","explain":"..."}]}
 
 规则：
-1. 出 6 道全新题，结构固定：第 1~4 题选择题（每题 4 个选项、answer 为字母 A/B/C/D）、第 5 题填空题、第 6 题简答题；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。
+1. 出 6 道全新题，结构固定：第 1~4 题选择题（每题 4 个选项、answer 为字母 A/B/C/D，四题正确项字母要分散）、第 5 题填空题、第 6 题简答题（题干明确要求学生给出「思路」和「答案」两部分）；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。题目必须是学生题：面向学生本人、能明确判对错；不要出替他人做规划、安排日程、诊断薄弱点之类的元问题。
 2. 严禁与「已出过的题目」相同或近似：题目情境、数字、问法、考察角度都必须变化；允许针对同一考点出变式题，但不得照搬。
 3. 结合「上次批改要点」，优先覆盖学生暴露的薄弱点：先补错，再巩固。
-4. 每题必须给 answer（参考答案）与 explain（解析）；选择题 explain 说明正确项与干扰项。
+4. 每题必须给 answer（参考答案）与 explain（解析）；选择题 explain 说明正确项与干扰项；简答题 answer 分「思路」与「答案」两部分给出。
 5. 公式统一用 $...$ 的 LaTeX（前端 KaTeX 渲染），不要用 \\( \\)、\\[ \\] 或 $$ 定界。
 6. 数值必须自行验算正确。
 7. 题目涉及代码时：q/answer/explain 里的代码必须放进 ```go（其他语言用对应标注）围栏代码块、完整给出、单独成段（JSON 字符串里换行照常用转义）；不要把代码压成一行、不要截断或省略。
@@ -808,45 +908,86 @@ class Handler(BaseHTTPRequestHandler):
         # -- 研究：检索式 → SearXNG → 简报 --
         if path.startswith("/path/research"):
             spec = _norm_spec(body.get("spec"))
-            qtext = _upstream_nonempty([
-                {"role": "system", "content": _path_system("research_queries")},
-                {"role": "user", "content": "需求单：\n" + json.dumps(spec, ensure_ascii=False)},
-            ], max_tokens=PATH_MAX_TOKENS, temperature=0.5)
-            arr = _json_list(qtext)
-            if arr is None:
-                d = _json_block(qtext)
-                if isinstance(d, dict):
-                    arr = d.get("queries") or d.get("search_queries")
-            if not isinstance(arr, list) or not arr:
-                arr = [spec.get("topic") or ""]
-            queries = [clip(str(q), 200) for q in arr if str(q).strip()][:5]
-            if not queries:
-                queries = [spec.get("topic") or "学习路径"]
-            sources, seen = [], set()
-            for q in queries:
-                for r in _searxng(q, 5):
-                    if r["url"] in seen:
-                        continue
-                    seen.add(r["url"])
-                    sources.append(r)
+            mkey = clip(str(body.get("key") or ""), 200)
+            gate_key = (mkey + "#research") if mkey else None
+            if gate_key:
+                hit = _state_stage_result(mkey, "research") or _gen_cache_get(gate_key)
+                if hit is not None:
+                    self._json(200, hit)
+                    return
+                _gate, _owner = _gen_gate_join(gate_key)
+                if not _owner:
+                    _gate["ev"].wait(GEN_WAIT_MAX)
+                    hit = _gate["out"] or _gen_cache_get(gate_key) or _state_stage_result(mkey, "research")
+                    if hit is not None:
+                        self._json(200, hit)
+                        return
+                    self._json(502, {"error": _gate["err"] or "研究仍在进行中，请稍后重试"})
+                    return
+            try:
+                qtext = _upstream_nonempty([
+                    {"role": "system", "content": _path_system("research_queries")},
+                    {"role": "user", "content": "需求单：\n" + json.dumps(spec, ensure_ascii=False)},
+                ], max_tokens=PATH_MAX_TOKENS, temperature=0.5)
+                arr = _json_list(qtext)
+                if arr is None:
+                    d = _json_block(qtext)
+                    if isinstance(d, dict):
+                        arr = d.get("queries") or d.get("search_queries")
+                if not isinstance(arr, list) or not arr:
+                    arr = [spec.get("topic") or ""]
+                queries = [clip(str(q), 200) for q in arr if str(q).strip()][:5]
+                if not queries:
+                    queries = [spec.get("topic") or "学习路径"]
+                sources, seen = [], set()
+                for q in queries:
+                    for r in _searxng(q, 5):
+                        if r["url"] in seen:
+                            continue
+                        seen.add(r["url"])
+                        sources.append(r)
+                        if len(sources) >= 12:
+                            break
                     if len(sources) >= 12:
                         break
-                if len(sources) >= 12:
-                    break
-            src_txt = "\n".join("[%d] %s | %s | %s" % (i + 1, s["title"], s["url"], s["snippet"])
-                                for i, s in enumerate(sources)) or "（无检索结果）"
-            brief = _upstream_nonempty([
-                {"role": "system", "content": _path_system("research_brief")},
-                {"role": "user", "content": "需求单：\n%s\n\n检索结果：\n%s" % (
-                    json.dumps(spec, ensure_ascii=False), clip(src_txt, 12000))},
-            ], max_tokens=PATH_MAX_TOKENS, temperature=0.5)
-            self._json(200, {"queries": queries, "sources": sources, "brief": clip(brief, 2000)})
+                src_txt = "\n".join("[%d] %s | %s | %s" % (i + 1, s["title"], s["url"], s["snippet"])
+                                    for i, s in enumerate(sources)) or "（无检索结果）"
+                brief = _upstream_nonempty([
+                    {"role": "system", "content": _path_system("research_brief")},
+                    {"role": "user", "content": "需求单：\n%s\n\n检索结果：\n%s" % (
+                        json.dumps(spec, ensure_ascii=False), clip(src_txt, 12000))},
+                ], max_tokens=PATH_MAX_TOKENS, temperature=0.5)
+            except Exception:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="research failed")
+                raise
+            out = {"queries": queries, "sources": sources, "brief": clip(brief, 2000)}
+            if gate_key:
+                _gen_cache_put(gate_key, out)
+                _gen_gate_finish(gate_key, _gate, out=out)
+            self._json(200, out)
             return
 
         # -- 生成路径图（校验 6~14 节点）--
         if path.startswith("/path/plan"):
             spec = _norm_spec(body.get("spec"))
             brief = clip(body.get("brief"), 2000)
+            mkey = clip(str(body.get("key") or ""), 200)
+            gate_key = (mkey + "#plan") if mkey else None
+            if gate_key:
+                hit = _state_stage_result(mkey, "plan") or _gen_cache_get(gate_key)
+                if hit is not None:
+                    self._json(200, hit)
+                    return
+                _gate, _owner = _gen_gate_join(gate_key)
+                if not _owner:
+                    _gate["ev"].wait(GEN_WAIT_MAX)
+                    hit = _gate["out"] or _gen_cache_get(gate_key) or _state_stage_result(mkey, "plan")
+                    if hit is not None:
+                        self._json(200, hit)
+                        return
+                    self._json(502, {"error": _gate["err"] or "路径生成仍在进行中，请稍后重试"})
+                    return
 
             def _mk(extra=""):
                 return [
@@ -856,15 +997,25 @@ class Handler(BaseHTTPRequestHandler):
                          json.dumps(spec, ensure_ascii=False), brief, extra)},
                 ]
 
-            plan = _norm_plan(_json_block(upstream_json(
-                _mk(), max_tokens=PATH_MAX_TOKENS, temperature=0.5)), spec)
-            if plan is None or len(plan["nodes"]) < 6:
+            try:
                 plan = _norm_plan(_json_block(upstream_json(
-                    _mk("注意：必须至少 6 个节点，id 从 n1 连续，deps 只引用编号更小的 id。"),
-                    max_tokens=PATH_MAX_TOKENS, temperature=0.3)), spec)
+                    _mk(), max_tokens=PATH_MAX_TOKENS, temperature=0.5)), spec)
+                if plan is None or len(plan["nodes"]) < 6:
+                    plan = _norm_plan(_json_block(upstream_json(
+                        _mk("注意：必须至少 6 个节点，id 从 n1 连续，deps 只引用编号更小的 id。"),
+                        max_tokens=PATH_MAX_TOKENS, temperature=0.3)), spec)
+            except Exception:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="plan generation failed")
+                raise
             if plan is None or len(plan["nodes"]) < 6:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="plan generation failed")
                 self._json(502, {"error": "plan generation failed: need >=6 valid nodes", "plan": plan})
                 return
+            if gate_key:
+                _gen_cache_put(gate_key, plan)
+                _gen_gate_finish(gate_key, _gate, out=plan)
             self._json(200, plan)
             return
 
@@ -872,6 +1023,23 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/path/node"):
             spec = _norm_spec(body.get("spec"))
             node = body.get("node") or {}
+            mkey = clip(str(body.get("key") or ""), 200)
+            node_id = clip(node.get("id"), 20)
+            gate_key = (mkey + "#node#" + node_id) if (mkey and node_id) else None
+            if gate_key:
+                hit = _state_node_detail(mkey, node_id) or _gen_cache_get(gate_key)
+                if hit is not None:
+                    self._json(200, hit)
+                    return
+                _gate, _owner = _gen_gate_join(gate_key)
+                if not _owner:
+                    _gate["ev"].wait(GEN_WAIT_MAX)
+                    hit = _gate["out"] or _gen_cache_get(gate_key) or _state_node_detail(mkey, node_id)
+                    if hit is not None:
+                        self._json(200, hit)
+                        return
+                    self._json(502, {"error": _gate["err"] or "生成仍在进行中，请稍后重试"})
+                    return
             payload = {
                 "需求单": spec,
                 "前置节点": _str_list(body.get("dep_titles"), 6, 120),
@@ -886,20 +1054,30 @@ class Handler(BaseHTTPRequestHandler):
                      + "\n请输出该节点的学习材料 JSON；材料中出现的代码请一律用 ``` 围栏代码块完整包裹。" + extra},
                 ]
 
-            detail = _norm_node_detail(_json_block(_upstream_nonempty(
-                _mk_node(), max_tokens=PATH_MAX_TOKENS, temperature=0.5)))
-            _qn = len((((detail or {}).get("quiz") or {}).get("questions")) or [])
-            if detail is None or _qn < 6:
-                # 重试一次：强调完整闭合 + 控制篇幅，温度调低；缺自测题/题数不足（截断降级）也重试
-                d2 = _norm_node_detail(_json_block(_upstream_nonempty(
-                    _mk_node(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），study_notes 控制在 1000 字内，必须带 6 道自测题（4 选择题+1 填空题+1 简答题）。"),
-                    max_tokens=PATH_MAX_TOKENS, temperature=0.3)))
-                _d2n = len((((d2 or {}).get("quiz") or {}).get("questions")) or [])
-                if d2 is not None and (detail is None or _d2n > _qn):
-                    detail = d2
+            try:
+                detail = _norm_node_detail(_json_block(_upstream_nonempty(
+                    _mk_node(), max_tokens=PATH_MAX_TOKENS, temperature=0.5)))
+                _qn = len((((detail or {}).get("quiz") or {}).get("questions")) or [])
+                if detail is None or _qn < 6:
+                    # 重试一次：强调完整闭合 + 控制篇幅，温度调低；缺自测题/题数不足（截断降级）也重试
+                    d2 = _norm_node_detail(_json_block(_upstream_nonempty(
+                        _mk_node(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），study_notes 控制在 1000 字内，必须带 6 道自测题（4 选择题+1 填空题+1 简答题）。"),
+                        max_tokens=PATH_MAX_TOKENS, temperature=0.3)))
+                    _d2n = len((((d2 or {}).get("quiz") or {}).get("questions")) or [])
+                    if d2 is not None and (detail is None or _d2n > _qn):
+                        detail = d2
+            except Exception:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="node detail generation failed")
+                raise
             if detail is None:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="node detail generation failed")
                 self._json(502, {"error": "node detail generation failed"})
                 return
+            if gate_key:
+                _gen_cache_put(gate_key, detail)
+                _gen_gate_finish(gate_key, _gate, out=detail)
             self._json(200, detail)
             return
 
@@ -907,6 +1085,23 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/path/requiz"):
             node = body.get("node") or {}
             spec = _norm_spec(body.get("spec")) if body.get("spec") else None
+            mkey = clip(str(body.get("key") or ""), 200)
+            node_id = clip(node.get("id"), 20)
+            gate_key = (mkey + "#requiz#" + node_id) if (mkey and node_id) else None
+            if gate_key:
+                hit = _gen_cache_get(gate_key, GEN_CACHE_TTL_SHORT)
+                if hit is not None:
+                    self._json(200, hit)
+                    return
+                _gate, _owner = _gen_gate_join(gate_key)
+                if not _owner:
+                    _gate["ev"].wait(GEN_WAIT_MAX)
+                    hit = _gate["out"] or _gen_cache_get(gate_key, GEN_CACHE_TTL_SHORT)
+                    if hit is not None:
+                        self._json(200, hit)
+                        return
+                    self._json(502, {"error": _gate["err"] or "换题仍在进行中，请稍后重试"})
+                    return
             used = []
             for q in (body.get("used") or [])[:12]:
                 if isinstance(q, dict) and clip(q.get("q"), 300):
@@ -931,17 +1126,27 @@ class Handler(BaseHTTPRequestHandler):
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)
                      + "\n请输出全新的自测题 JSON；题目中的代码请用 ``` 围栏代码块完整包裹。" + extra},
                 ]
-            rq = _norm_quiz_questions(_json_block(_upstream_nonempty(
-                _mk_requiz(), max_tokens=PATH_MAX_TOKENS, temperature=0.6)))
-            if rq is None or len(rq["questions"]) < 6:
-                rq2 = _norm_quiz_questions(_json_block(_upstream_nonempty(
-                    _mk_requiz(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），必须含 6 道题（4 选择题+1 填空题+1 简答题），且与已出过的题目完全不同。"),
-                    max_tokens=PATH_MAX_TOKENS, temperature=0.4)))
-                if rq2 is not None and (rq is None or len(rq2["questions"]) > len(rq["questions"])):
-                    rq = rq2
+            try:
+                rq = _norm_quiz_questions(_json_block(_upstream_nonempty(
+                    _mk_requiz(), max_tokens=PATH_MAX_TOKENS, temperature=0.6)))
+                if rq is None or len(rq["questions"]) < 6:
+                    rq2 = _norm_quiz_questions(_json_block(_upstream_nonempty(
+                        _mk_requiz(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），必须含 6 道题（4 选择题+1 填空题+1 简答题），且与已出过的题目完全不同。"),
+                        max_tokens=PATH_MAX_TOKENS, temperature=0.4)))
+                    if rq2 is not None and (rq is None or len(rq2["questions"]) > len(rq["questions"])):
+                        rq = rq2
+            except Exception:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="requiz failed")
+                raise
             if rq is None:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="requiz failed")
                 self._json(502, {"error": "requiz failed"})
                 return
+            if gate_key:
+                _gen_cache_put(gate_key, rq)
+                _gen_gate_finish(gate_key, _gate, out=rq)
             self._json(200, rq)
             return
 
