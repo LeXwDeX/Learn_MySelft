@@ -368,7 +368,15 @@
   }
   function isDone(id) { return !!(state.nodeState[id] && state.nodeState[id].completed); }
   function isUnlocked(id) {
-    return depsOf(id).every(function (d) { return isDone(d); });
+    var node = nodeById(id);
+    if (!node) return false;
+    return depsOf(id).every(function (dependency) {
+      if (isDone(dependency)) return true;
+      var parent = nodeById(dependency);
+      // Older refine-marked units point at the failed parent. Chained
+      // remediation still requires the preceding remedial unit to pass.
+      return !!(node.refine && parent && !parent.refine && depsOf(dependency).every(isDone));
+    });
   }
   function depTitles(id) {
     return depsOf(id).map(function (d) { var n = nodeById(d); return n ? n.title : dispId(d); });
@@ -1408,8 +1416,9 @@
 
   // ---------- 重新开始 ----------
   function restart() {
-    if (!state.topic) { location.href = location.pathname; return; }
-    openDelModal(slug(state.topic), state.topic, storeKey());
+    if (!confirm('确定要重新开始吗？当前学习资料会保留在资料库。')) return;
+    save(); flushSave();
+    Promise.all(stateWrites.slice()).then(function () { location.href = location.pathname + '?new=1'; });
   }
 
   // ---------- 学习资料库（服务端数据动态扫描） ----------
