@@ -23,7 +23,7 @@ const context = {
     return Promise.resolve({json: () => Promise.resolve({ok: true})});
   }
 };
-context.window.LearnUser = {userId: 'u0', readOnly: false, fetch: context.fetch};
+context.window.LearnUser = {userId: 'u0', apiBase: 'http://localhost:8101', readOnly: false, fetch: context.fetch};
 vm.createContext(context);
 vm.runInContext(src, context);
 (async () => {

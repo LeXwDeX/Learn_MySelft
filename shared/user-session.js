@@ -1,9 +1,12 @@
 /* Shared identity, stable links and credentials for all learning pages. */
 (function () {
   "use strict";
-  var api = location.protocol + "//" + location.hostname + ":8101";
+  var configuration = window.LearnConfig || {};
+  var api = new URL(configuration.apiBase || (location.protocol + "//" + location.hostname + ":" + (configuration.apiPort || 8101)), location.href).href.replace(/\/$/, "");
+  var apiURL = new URL(api);
   var match = location.pathname.match(/^\/learn\/u\/(u0|u[0-9a-f]{16})\//);
   var context = {
+    apiBase: api,
     userId: match ? match[1] : null,
     user: null,
     target: null,
@@ -20,22 +23,24 @@
   context.fetch = function (url, options) {
     options = Object.assign({}, options || {});
     var target = new URL(url, location.href);
-    if (target.origin !== api) return nativeFetch(url, options);
+    var prefix = apiURL.pathname.replace(/\/$/, '');
+    if (target.origin !== apiURL.origin || (prefix && !target.pathname.startsWith(prefix + '/'))) return nativeFetch(url, options);
+    var endpoint = target.pathname.slice(prefix.length);
     var method = (options.method || "GET").toUpperCase();
-    var read = method === "GET" || target.pathname === "/path/quiz/state";
-    if (context.readOnly && !read && !target.pathname.startsWith("/auth/")) {
+    var read = method === "GET" || endpoint === "/path/quiz/state";
+    if (context.readOnly && !read && !endpoint.startsWith("/auth/")) {
       return Promise.resolve(
         new Response(
           JSON.stringify({
-            ok: target.pathname === "/state/put",
+            ok: endpoint === "/state/put",
             read_only: true,
             error:
-              target.pathname === "/state/put"
+              endpoint === "/state/put"
                 ? undefined
                 : "管理员查看其他用户资料时只读",
           }),
           {
-            status: target.pathname === "/state/put" ? 200 : 403,
+            status: endpoint === "/state/put" ? 200 : 403,
             headers: { "Content-Type": "application/json" },
           },
         ),
@@ -44,7 +49,18 @@
     options.credentials = "include";
     options.headers = new Headers(options.headers || {});
     if (context.userId) options.headers.set("X-Learn-User", context.userId);
-    var request = nativeFetch(url, options);
+    var dispatch = function () { return nativeFetch(url, options); };
+    var request = endpoint === '/state/put' && window.LearnSaves
+      ? window.LearnSaves.send(options, dispatch) : dispatch();
+    if ((endpoint === '/state/delete' || endpoint === '/state/del') && window.LearnSaves) {
+      request = request.then(function (response) {
+        if (response.ok) {
+          var body = JSON.parse(options.body || '{}');
+          window.LearnSaves.forget(body.keys || []);
+        }
+        return response;
+      });
+    }
     if (!read) {
       writes.add(request);
       request
@@ -80,6 +96,7 @@
     window.dispatchEvent(new Event("pagehide"));
     return Promise.allSettled(Array.from(writes))
       .then(function () {
+        if (window.LearnSaves && window.LearnSaves.pending()) throw new Error('还有未保存的内容，请先重试保存再退出');
         return context.request("/auth/logout", {});
       })
       .then(function () {

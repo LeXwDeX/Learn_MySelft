@@ -1,7 +1,12 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+<script src="/learn/config.js"></script>
+<link rel="stylesheet" href="/learn/assets/ui.css">
+<script src="/learn/assets/ui.js"></script>
 <script src="/learn/assets/user-session.js"></script>
+<script src="/learn/assets/saves.js"></script>
+<script src="/learn/assets/jobs.js"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>测验地图 · 按知识点出题 → 在线作答 → 自动判分</title>
@@ -105,7 +110,7 @@ __QUIZ_DIALOG_JS__
 (function () {
   'use strict';
 
-  var API = location.protocol + '//' + location.hostname + ':8101';
+  var API = window.LearnUser.apiBase;
   var TIMEOUT = 360000;
   var USER_PATH = window.LearnUser.userId + '/';
   var QUIZ_PREFIX = 'quiz-map-v1-';
@@ -174,6 +179,10 @@ __QUIZ_DIALOG_JS__
     return out;
   }
   function post(path, body) {
+    if (window.LearnJobs && window.LearnJobs.supports(path)) {
+      if (!body.key && currentSlug) body.key = USER_PATH + QUIZ_PREFIX + currentSlug;
+      return window.LearnJobs.run(path, body);
+    }
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
     return window.LearnUser.fetch(API + path, {

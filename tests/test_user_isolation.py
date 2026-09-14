@@ -91,8 +91,7 @@ class UserIsolationTests(unittest.TestCase):
         key = self.put(self.alice, self.alice_cookie)
         legacy = {'topic': 'legacy', 'nodeDetail': {'n1': {'quiz': {'questions': questions()}}}, 'nodeState': {}}
         study._state_write_key(key, json.dumps(legacy))
-        filename = Path(study.STATE_DIR) / (hashlib.sha1(key.encode()).hexdigest() + '.json')
-        before = filename.read_bytes()
+        before = study._state_store().record(key)
         status, data, _ = self.request('/auth/session', cookie=self.admin, target=self.alice)
         self.assertTrue(data['read_only'])
         self.assertEqual(status, 200)
@@ -101,7 +100,7 @@ class UserIsolationTests(unittest.TestCase):
         status, quiz, _ = self.request('/path/quiz/state', {'key': key, 'node': {'id': 'n1'}}, self.admin, self.alice)
         self.assertEqual(status, 200, quiz)
         self.assertEqual(len(quiz['rounds']), 1)
-        self.assertEqual(filename.read_bytes(), before)
+        self.assertEqual(study._state_store().record(key), before)
         for path, body in [('/state/put', {'entries': {key: '{"topic":"bad"}'}}),
                            ('/path/quiz/draft', {'key': key, 'node': {'id': 'n1'}})]:
             self.assertEqual(self.request(path, body, self.admin, self.alice)[0], 403)

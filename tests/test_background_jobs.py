@@ -1,0 +1,137 @@
+"""Durable receipts, bounded queues, recovery, ownership and unlocked upstream IO."""
+import json
+from pathlib import Path
+import tempfile
+import threading
+import time
+import unittest
+from unittest.mock import patch
+import test_state_regressions
+from state_store import StateStore
+from background_jobs import JobQueue, JobError
+import test_user_isolation as isolation
+
+study = test_state_regressions.study
+
+
+class QueueTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.store = StateStore(self.temp.name)
+
+    def wait_status(self, queue, job_id, expected='succeeded'):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            job = queue.get(job_id, 'u0')
+            if job['status'] == expected:
+                return job
+            time.sleep(.01)
+        self.fail(str(job))
+
+    def test_duplicate_receipt_runs_once_and_capacity_is_bounded(self):
+        count = []
+        queue = JobQueue(self.store, lambda *args: (count.append(args) or 200, {'done': True}), workers=1, limit=1)
+        self.addCleanup(queue.stop)
+        first = queue.submit('u0', 'request-one', '/path/intake', {'key': 'u0/topic'})
+        self.assertEqual(queue.submit('u0', 'request-one', '/path/intake', {'key': 'u0/topic'})['id'], first['id'])
+        with self.assertRaises(JobError) as conflict:
+            queue.submit('u0', 'request-one', '/path/intake', {'key': 'u0/other'})
+        self.assertEqual(conflict.exception.status, 409)
+        with self.assertRaises(JobError) as full:
+            queue.submit('u0', 'request-two', '/path/intake', {'key': 'u0/other'})
+        self.assertEqual(full.exception.status, 429)
+        queue.start()
+        self.wait_status(queue, first['id'])
+        self.assertEqual(len(count), 1)
+        with self.assertRaises(JobError):
+            queue.get(first['id'], 'someone-else')
+
+    def test_restart_marks_unfinished_work_and_preserves_queued_work(self):
+        queue = JobQueue(self.store, lambda *args: (200, {'answer': 'done'}), workers=1)
+        interrupted = queue.submit('u0', 'request-first', '/path/intake', {'key': 'u0/one'})
+        queue._claim()
+        queued = queue.submit('u0', 'request-second', '/path/intake', {'key': 'u0/two'})
+        restarted = JobQueue(self.store, lambda *args: (200, {'answer': 'recovered'}), workers=1)
+        self.addCleanup(restarted.stop)
+        self.assertEqual(restarted.get(interrupted['id'], 'u0')['status'], 'interrupted')
+        self.assertEqual(restarted.get(queued['id'], 'u0')['status'], 'queued')
+        restarted.retry(interrupted['id'], 'u0')
+        restarted.start()
+        self.wait_status(restarted, interrupted['id'])
+        self.wait_status(restarted, queued['id'])
+
+    def test_effect_and_document_commit_together_and_survive_crash(self):
+        queue = JobQueue(self.store, lambda *args: self.fail('Committed effect must not rerun'))
+        job = queue.submit('u0', 'request-effect', '/path/refine', {'key': 'u0/one'})
+        queue._claim()
+        self.store.local.job_id = job['id']
+        with self.assertRaises(OSError):
+            with self.store.transaction():
+                self.store.put('u0/one', 'new')
+                self.store.record_job_effect({'plan': 'new'})
+                raise OSError('failure before commit')
+        self.assertIsNone(self.store.record('u0/one'))
+        with self.store.transaction():
+            self.store.put('u0/one', 'new')
+            self.store.record_job_effect({'plan': 'new'})
+        del self.store.local.job_id
+        restarted = JobQueue(StateStore(self.temp.name), lambda *args: self.fail('Must not execute again'))
+        result = restarted.get(job['id'], 'u0')
+        self.assertEqual(result['status'], 'succeeded')
+        self.assertEqual(result['result'], {'plan': 'new'})
+
+
+class JobHttpTests(unittest.TestCase):
+    # Reuse only the fixture/request helpers, without rerunning inherited tests.
+    setUp = isolation.UserIsolationTests.setUp
+    stop_server = isolation.UserIsolationTests.stop_server
+    request = isolation.UserIsolationTests.request
+    login = isolation.UserIsolationTests.login
+    create = isolation.UserIsolationTests.create
+    put = isolation.UserIsolationTests.put
+
+    def stop_jobs(self):
+        queue = study._JOB_QUEUES.pop(str(Path(study.STATE_DIR).absolute()), None)
+        if queue:
+            queue.stop()
+
+    def test_http_receipt_ownership_and_io_does_not_block_saving(self):
+        self.addCleanup(self.stop_jobs)
+        key = self.put(self.alice, self.alice_cookie)
+        waiting, release = threading.Event(), threading.Event()
+        def upstream(*args, **kwargs):
+            waiting.set()
+            if not release.wait(5):
+                raise TimeoutError('test upstream not released')
+            return 'ASK: 你现在的基础如何？'
+        with patch.object(study, '_upstream_nonempty', side_effect=upstream):
+            status, accepted, _ = self.request('/jobs', {'request_id': 'test-http-job', 'operation': '/path/intake',
+                'body': {'key': key, 'topic': '数学', 'history': []}}, self.alice_cookie)
+            self.assertEqual(status, 202, accepted)
+            job_id = accepted['job']['id']
+            self.assertTrue(waiting.wait(2))
+            try:
+                begin = time.monotonic()
+                self.assertEqual(self.request('/state/put', {'entries': {self.bob + '/metadata': 'saved'}}, self.bob_cookie)[0], 200)
+                self.assertLess(time.monotonic() - begin, 1)
+                self.assertEqual(self.request('/jobs/' + job_id, cookie=self.bob_cookie)[0], 404)
+                self.assertEqual(self.request('/jobs/' + job_id, cookie=self.admin, target=self.alice)[0], 200)
+                self.assertEqual(self.request('/jobs', {'request_id': 'foreign-http-job', 'operation': '/path/intake',
+                    'body': {'key': key, 'topic': 'x'}}, self.bob_cookie)[0], 403)
+            finally:
+                release.set()
+            for _ in range(100):
+                result = self.request('/jobs/' + job_id, cookie=self.alice_cookie)[1]['job']
+                if result['status'] == 'succeeded':
+                    break
+                time.sleep(.01)
+            self.assertEqual(result['result']['question'], '你现在的基础如何？')
+
+    def test_deleted_material_rejects_new_jobs_and_stale_save(self):
+        self.addCleanup(self.stop_jobs)
+        key = self.put(self.alice, self.alice_cookie)
+        self.request('/state/delete', {'keys': [key], 'password': 'learner-password'}, self.alice_cookie)
+        self.assertEqual(self.request('/state/put', {'entries': {key: '{"topic":"stale"}'}}, self.alice_cookie)[0], 409)
+        self.assertEqual(self.request('/jobs', {'request_id': 'deleted-job', 'operation': '/path/node',
+            'body': {'key': key, 'node': {'id': 'n1'}}}, self.alice_cookie)[0], 404)

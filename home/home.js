@@ -86,6 +86,45 @@
         error("admin-error", e.message);
       });
   }
+  var taskTimer = null;
+  function loadTasks() {
+    if (taskTimer) clearTimeout(taskTimer);
+    return context.request('/jobs').then(function (result) {
+      var jobs = result.jobs.slice(0, 8);
+      $('tasks-panel').hidden = !jobs.length;
+      $('task-list').replaceChildren();
+      jobs.forEach(function (job) {
+        var row = document.createElement('div'); row.className = 'learn-task';
+        var info = document.createElement('div');
+        var title = document.createElement('strong'); title.textContent = window.LearnJobs.label(job.operation);
+        var detail = document.createElement('small');
+        var statuses = {queued: '排队中', running: '正在处理', succeeded: '已完成', failed: '未完成', interrupted: '等待恢复', cancelled: '已取消'};
+        detail.textContent = (statuses[job.status] || job.status) + ' · ' + new Date(job.created_ms).toLocaleString('zh-CN');
+        info.append(title, detail);
+        if (job.error) { var error = document.createElement('small'); error.textContent = job.error; info.appendChild(error); }
+        row.appendChild(info);
+        var actions = document.createElement('div'); actions.className = 'actions';
+        var business = (job.key || '').slice(context.userId.length + 1);
+        var page = business.startsWith('quiz-map-v1-') ? 'quiz-map.html' : 'learning-path.html';
+        var slug = business.replace(/^(?:learn-path|quiz-map)-v1-/, '');
+        var link = document.createElement('a'); link.className = 'btn'; link.href = context.link(page) + '?t=' + encodeURIComponent(slug); link.textContent = '继续查看';
+        actions.appendChild(link);
+        if (!context.readOnly && ['failed', 'interrupted'].includes(job.status)) {
+          var retry = document.createElement('button'); retry.className = 'btn'; retry.textContent = '重试';
+          retry.onclick = function () {
+            retry.disabled = true;
+            context.request('/jobs/' + job.id + '/retry', {}).then(loadTasks).catch(function (error) {
+              window.LearnUI.set('tasks', error.message, 'error', loadTasks, '刷新状态');
+            });
+          };
+          actions.appendChild(retry);
+        }
+        row.appendChild(actions); $('task-list').appendChild(row);
+      });
+      if (jobs.some(function (job) { return ['queued', 'running'].includes(job.status); })) taskTimer = setTimeout(loadTasks, 5000);
+    }).catch(function (error) { window.LearnUI.set('tasks', '任务状态暂时不可用：' + error.message, 'error', loadTasks, '重新连接'); });
+  }
+  $('refresh-tasks').onclick = loadTasks;
   function openUser(id) {
     editing = id
       ? users.find(function (user) {
@@ -172,7 +211,7 @@
         if (!data.topic && !data.plan && !(data.history || []).length) return;
         var total = ((data.plan || {}).nodes || []).length,
           done = Object.values(data.nodeState || {}).filter(function (n) {
-            return n.completed;
+            return n && n.completed;
           }).length;
         maps.push({
           slug: business.slice("learn-path-v1-".length),
@@ -319,6 +358,7 @@
       loadUsers();
     }
     $("workspace").hidden = false;
+    loadTasks();
     document.querySelectorAll("[data-page]").forEach(function (link) {
       link.href = context.link(link.dataset.page);
     });

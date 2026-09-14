@@ -14,6 +14,8 @@
 import hashlib
 import hmac
 import tempfile
+import sqlite3
+import fcntl
 import json
 import os
 import re
@@ -27,12 +29,18 @@ import urllib.request
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from app_config import Settings
+from state_store import StateStore, StateConflict
+from state_schema import validate_value, SCHEMA_VERSION
+from background_jobs import JobQueue, JobError, OPERATIONS
+
 import quiz_harness as harness
 from user_accounts import AccountStore, AccountError, COOKIE_NAME, SESSION_TTL, USER_ID
 
-LLM_BASE = os.environ.get("LLM_BASE", "http://192.168.33.110:8000/v1")
+SETTINGS = Settings.from_env()
+LLM_BASE = SETTINGS.llm_base
 LLM_KEY = os.environ.get("LLM_KEY", "")
-LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek")
+LLM_MODEL = SETTINGS.llm_model
 # 思考档：学习类工具统一「高」，与 Hermes 侧 agent.reasoning_effort=high 对齐。
 # 实测本上游（33.110:8000 → deepseek）只在低档起作用：reasoning_effort=none 关闭思考、
 # minimal 压短；high 及以上等于「不设上限」，思考量由题目难度决定（high/xhigh/max 无差别，
@@ -48,16 +56,16 @@ MAX_MSG_CHARS = 8000
 COMPRESS_CHUNK_CHARS = 100_000
 MAX_IMAGE_B64 = 8 * 1024 * 1024   # 压缩后的图片 base64 体量上限（前端已压成 JPG90%/≤4K）
 DATA_URL_RE = re.compile(r"^data:image/(jpeg|jpg|png|webp|gif);base64,([A-Za-z0-9+/=\s]+)$")
-MAX_TOKENS = 393216        # DeepSeek API 官方最大输出（384K=393216；实测有效范围 [1,393216]，393217 被 400）。
+MAX_TOKENS = SETTINGS.max_output_tokens        # DeepSeek API 官方最大输出（384K=393216；实测有效范围 [1,393216]，393217 被 400）。
 # 思考虽然走 reasoning_content 独立字段，但按官方设计其 token 计入 max_tokens 总输出配额
 #（实测 max_tokens=64 → reasoning_tokens=64、正文空），因此一律给足顶格，杜绝思考挤爆预算导致截断。
-UPSTREAM_TIMEOUT = 180
+UPSTREAM_TIMEOUT = SETTINGS.upstream_timeout
 
 # ---- 学习路径（/path/*）相关常量 ----
-SEARXNG_BASE = os.environ.get("SEARXNG_BASE", "http://192.168.33.146:8103")
+SEARXNG_BASE = SETTINGS.searxng_base
 # 路径类端点（尤其 /path/plan、/path/node）输出长；思考与正文共享输出配额（DeepSeek 官方设计），
 # 一律顶格官方最大输出 393216（384K），不再出现被思考挤爆→正文截断。
-PATH_MAX_TOKENS = 393216
+PATH_MAX_TOKENS = SETTINGS.max_output_tokens
 PATH_MAX_ROUNDS = 4        # 采集阶段最多轮询轮数，超过必须产出 Spec
 SEARXNG_TIMEOUT = 30
 MAX_TOPIC = 2000
@@ -69,8 +77,8 @@ ALLOWED_ORIGIN = re.compile(
 
 # ---- 学习数据服务端持久化（/state/*）----
 # 浏览器里的所有学习数据（进度标记、单元对话、学习路径生成物等 localStorage 键）会实时同步到这里。
-# 每键一个 JSON 文件，内容 {"key","v","ts"}；v=null 表示已删除（墓碑，防止旧设备把已删数据推回来）。
-STATE_DIR = os.environ.get("STATE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "state"))
+# SQLite documents 保存每个键的 JSON 值；NULL 是删除墓碑，旧 JSON 文件仅用于首次迁移。
+STATE_DIR = SETTINGS.state_dir
 STATE_LOCK = threading.RLock()
 STATE_MAX_KEYS = 2000            # 单次请求键数上限
 STATE_MAX_VALUE = 2_000_000      # 单键值长度上限（字符）
@@ -87,6 +95,39 @@ def _accounts():
         if directory not in _ACCOUNT_STORES:
             _ACCOUNT_STORES[directory] = AccountStore(directory, DELETE_PASSWORD)
         return _ACCOUNT_STORES[directory]
+
+
+_JOB_QUEUES = {}
+_JOB_LOCK = threading.Lock()
+
+
+def _run_job(user_id, operation, body):
+    actor = _accounts().get_user(user_id)
+    if not actor['active']:
+        raise JobError(403, '用户已停用，任务未执行')
+    handler = object.__new__(Handler)
+    handler.actor = actor
+    handler.path = operation
+    handler.headers = {'X-Learn-User': user_id}
+    handler._authorize_body(operation, body)
+    if _state_material(body['key']) is None:
+        raise JobError(404, '学习资料已删除或不存在，任务未执行')
+    responses = []
+    handler._json = lambda status, result: responses.append((status, result))
+    handler._handle_path(operation, body)
+    if not responses:
+        raise JobError(502, '任务未返回结果，请重试')
+    return responses[-1]
+
+
+def _jobs():
+    directory = os.path.abspath(STATE_DIR)
+    with _JOB_LOCK:
+        if directory not in _JOB_QUEUES:
+            queue = JobQueue(_state_store(), _run_job, SETTINGS.job_workers, SETTINGS.job_queue_limit)
+            queue.start()
+            _JOB_QUEUES[directory] = queue
+        return _JOB_QUEUES[directory]
 
 
 # ---- 生成单飞：同一份资料同一操作并发只执行一次；结果近时缓存 + 服务端状态直读 ----
@@ -123,10 +164,10 @@ def _gen_gate_join(key):
     now = time.time()
     with _GEN_LOCK:
         g = _GEN_GATES.get(key)
-        if g is not None and now - g["ts"] > GEN_GATE_STALE:
-            g = None      # 领先者失联/卡死：允许接管
+        if g is not None and not g["owner"].is_alive():
+            g = None      # Only replace an owner that has actually exited.
         if g is None:
-            g = {"ev": threading.Event(), "out": None, "err": None, "ts": now}
+            g = {"ev": threading.Event(), "out": None, "err": None, "ts": now, "owner": threading.current_thread()}
             _GEN_GATES[key] = g
             return g, True
     return g, False
@@ -136,24 +177,32 @@ def _gen_gate_finish(key, gate, out=None, err=None):
     """收口单飞闸门：所有等待者拿到同一结果。"""
     gate["out"], gate["err"] = out, err
     with _GEN_LOCK:
-        _GEN_GATES.pop(key, None)
+        if _GEN_GATES.get(key) is gate:
+            _GEN_GATES.pop(key, None)
     gate["ev"].set()
 
 
+_STATE_STORES = {}
+_STORE_LOCK = threading.Lock()
+
+
+def _state_store():
+    directory = os.path.abspath(STATE_DIR)
+    with _STORE_LOCK:
+        if directory not in _STATE_STORES:
+            _STATE_STORES[directory] = StateStore(directory)
+        return _STATE_STORES[directory]
+
+
 def _state_read_key(key):
-    """读服务端单个 key 的原始值字符串（不存在/墓碑 → None）。"""
-    try:
-        with STATE_LOCK:
-            path = os.path.join(STATE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json")
-            if not os.path.exists(path) and key.startswith('u0/'):
-                legacy = key[3:]
-                if '/' not in legacy and legacy.startswith(('learn-', 'quiz-map-', 'knowledge-map-')):
-                    path = os.path.join(STATE_DIR, hashlib.sha1(legacy.encode('utf-8')).hexdigest() + '.json')
-            with open(path, 'r', encoding='utf-8') as f:
-                d = json.load(f)
-    except Exception:
-        return None
-    return d.get("v") if isinstance(d, dict) else None
+    """Read a document, preserving u0 aliases without reviving tombstones."""
+    store = _state_store()
+    record = store.record(key)
+    if record is None and key.startswith('u0/'):
+        legacy = key[3:]
+        if '/' not in legacy and legacy.startswith(('learn-', 'quiz-map-', 'knowledge-map-')):
+            record = store.record(legacy)
+    return record['value'] if record else None
 
 
 def _split_ukey(key):
@@ -208,25 +257,15 @@ def _state_stage_result(key, stage):
 
 
 def _state_write_key(key, value):
-    """把单个 key 的原始值写入服务端（与 Handler._state_put 同一存储格式）。"""
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with STATE_LOCK:
-        path = os.path.join(STATE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json")
-        fd, temporary = tempfile.mkstemp(dir=STATE_DIR, prefix=".state-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"key": key, "v": value, "ts": int(time.time() * 1000)}, f, ensure_ascii=False)
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+    """Write in the calling transaction, or start a single-document transaction."""
+    _state_store().put(key, value)
 
 
 def _state_merge_put(mkey, patch):
     """Apply a generated patch in one transaction; merge node results by id."""
     if not mkey or not isinstance(patch, dict):
         return False
-    with STATE_LOCK:
+    with STATE_LOCK, _state_store().transaction():
         material = _state_material(mkey)
         if material is None:
             return False  # A deleted material must not be recreated by an in-flight request.
@@ -241,7 +280,7 @@ def _state_merge_put(mkey, patch):
 
 def _append_refinement(key, fallback_plan, units):
     """Allocate ids and append to the latest plan under the same state lock."""
-    with STATE_LOCK:
+    with STATE_LOCK, _state_store().transaction():
         material = _state_material(key) if key else None
         if key and material is None:
             raise ValueError("学习地图已删除或不存在，请重新打开")
@@ -270,6 +309,8 @@ def _append_refinement(key, fallback_plan, units):
         if material is not None:
             material["plan"] = new_plan
             _state_write_key(key, json.dumps(material, ensure_ascii=False))
+            _state_store().record_job_effect({'ok': True, 'added': len(units),
+                'units': [{'for': unit.get('for'), 'title': unit.get('title')} for unit in units], 'plan': new_plan})
         return new_plan
 
 
@@ -604,8 +645,6 @@ def upstream_stream(messages):
         method="POST",
     )
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
     return urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT, context=ctx)
 
 
@@ -1003,7 +1042,7 @@ def _issued_quiz(questions):
 
 def _quiz_update(key, node_id, update, persist=True):
     """Run a short quiz-state transaction; model requests stay outside the lock."""
-    with STATE_LOCK:
+    with STATE_LOCK, _state_store().transaction():
         material = _state_material(key)
         if material is None:
             raise harness.QuizContractError("学习资料已删除或不存在")
@@ -1094,24 +1133,12 @@ class Handler(BaseHTTPRequestHandler):
         user_id = user_id or self.actor['id']
         prefix = user_id + '/'
         out, legacy = {}, {}
-        if not os.path.isdir(STATE_DIR):
-            return out
-        with STATE_LOCK:
-            for filename in os.listdir(STATE_DIR):
-                if not filename.endswith('.json'):
-                    continue
-                try:
-                    with open(os.path.join(STATE_DIR, filename), encoding='utf-8') as source:
-                        record = json.load(source)
-                    key = record.get('key')
-                    if not isinstance(key, str):
-                        continue
-                    if key.startswith(prefix):
-                        out[key] = record.get('v')
-                    elif user_id == 'u0' and '/' not in key and key.startswith(('learn-', 'quiz-map-', 'knowledge-map-')):
-                        legacy[prefix + key] = record.get('v')
-                except (ValueError, OSError, AttributeError):
-                    continue
+        for record in _state_store().records():
+            key = record['key']
+            if key.startswith(prefix):
+                out[key] = record['value']
+            elif user_id == 'u0' and '/' not in key and key.startswith(('learn-', 'quiz-map-', 'knowledge-map-')):
+                legacy[prefix + key] = record['value']
         return {**legacy, **out}
 
     def _session_token(self):
@@ -1143,6 +1170,13 @@ class Handler(BaseHTTPRequestHandler):
     def _authorize_body(self, path, body):
         if not isinstance(body, dict):
             raise AccountError(400, '请求必须为JSON对象')
+        if path.startswith('/path/'):
+            if path not in OPERATIONS | {'/path/quiz/state', '/path/quiz/draft'}:
+                raise AccountError(404, '不支持的学习操作')
+            for field, kind in {'history': list, 'spec': dict, 'node': dict, 'plan': dict,
+                                'answers': list, 'items': list, 'weaknesses': list}.items():
+                if field in body and body[field] is not None and not isinstance(body[field], kind):
+                    raise AccountError(400, field + '格式不正确')
         read_only = path == '/path/quiz/state'
         self._target_user(write=not read_only)
         if path == '/state/put':
@@ -1174,8 +1208,11 @@ class Handler(BaseHTTPRequestHandler):
                 business = key.split('/', 1)[1]
                 if business.startswith('learn-path-v1-') and business != 'learn-path-v1-last':
                     stats['maps'] += 1
-                    stats['total_nodes'] += len((material.get('plan') or {}).get('nodes') or [])
-                    stats['completed_nodes'] += sum(bool(node.get('completed')) for node in (material.get('nodeState') or {}).values() if isinstance(node, dict))
+                    plan = material.get('plan') if isinstance(material.get('plan'), dict) else {}
+                    nodes = plan.get('nodes') if isinstance(plan.get('nodes'), list) else []
+                    states = material.get('nodeState') if isinstance(material.get('nodeState'), dict) else {}
+                    stats['total_nodes'] += len(nodes)
+                    stats['completed_nodes'] += sum(bool(node.get('completed')) for node in states.values() if isinstance(node, dict))
                 elif business.startswith('quiz-map-v1-'):
                     stats['quizzes'] += 1
             user['stats'] = stats
@@ -1206,18 +1243,32 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._json(404, {'error': 'not found'})
 
-    def _state_put(self, entries, trusted=False):
+    def _state_put(self, entries, trusted=False, expected=None):
         """写入/删除（v=None 为墓碑）。返回成功条数。"""
         prepared = {}
         if len(entries) > STATE_MAX_KEYS:
             raise ValueError("too many state keys")
-        with STATE_LOCK:
+        if expected is not None and (not isinstance(expected, dict) or set(expected) - set(entries)
+                or any(type(revision) is not int or revision < 0 for revision in expected.values())):
+            raise ValueError('invalid revision preconditions')
+        with STATE_LOCK, _state_store().transaction():
+            for key, revision in (expected or {}).items():
+                current = _state_store().record(key)
+                if (current['revision'] if current else 0) != revision:
+                    raise StateConflict('资料已更新，请刷新后重试')
             for key, value in entries.items():
                 if not isinstance(key, str) or not key or len(key) > 512:
                     raise ValueError("invalid state key")
                 if value is not None:
                     if not isinstance(value, str):
                         value = json.dumps(value, ensure_ascii=False)
+                    validate_value(key, value)
+                    existing = _state_store().record(key)
+                    business = key.split('/', 1)[-1]
+                    if (not trusted and existing and existing['value'] is None
+                            and business.startswith(('learn-path-v1-', 'learn-ai-v1-', 'quiz-map-v1-'))
+                            and business != 'learn-path-v1-last'):
+                        raise StateConflict('这份资料已删除，请从首页新建学习')
                     _, business_key = _split_ukey(key)
                     is_material = business_key.startswith("learn-path-v1-") and business_key != "learn-path-v1-last"
                     is_quiz = business_key.startswith("quiz-map-v1-")
@@ -1280,7 +1331,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/auth/session':
                 try:
                     actor = self._authenticate()
-                except AccountError as error:
+                except (AccountError, JobError) as error:
                     if error.status != 401:
                         raise
                     self._json(200, {'ok': True, 'user': None})
@@ -1291,19 +1342,50 @@ class Handler(BaseHTTPRequestHandler):
             self._authenticate()
             if path == '/state/all':
                 target = self._target_user()
-                self._json(200, {'ok': True, 'entries': self._state_all(target['id'])})
+                entries = self._state_all(target['id'])
+                revisions = {record['key']: record['revision'] for record in _state_store().records() if record['key'] in entries}
+                self._json(200, {'ok': True, 'schema_version': SCHEMA_VERSION, 'entries': entries, 'revisions': revisions})
+            elif path == '/jobs' or path.startswith('/jobs/'):
+                target = self._target_user()
+                if path == '/jobs':
+                    query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                    key = (query.get('key') or [None])[0]
+                    if key:
+                        self._authorize_key(key, write=False)
+                    self._json(200, {'ok': True, 'jobs': _jobs().list(target['id'], key)})
+                else:
+                    self._json(200, {'ok': True, 'job': _jobs().get(path.removeprefix('/jobs/'), target['id'])})
             elif path == '/admin/users':
                 self._json(200, {'ok': True, 'users': self._user_overview()})
             else:
                 self._json(404, {'error': 'not found'})
-        except AccountError as error:
+        except (AccountError, JobError) as error:
             self._json(error.status, {'ok': False, 'error': str(error)})
+        except (OSError, sqlite3.Error):
+            self._json(503, {'ok': False, 'error': '读取暂时不可用，请稍后重试'})
 
 
     def _read_body(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length) if length else b"{}"
-        return json.loads(raw.decode("utf-8") or "{}")
+        if self.headers.get('Transfer-Encoding'):
+            raise AccountError(400, '不支持分块请求体')
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError as error:
+            raise AccountError(400, '无效的请求长度') from error
+        if length < 0 or length > SETTINGS.max_request_bytes:
+            raise AccountError(413, '请求内容过大，请缩小图片或分次提交')
+        if hasattr(self, 'connection'):
+            self.connection.settimeout(SETTINGS.body_timeout)
+        try:
+            raw = self.rfile.read(length) if length else b'{}'
+        except TimeoutError as error:
+            raise AccountError(408, '接收请求超时，请重试') from error
+        finally:
+            if hasattr(self, 'connection'):
+                self.connection.settimeout(None)
+        if length and len(raw) != length:
+            raise AccountError(400, '请求内容不完整')
+        return json.loads(raw.decode('utf-8') or '{}')
 
     def _history_messages(self, history, budget_chars=MAX_HISTORY_CHARS):
         """把历史转成 messages。
@@ -1748,18 +1830,22 @@ class Handler(BaseHTTPRequestHandler):
                 _gen_gate_finish(gate_key, _gate, err="quizmap verification failed")
                 raise
             try:
-                _u, _rest = _split_ukey(key)
-                src_slug = _rest[len("learn-path-v1-"):]
-                base_slug = src_slug + "-测验"
-                slug = base_slug
-                i = 1
-                while _state_read_key(_u + "quiz-map-v1-" + slug) is not None:
-                    i += 1
-                    slug = base_slug + str(i)
-                store = {"kind": "quiz-map", "sourceKey": key, "sourceSlug": src_slug,
-                         "title": qm["title"], "created": int(time.time()),
-                         "attempts": [], **_issued_quiz(qm["questions"])}
-                self._state_put({_u + "quiz-map-v1-" + slug: json.dumps(store, ensure_ascii=False)}, trusted=True)
+                with STATE_LOCK, _state_store().transaction():
+                    if _state_material(key) is None:
+                        raise ValueError("源学习地图已删除，未创建测验")
+                    _u, _rest = _split_ukey(key)
+                    src_slug = _rest[len("learn-path-v1-"):]
+                    base_slug = src_slug + "-测验"
+                    slug = base_slug
+                    i = 1
+                    while _state_store().record(_u + "quiz-map-v1-" + slug) is not None:
+                        i += 1
+                        slug = base_slug + str(i)
+                    store = {"kind": "quiz-map", "sourceKey": key, "sourceSlug": src_slug,
+                             "title": qm["title"], "created": int(time.time()),
+                             "attempts": [], **_issued_quiz(qm["questions"])}
+                    self._state_put({_u + "quiz-map-v1-" + slug: json.dumps(store, ensure_ascii=False)}, trusted=True)
+                    _state_store().record_job_effect({"ok": True, "slug": slug, "title": qm["title"], "count": len(qm["questions"])})
             except Exception:
                 _gen_gate_finish(gate_key, _gate, err="quizmap save failed")
                 raise
@@ -1975,11 +2061,42 @@ class Handler(BaseHTTPRequestHandler):
                 self._auth_post(path, body)
                 return
             self._authenticate()
-        except AccountError as error:
+        except (AccountError, JobError) as error:
             self._json(error.status, {'ok': False, 'error': str(error)})
+            return
+        except (OSError, sqlite3.Error):
+            self._json(503, {'ok': False, 'error': '保存暂时不可用，请稍后重试'})
             return
         except (ValueError, TypeError):
             self._json(400, {'ok': False, 'error': '无效的JSON请求'})
+            return
+        if path == '/jobs' or path.startswith('/jobs/'):
+            try:
+                body = self._read_body()
+                if not isinstance(body, dict):
+                    raise JobError(400, '请求必须为JSON对象')
+                target = self._target_user(write=True)
+                if path == '/jobs':
+                    operation, payload = body.get('operation'), body.get('body')
+                    if not isinstance(operation, str) or operation not in OPERATIONS or not isinstance(payload, dict):
+                        raise JobError(400, '不支持的后台操作')
+                    if not payload.get('key'):
+                        raise JobError(400, '请先保存学习资料再开始任务')
+                    self._authorize_body(operation, payload)
+                    if _state_material(payload['key']) is None:
+                        raise JobError(404, '学习资料已删除或不存在')
+                    job = _jobs().submit(target['id'], body.get('request_id'), operation, payload)
+                elif re.fullmatch(r'/jobs/[0-9a-f]{32}/retry', path):
+                    job = _jobs().retry(path.split('/')[2], target['id'])
+                else:
+                    raise JobError(404, '任务操作不存在')
+                self._json(202, {'ok': True, 'job': job})
+            except (AccountError, JobError) as error:
+                self._json(error.status, {'ok': False, 'error': str(error)})
+            except (ValueError, TypeError):
+                self._json(400, {'ok': False, 'error': '无效的任务请求'})
+            except (OSError, sqlite3.Error):
+                self._json(503, {'ok': False, 'error': '任务保存暂时不可用，请稍后重试'})
             return
         if path in ("/state/delete", "/state/del", "/state/put"):
             try:
@@ -2001,10 +2118,12 @@ class Handler(BaseHTTPRequestHandler):
                     if not _accounts().check_password(self.actor, password):
                         self._json(403, {"ok": False, "error": "密码错误"})
                         return
-                n = self._state_put(entries)
+                n = self._state_put(entries, expected=body.get("expected"))
                 self._json(200, {"ok": True, "n": n})
             except AccountError as e:
                 self._json(e.status, {"ok": False, "error": str(e)})
+            except StateConflict as e:
+                self._json(409, {"ok": False, "error": str(e)})
             except (ValueError, TypeError) as e:
                 self._json(400, {"ok": False, "error": str(e)})
             except Exception as e:
@@ -2020,14 +2139,14 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self._authorize_body(path, body)
                 self._handle_path(path, body)
-            except AccountError as error:
+            except (AccountError, JobError) as error:
                 self._json(error.status, {"ok": False, "error": str(error)})
             except urllib.error.HTTPError as e:
                 self._json(502, {"error": "upstream HTTP %s" % e.code})
             except Exception as e:
                 self._json(502, {"error": "%s: %s" % (type(e).__name__, e)})
             return
-        if not (path.startswith("/ask") or path.startswith("/suggest") or path.startswith("/compress")):
+        if path not in ("/ask", "/suggest", "/compress"):
             self._json(404, {"error": "not found"})
             return
 
@@ -2039,7 +2158,7 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             self._authorize_body(path, body)
-        except AccountError as error:
+        except (AccountError, JobError) as error:
             self._json(error.status, {'ok': False, 'error': str(error)})
             return
         ctx = body.get("unit") or {}
@@ -2166,8 +2285,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    writer_lock = os.open(os.path.join(STATE_DIR, '.writer.lock'), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(writer_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise RuntimeError('Another backend already owns this state directory')
     _accounts()  # Initialize or load credentials before accepting business traffic.
-    port = int(os.environ.get("PORT", "8101"))
+    _state_store()
+    _jobs()
+    port = SETTINGS.port
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     srv.daemon_threads = True
     sys.stderr.write("study-assistant listening on 0.0.0.0:%d (model=%s, base=%s)\n" % (port, LLM_MODEL, LLM_BASE))

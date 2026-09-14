@@ -6,8 +6,8 @@
 (function () {
   'use strict';
 
-  var API = location.protocol + '//' + location.hostname + ':8101';
-  var TIMEOUT = 360000;               // 单次调用最长 180s（后端推理可能 30~90s）
+  var API = window.LearnUser.apiBase;
+  var TIMEOUT = 25000;                // 短请求；长操作使用可恢复后台任务
   var USER_PATH = window.LearnUser.userId + '/';
   var STORE_PREFIX = 'learn-path-v1-';
   var LAST_KEY = USER_PATH + 'learn-path-v1-last'; // 指向最近一次会话的 slug（带用户前缀）
@@ -26,6 +26,7 @@
     aiHist: {},                       // {id: [{role, content}]} —— 每单元独立的 AI 辅助对话
     pending: null                     // {kind:'research'|'plan'|'node', nid?, at} —— 生成防中断
   };
+  var materialSlug = null;            // Stable document identity, independent of its title
   var selectedId = null;
   var busy = false;
   var retryFn = null;
@@ -107,8 +108,8 @@
     out += mdText(src.slice(last));
     return out;
   }
-  function storeKey() { return USER_PATH + STORE_PREFIX + slug(state.topic); }
-  function aiKey() { return USER_PATH + 'learn-ai-v1-' + slug(state.topic); }
+  function storeKey() { return USER_PATH + STORE_PREFIX + (materialSlug || slug(state.topic)); }
+  function aiKey() { return USER_PATH + 'learn-ai-v1-' + (materialSlug || slug(state.topic)); }
   // 答案框自动扩展：随输入增高（以 CSS min-height 为下限）
   function bindAutoGrow(el) {
     if (!el || el.__ag) return;
@@ -144,9 +145,9 @@
     }
     var write = send(true).catch(function () {
       return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return send(false); });
-    }).catch(function (error) { console.warn('save failed', error); });
+    });
     stateWrites.push(write);
-    write.then(function () { stateWrites = stateWrites.filter(function (item) { return item !== write; }); });
+    write.finally(function () { stateWrites = stateWrites.filter(function (item) { return item !== write; }); }).catch(function () {});
     return write;
   }
   function deleteState(keys, password) {
@@ -172,9 +173,9 @@
   }
   function flushSave() {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-    if (!pendingEntries) return;
+    if (!pendingEntries) return Promise.resolve();
     var entries = pendingEntries; pendingEntries = null;
-    putState(entries);
+    return putState(entries);
   }
   function flushBeacon() {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
@@ -204,8 +205,8 @@
       };
       pendingEntries = {};
       pendingEntries[storeKey()] = JSON.stringify(payload);
-      pendingEntries[LAST_KEY] = slug(state.topic);
-      if (!saveTimer) saveTimer = setTimeout(flushSave, 350);
+      pendingEntries[LAST_KEY] = materialSlug || slug(state.topic);
+      if (!saveTimer) saveTimer = setTimeout(function () { flushSave().catch(function () {}); }, 350);
     } catch (e) { console.warn('save failed', e); }
   }
   // AI 辅助对话单独一个 key（learn-ai-v1-<slug>），与材料 save() 互不干扰
@@ -214,7 +215,7 @@
       if (!state.topic) return;
       var o = {};
       o[aiKey()] = JSON.stringify(state.aiHist || {});
-      putState(o);
+      putState(o).catch(function () {});
     } catch (e) { console.warn('saveAi failed', e); }
   }
   function serverLoad() {
@@ -230,11 +231,12 @@
       if (typeof raw !== 'string') return false;
       var d; try { d = JSON.parse(raw); } catch (e3) { return false; }
       if (!d || typeof d !== 'object') return false;
+      materialSlug = s;
       state.stage = d.stage || 'intake';
       // 兼容修复：历史状态可能缺 topic 字段 → 依次从 plan/spec 恢复，而不是拒绝加载
       state.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || '';
       if (!state.topic) return false;
-      state.history = d.history || [];
+      state.history = Array.isArray(d.history) ? d.history : [];
       state.spec = d.spec || null;
       state.queries = d.queries || [];
       state.sources = d.sources || [];
@@ -255,11 +257,12 @@
       // 历史键修复：先保存正确键；旧副本保留，用户可通过密码删除。
       var fixSlug = slug(state.topic);
       if (s === 'untitled' && fixSlug && fixSlug !== 'untitled') {
+        materialSlug = fixSlug;
         save();
         s = fixSlug;
       }
       if (entryVal(entries, 'learn-path-v1-last') !== s) {
-        var o = {}; o[LAST_KEY] = s; putState(o);
+        var o = {}; o[LAST_KEY] = s; putState(o).catch(function () {});
       }
       return true;
     }).catch(function () { return false; });
@@ -281,6 +284,17 @@
 
   // ---------- 网络 ----------
   function post(path, body) {
+    if (window.LearnJobs && window.LearnJobs.supports(path)) {
+      if (!body.key) body.key = storeKey();
+      var expectedKind = {'/path/intake': 'intake', '/path/research': 'research', '/path/plan': 'plan', '/path/node': 'node'}[path];
+      var pending = state.pending, options = {};
+      if (pending && pending.requestId && (pending.kind === expectedKind || (path === '/path/node' && pending.kind === 'nodes'))) {
+        options.requestId = pending.requestId + (pending.kind === 'nodes' ? ':' + body.node.id : '');
+      }
+      return flushSave().then(function () { return Promise.all(stateWrites.slice()); }).then(function () {
+        return window.LearnJobs.run(path, body, options);
+      });
+    }
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
     return window.LearnUser.fetch(API + path, {
@@ -296,7 +310,7 @@
       });
     }, function (e) {
       clearTimeout(timer);
-      throw new Error(e && e.name === 'AbortError' ? '请求超时（180s）' : '网络错误：' + (e && e.message || e));
+      throw new Error(e && e.name === 'AbortError' ? '请求超时，请重试' : '网络错误：' + (e && e.message || e));
     });
   }
 
@@ -470,6 +484,11 @@
     if (!state.topic) {
       // 首次输入：作为学习主题
       state.topic = text;
+      materialSlug = slug(text) + '-' + window.LearnJobs.requestId().slice(0, 8);
+      var currentURL = new URL(location.href);
+      currentURL.searchParams.delete('new');
+      currentURL.searchParams.set('t', materialSlug);
+      window.history.replaceState(null, '', currentURL.pathname + currentURL.search);
       appendBubble('user', text);
       save();
     } else {
@@ -477,10 +496,12 @@
       appendBubble('user', text);
       save();
     }
-    callIntake();
+    callIntake(true);
   }
 
-  function callIntake() {
+  function callIntake(newMessage) {
+    if (newMessage === true) state.pending = null;
+    setPending('intake');
     busy = true; setChatDisabled(true);
     var log = $('chat-log');
     var thinking = document.createElement('div');
@@ -488,9 +509,10 @@
     thinking.innerHTML = '<span class="who">AI</span><span class="spinner"></span>思考中…';
     log.appendChild(thinking); log.scrollTop = log.scrollHeight;
 
-    post('/path/intake', { topic: state.topic, history: state.history })
+    post('/path/intake', { key: storeKey(), topic: state.topic, history: state.history })
       .then(function (r) {
         thinking.remove();
+        clearPending();
         busy = false; setChatDisabled(false);
         if (r.done && r.spec) {
           state.spec = r.spec; save();
@@ -527,7 +549,10 @@
 
   // ---------- 生成防中断（pending 标记 + 自动恢复） ----------
   function setPending(kind, nid) {
-    state.pending = { kind: kind, at: Date.now() };
+    var previous = state.pending;
+    var same = previous && previous.kind === kind && (previous.nid || null) === (nid || null);
+    state.pending = {kind: kind, at: same ? previous.at : Date.now(),
+      requestId: same && previous.requestId || window.LearnJobs.requestId()};
     if (nid) state.pending.nid = nid;
     save();
   }
@@ -574,7 +599,8 @@
   function replayPending() {
     var p = state.pending;
     if (!p) { hideResumeBar(); return; }
-    if (p.kind === 'research') startResearch();
+    if (p.kind === 'intake') callIntake();
+    else if (p.kind === 'research') startResearch();
     else if (p.kind === 'plan') continuePlan();
     else if (p.kind === 'node' && p.nid) selectNode(p.nid);
     else { hideResumeBar(); }
@@ -586,8 +612,7 @@
     if (!pendingAlive(p, Date.now())) { state.pending = null; save(); return false; }
     if (p.kind === 'nodes') {   // 批量生成中断：剔除已完成的，继续生成剩余
       var rem = (p.remaining || []).filter(function (id) { return id && !state.nodeDetail[id]; });
-      state.pending = null; save();
-      if (!rem.length) { hideResumeBar(); return false; }
+      if (!rem.length) { state.pending = null; save(); hideResumeBar(); return false; }
       showResumeBar('上次批量生成未完成，继续生成剩余 ' + rem.length + ' 个节点…');
       genAllStart(rem);
       return true;
@@ -947,7 +972,11 @@
   }
   function genAllSyncPending() {
     if (!genAllRemaining.length) { state.pending = null; }
-    else { state.pending = { kind: 'nodes', nid: null, at: Date.now(), remaining: genAllRemaining.slice() }; }
+    else {
+      var previous = state.pending;
+      state.pending = {kind: 'nodes', nid: null, at: Date.now(), remaining: genAllRemaining.slice(),
+        requestId: previous && previous.kind === 'nodes' && previous.requestId || window.LearnJobs.requestId()};
+    }
     save();
   }
   // 卡片头部「生成中…」态（逐卡切换）
@@ -1415,7 +1444,9 @@
   function restart() {
     if (!confirm('确定要重新开始吗？当前学习资料会保留在资料库。')) return;
     save(); flushSave();
-    Promise.all(stateWrites.slice()).then(function () { location.href = location.pathname + '?new=1'; });
+    return Promise.all(stateWrites.slice()).then(function () {
+      location.href = location.pathname + '?new=1';
+    }).catch(function (error) { showError('保存失败，请重试保存后再新建学习：' + error.message); });
   }
 
   // ---------- 学习资料库（服务端数据动态扫描） ----------

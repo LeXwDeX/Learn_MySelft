@@ -14,6 +14,11 @@
   function roundConfig() { return Object.assign({}, view.config, {key: round().storageKey || view.config.key}); }
   function localKey(config, id) { return 'quiz-draft-v1:' + JSON.stringify([config.key, config.nodeId || '', id]); }
   function api(config, endpoint, body, keepalive) {
+    if (endpoint === '/path/quiz' && window.LearnJobs) {
+      return window.LearnJobs.run(endpoint, body, {onStatus: function (message) {
+        if (view && dialog.open && roundConfig().key === config.key) status(message, false);
+      }});
+    }
     var payload = JSON.stringify(body);
     var controller = new AbortController();
     var timeout = setTimeout(function () { controller.abort(); }, endpoint === '/path/quiz' ? 240000 : 20000);
@@ -251,7 +256,7 @@
   window.QuizDialog = {
     open: function (config) {
       create();
-      if (view && view.busy) return Promise.resolve();
+      if (view && view.busy) { if (!dialog.open) dialog.showModal(); return Promise.resolve(); }
       flushCurrent();
       view = null;
       var request = ++opening;
@@ -276,6 +281,27 @@
         chooseDraft(); render();
         if (view.localRecovery) flushCurrent();
         byId('qd-close').focus();
+        if (window.LearnJobs && !config.readOnly) {
+          var active = view;
+          window.LearnJobs.list().then(function (jobs) {
+            if (view !== active || !dialog.open) return;
+            var job = jobs.find(function (item) {
+              return item.operation === '/path/quiz' && item.key === roundConfig().key &&
+                item.round_id === round().id && (item.status === 'queued' || item.status === 'running');
+            });
+            if (!job) return;
+            active.busy = true; render();
+            return window.LearnJobs.watch(job, {onStatus: function (message) {
+              if (view === active && dialog.open) status(message, false);
+            }}).then(function () {
+              active.busy = false;
+              if (view === active && dialog.open) return window.QuizDialog.open(config);
+            }).catch(function (error) {
+              active.busy = false;
+              if (view === active && dialog.open) { render(); status(error.message, true); }
+            });
+          }).catch(function (error) { if (view === active && dialog.open) status('任务状态暂时无法读取：' + error.message, true); });
+        }
       }).catch(function (error) {
         if (request !== opening || !dialog.open) return;
         byId('qd-body').textContent = '无法打开题集：' + error.message;
