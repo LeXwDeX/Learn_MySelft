@@ -53,6 +53,24 @@
       });
     } catch (e) { /* 渲染失败保留原始文本 */ }
   }
+  // 迷你 Markdown：``` 围栏代码块 + 行内 `code`；文本换行由容器 pre-wrap 保留
+  function mdText(t) {
+    return esc(t)
+      .replace(/`([^`\n]+)`/g, function (_, c) { return '<code class="md-inline">' + c + '</code>'; })
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  }
+  function mdRender(text) {
+    var src = String(text == null ? '' : text);
+    var out = '', last = 0, m;
+    var re = /```([a-zA-Z0-9+#-]*)\r?\n?([\s\S]*?)```/g;
+    while ((m = re.exec(src))) {
+      out += mdText(src.slice(last, m.index));
+      out += '<pre class="md-code"><code>' + esc(m[2].replace(/\r/g, '').replace(/\n+$/, '')) + '</code></pre>';
+      last = m.index + m[0].length;
+    }
+    out += mdText(src.slice(last));
+    return out;
+  }
   function storeKey() { return STORE_PREFIX + slug(state.topic); }
   // 答案框自动扩展：随输入增高（以 CSS min-height 为下限）
   function bindAutoGrow(el) {
@@ -558,23 +576,31 @@
     });
   }
 
-  // 简单 markdown：## 小标题 + 空行分段；$...$ 保持原样文本
+  // 简单 markdown：## 小标题 + 空行分段 + ``` 围栏代码块 + 行内 `code`；$...$ 交给 KaTeX
   function renderNotes(s) {
     var lines = String(s || '').split('\n');
-    var out = [];
+    var out = [], fence = null;
     lines.forEach(function (ln) {
+      var m = ln.match(/^\s*```([a-zA-Z0-9+#-]*)\s*$/);
+      if (fence === null && m) { fence = []; return; }
+      if (fence !== null) {
+        if (m) { out.push('<pre class="md-code"><code>' + esc(fence.join('\n')) + '</code></pre>'); fence = null; }
+        else fence.push(ln);
+        return;
+      }
       var t = ln.trim();
       if (/^#{2,3}\s+/.test(t)) out.push('<h5>' + esc(t.replace(/^#{2,3}\s+/, '')) + '</h5>');
-      else if (/^\s*[-*]\s+/.test(ln)) out.push('<div style="padding-left:14px">· ' + esc(t.replace(/^\s*[-*]\s+/, '')) + '</div>');
+      else if (/^\s*[-*]\s+/.test(ln)) out.push('<div style="padding-left:14px">· ' + mdText(t.replace(/^\s*[-*]\s+/, '')) + '</div>');
       else if (t === '') out.push('<div style="height:8px"></div>');
-      else out.push('<div>' + esc(ln) + '</div>');
+      else out.push('<div>' + mdText(ln) + '</div>');
     });
+    if (fence !== null) out.push('<pre class="md-code"><code>' + esc(fence.join('\n')) + '</code></pre>');
     return out.join('');
   }
   function listSection(title, arr) {
     if (!arr || !arr.length) return '';
-    return '<div class="panel-sec"><h4>' + esc(title) + '</h4><ul>' +
-      arr.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+    return '<div class="panel-sec"><h4>' + esc(title) + '</h4><ul class="mdlist">' +
+      arr.map(function (x) { return '<li>' + mdRender(x) + '</li>'; }).join('') + '</ul></div>';
   }
 
   function renderNodeDetail(id) {
@@ -583,7 +609,7 @@
     panelHead(id, n.title, n.essence, 'NODE ' + id + (isDone(id) ? ' · 已完成' : ''));
     var qs = ((d.quiz && d.quiz.questions) || []);
     var quizHtml = qs.map(function (q, i) {
-      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + esc(q.q) + '</p>' +
+      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + mdRender(q.q) + '</p>' +
         '<textarea id="ans-' + i + '" placeholder="写下你的答案…"></textarea></div>';
     }).join('');
     var prev = state.nodeState[id] || {};
@@ -624,7 +650,7 @@
     var qs = (d.quiz && d.quiz.questions) || [];
     var h = qs.map(function (q, i) {
       var cur = $('ans-' + i) ? $('ans-' + i).value : '';
-      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + esc(q.q) + '</p>' +
+      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + mdRender(q.q) + '</p>' +
         '<textarea id="qma-' + i + '" placeholder="写下你的答案…">' + esc(cur) + '</textarea></div>';
     }).join('');
     $('qm-body').innerHTML = h;
@@ -686,16 +712,16 @@
     var per = res.per_question || [];
     var detail = qs.map(function (q, i) {
       var p = per[i] || {};
-      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + esc(q.q) + '</p>' +
+      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + mdRender(q.q) + '</p>' +
         '<div class="result ' + (p.ok ? 'ok' : 'bad') + '">' +
-        '<strong>' + (p.ok ? '✓ 正确' : '✗ 有缺漏') + '</strong> ' + esc(p.comment || '') + '</div></div>';
+        '<strong>' + (p.ok ? '✓ 正确' : '✗ 有缺漏') + '</strong> ' + mdRender(p.comment || '') + '</div></div>';
     }).join('');
     var cls = res.pass ? 'ok' : 'bad';
     $('panel-body').innerHTML =
       '<div class="panel-sec"><h4>自测结果</h4>' +
       '<div class="result ' + cls + '"><span class="score ' + cls + '">' + esc(res.score) + '</span> 分 — ' +
       (res.pass ? '通过 ✅' : '未通过 ❌') + '</div>' +
-      (res.feedback ? '<p style="font-size:13.5px;margin-top:10px">' + esc(res.feedback) + '</p>' : '') +
+      (res.feedback ? '<p style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">' + mdRender(res.feedback) + '</p>' : '') +
       '<div style="height:10px"></div>' + detail + '</div>';
     renderMathIn($('panel-body'));
     var foot = '';

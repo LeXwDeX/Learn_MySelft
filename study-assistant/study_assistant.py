@@ -119,7 +119,7 @@ SPEC 的 JSON 字段（全部必填）：
 7. 结合研究简报里的要点与误区安排节点顺序。""",
     "node": """你在为一个学习节点写学习材料。
 
-只输出一个 JSON 对象字面量，不要解释、不要代码围栏，格式：
+只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
 {"study_notes":"...","key_points":["..."],"examples":["..."],"misconceptions":["..."],"quiz":{"questions":[{"q":"...","answer":"...","explain":"..."}]}}
 
 规则：
@@ -129,10 +129,23 @@ SPEC 的 JSON 字段（全部必填）：
 4. 面向零基础，多举具体例子。
 5. 公式统一用 LaTeX 并包在 $...$ 里（前端用 KaTeX 渲染）：向量写 \\mathbf{x}，范数写 \\|\\mathbf{x}\\|，点积写 \\cdot，矩阵写 \\mathbf{A}；不要用 \\( \\)、\\[ \\] 或 $$ 定界。
 6. **每个例子里的数值计算必须自己验算一遍再输出**（如 (1,2,3)·(4,0,2)=1×4+2×0+3×2=10；范数 \\|\\mathbf{x}\\|_2=\\sqrt{\\mathbf{x}\\cdot\\mathbf{x}}），凡算错即为重大缺陷。
-7. 同一段里前后符号保持一致（不要一处 |a|、一处 \\|a\\|）。""",
+7. 同一段里前后符号保持一致（不要一处 |a|、一处 \\|a\\|）。
+8. 材料中只要出现代码（study_notes / key_points / examples / quiz 均适用）：代码必须放进 ```go（其他语言用对应标注）围栏代码块、完整给出、单独成段（JSON 字符串里换行照常用转义）。形如：
+
+阅读下面代码，写出输出：
+
+```go
+func main() {
+    x := 5
+    fmt.Println(x)
+}
+```
+
+不要把代码压成一行、不要截断或省略。
+9. 前端渲染能力（生成内容时只用以下语法）：```语言 围栏代码块（Go 用 ```go，其他语言写对应标注）；行内 `代码`；**加粗**；## 或 ### 小标题；行首 - 列表；$...$ 行内 LaTeX（KaTeX 渲染）。不要用表格、图片、HTML 标签，也不要用 $$ 或 \\[ \\] 公式定界。""",
     "quiz": """你在批改学生的自测作答。
 
-只输出一个 JSON 对象字面量，不要解释、不要代码围栏，格式：
+只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
 {"pass":true,"score":85,"feedback":"...","per_question":[{"ok":true,"comment":"..."}]}
 
 规则：
@@ -140,10 +153,12 @@ SPEC 的 JSON 字段（全部必填）：
 2. score 为百分制整数。
 3. per_question 数量与题目数一致、顺序一致。
 4. pass 规则：score>=60 且没有任何一题完全跑题（完全答非所问/空白）时为 true，否则 false。
-5. 评语用中文、直接、具体。""",
+5. 评语用中文、直接、具体。
+6. 点评涉及代码片段时用 `反引号` 行内代码包裹。
+7. 前端渲染能力（点评只用以下语法）：行内 `代码`、**加粗**、$...$ 行内 LaTeX；不要用表格、图片、HTML 标签。""",
     "requiz": """你在为同一学习节点重新出题（学生上一次自测未通过，且已看过题目与讲解）。
 
-只输出一个 JSON 对象字面量，不要解释、不要代码围栏，格式：
+只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
 {"questions":[{"q":"...","answer":"...","explain":"..."}]}
 
 规则：
@@ -152,7 +167,9 @@ SPEC 的 JSON 字段（全部必填）：
 3. 结合「上次批改要点」，优先覆盖学生暴露的薄弱点：先补错，再巩固。
 4. 每题必须给 answer（参考答案）与 explain（解析）。
 5. 公式统一用 $...$ 的 LaTeX（前端 KaTeX 渲染），不要用 \\( \\)、\\[ \\] 或 $$ 定界。
-6. 数值必须自行验算正确。""",
+6. 数值必须自行验算正确。
+7. 题目涉及代码时：q/answer/explain 里的代码必须放进 ```go（其他语言用对应标注）围栏代码块、完整给出、单独成段（JSON 字符串里换行照常用转义）；不要把代码压成一行、不要截断或省略。
+8. 前端渲染能力（只用以下语法）：```go 围栏代码块、行内 `代码`、**加粗**、$...$ 行内 LaTeX（KaTeX 渲染）；不要用表格、图片、HTML 标签，也不要用 $$ 或 \\[ \\] 公式定界。""",
 }
 
 
@@ -414,7 +431,8 @@ def _json_value(text):
     能处理 ```json ... ``` 围栏、前后解释性文字，以及字符串/转义里的花括号。"""
     if not text:
         return None
-    s = re.sub(r"```[A-Za-z0-9_+-]*", "", text.strip()).replace("```", "")
+    # 只剥离整体外层的围栏（如 ```json\n{...}）；JSON 字符串内部的 ``` 代码块必须保留
+    s = re.sub(r"^```[A-Za-z0-9_+-]*[ \t]*\r?\n?", "", text.strip())
     start = None
     for i, ch in enumerate(s):
         if ch in "[{":
@@ -564,11 +582,11 @@ def _norm_node_detail(obj):
     for q in (quiz.get("questions") if isinstance(quiz.get("questions"), list) else []):
         if not isinstance(q, dict):
             continue
-        question = clip(q.get("q") or q.get("question"), 300)
+        question = clip(q.get("q") or q.get("question"), 1500)
         if not question:
             continue
-        qs.append({"q": question, "answer": clip(q.get("answer"), 600),
-                   "explain": clip(q.get("explain"), 600)})
+        qs.append({"q": question, "answer": clip(q.get("answer"), 1500),
+                   "explain": clip(q.get("explain"), 1500)})
         if len(qs) >= 3:
             break
     if not notes and not qs:
@@ -588,11 +606,11 @@ def _norm_quiz_questions(obj):
     for q in (obj.get("questions") if isinstance(obj.get("questions"), list) else []):
         if not isinstance(q, dict):
             continue
-        question = clip(q.get("q") or q.get("question"), 300)
+        question = clip(q.get("q") or q.get("question"), 1500)
         if not question:
             continue
-        qs.append({"q": question, "answer": clip(q.get("answer"), 600),
-                   "explain": clip(q.get("explain"), 600)})
+        qs.append({"q": question, "answer": clip(q.get("answer"), 1500),
+                   "explain": clip(q.get("explain"), 1500)})
         if len(qs) >= 3:
             break
     if not qs:
@@ -614,12 +632,12 @@ def _norm_quiz_result(obj, n):
     for i in range(n):
         item = per_in[i] if i < len(per_in) and isinstance(per_in[i], dict) else {}
         per.append({"ok": bool(item.get("ok")),
-                    "comment": clip(item.get("comment") or item.get("feedback"), 400)})
+                    "comment": clip(item.get("comment") or item.get("feedback"), 800)})
     passed = obj.get("pass")
     if not isinstance(passed, bool):
         passed = score >= 60 and all(p["ok"] or p["comment"] for p in per)
     return {"pass": bool(passed) and score >= 60, "score": score,
-            "feedback": clip(obj.get("feedback"), 600), "per_question": per}
+            "feedback": clip(obj.get("feedback"), 1000), "per_question": per}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -846,7 +864,7 @@ class Handler(BaseHTTPRequestHandler):
                 return [
                     {"role": "system", "content": _path_system("node")},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)
-                     + "\n请输出该节点的学习材料 JSON。" + extra},
+                     + "\n请输出该节点的学习材料 JSON；材料中出现的代码请一律用 ``` 围栏代码块完整包裹。" + extra},
                 ]
 
             detail = _norm_node_detail(_json_block(_upstream_nonempty(
@@ -871,7 +889,7 @@ class Handler(BaseHTTPRequestHandler):
             used = []
             for q in (body.get("used") or [])[:12]:
                 if isinstance(q, dict) and clip(q.get("q"), 300):
-                    used.append({"q": clip(q.get("q"), 300), "answer": clip(q.get("answer"), 300)})
+                    used.append({"q": clip(q.get("q"), 1000), "answer": clip(q.get("answer"), 300)})
             fb = body.get("feedback") if isinstance(body.get("feedback"), dict) else {}
             fb_payload = {
                 "上次得分": fb.get("score"),
@@ -890,7 +908,7 @@ class Handler(BaseHTTPRequestHandler):
                 return [
                     {"role": "system", "content": _path_system("requiz")},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)
-                     + "\n请输出全新的自测题 JSON。" + extra},
+                     + "\n请输出全新的自测题 JSON；题目中的代码请用 ``` 围栏代码块完整包裹。" + extra},
                 ]
             rq = _norm_quiz_questions(_json_block(_upstream_nonempty(
                 _mk_requiz(), max_tokens=PATH_MAX_TOKENS, temperature=0.6)))
@@ -914,11 +932,11 @@ class Handler(BaseHTTPRequestHandler):
             qs = []
             for q in (qsrc or [])[:3]:
                 if isinstance(q, dict) and clip(q.get("q"), 300):
-                    qs.append({"q": clip(q.get("q"), 300), "answer": clip(q.get("answer"), 600)})
+                    qs.append({"q": clip(q.get("q"), 1500), "answer": clip(q.get("answer"), 1500)})
             if not qs:
                 self._json(400, {"error": "questions required"})
                 return
-            answers = [clip(str(a), 1000) for a in (body.get("answers") or [])[:len(qs)]]
+            answers = [clip(str(a), 2000) for a in (body.get("answers") or [])[:len(qs)]]
             while len(answers) < len(qs):
                 answers.append("")
             payload = {
