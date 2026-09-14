@@ -828,10 +828,12 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 
     var foot = '';
     if (qs.length && !isDone(id)) foot += '<button class="btn primary" id="submit-quiz" type="button">提交自测</button>';
+    if (qs.length && !isDone(id) && typeof prev.score === 'number') foot += '<button class="btn" id="redo-quiz" type="button">换新题，再试一次</button>';
     if (isDone(id)) foot += '<span class="tip">✅ 已完成</span>';
     foot += '<a class="om-link" target="_blank" rel="noopener" href="' + esc(omLink(n)) + '">用 OpenMAIC 生成这节课 →</a>';
     setFoot(foot);
     if ($('submit-quiz')) $('submit-quiz').addEventListener('click', function () { submitQuiz(id); });
+    if ($('redo-quiz')) $('redo-quiz').addEventListener('click', function () { redoQuiz(id); });
   }
 
   function submitQuiz(id) {
@@ -852,6 +854,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     }).then(function (res) {
       var st = state.nodeState[id] || {};
       st.score = res.score;
+      st.lastResult = { score: res.score, pass: res.pass, feedback: res.feedback || '',
+                        per_question: res.per_question || [] };
       // pass=true 不自动完成，等用户点「完成本节点并解锁下一节点」
       state.nodeState[id] = st;
       save();
@@ -887,12 +891,41 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     } else if (res.pass && isDone(id)) {
       foot += '<span class="tip">✅ 已完成</span>';
     } else {
-      foot += '<button class="btn primary" id="redo-quiz" type="button">再想想，可重做</button>';
+      foot += '<button class="btn primary" id="redo-quiz" type="button">换新题，再试一次</button>';
     }
     foot += '<a class="om-link" target="_blank" rel="noopener" href="' + esc(omLink(nodeById(id))) + '">用 OpenMAIC 生成这节课 →</a>';
     setFoot(foot);
     if ($('complete-node')) $('complete-node').addEventListener('click', function () { completeNode(id); });
-    if ($('redo-quiz')) $('redo-quiz').addEventListener('click', function () { renderNodeDetail(id); });
+    if ($('redo-quiz')) $('redo-quiz').addEventListener('click', function () { redoQuiz(id); });
+  }
+
+  // 换新题重测：调用 /path/requiz 生成全新变式题，替换当前题集后重新渲染
+  function redoQuiz(id) {
+    var n = nodeById(id), d = state.nodeDetail[id];
+    if (!n || !d) return;
+    var quiz = d.quiz || {};
+    var used = ((quiz.used) || []).concat((quiz.questions || []).map(function (q) {
+      return { q: q.q, answer: q.answer };
+    }));
+    var st = state.nodeState[id] || {};
+    var btn = $('redo-quiz');
+    if (btn) { btn.disabled = true; btn.textContent = '正在出新题…'; }
+    hideError();
+    post('/path/requiz', {
+      node: { title: n.title, essence: n.essence, objectives: n.objectives || [] },
+      spec: state.spec,
+      used: used.slice(-12),
+      feedback: st.lastResult || null
+    }).then(function (r) {
+      var qs = (r && r.questions) || [];
+      if (!qs.length) throw new Error('未获得新题');
+      d.quiz = { questions: qs, used: used.slice(-30) };
+      save();
+      renderNodeDetail(id);
+    }).catch(function (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '换新题，再试一次'; }
+      showError('换题失败：' + e.message, function () { redoQuiz(id); });
+    });
   }
 
   function completeNode(id) {

@@ -12,7 +12,7 @@
 |------|------|------|
 | `knowledge-map/` | 知识地图 | 将结构化知识数据生成为交互式知识页：单元卡片 + 四态进度标记 + 每单元独立 AI 对话（每单元 = 每对话）。数据自备（未随仓库提供），由 `gen_math_map.py` 生成 |
 | `learning-path/` | 学习路径 | 输入主题 → 对话式采集需求 → 主动研究（SearXNG 检索）→ 生成依赖路径图。节点按依赖解锁（前置全部完成才可学），自测通过（≥60 分）标记完成 |
-| `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask` `/suggest` `/compress` `/health` `/path/intake` `/path/research` `/path/plan` `/path/node` `/path/quiz` `/state/all` `/state/put` `/state/del` |
+| `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask` `/suggest` `/compress` `/health` `/path/intake` `/path/research` `/path/plan` `/path/node` `/path/quiz` `/path/requiz` `/state/all` `/state/put` `/state/del` |
 | `home/` | 固定首页 | 学习工具固定入口（部署为 `<站点>/learn/`）；`state_sync.js` 为全站学习数据同步脚本（部署为 `<站点>/state_sync.js`） |
 | `deploy/` | 部署 | systemd 单元文件（`zixueshe-web.service`、`study-assistant.service`、`static-pages.service`） |
 
@@ -119,6 +119,7 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 
 - 对话上下文由前端维护并随请求携带；每对话上限 500K token，超出自动压缩（页面有上下文计量）
 - 知识地图自测「看答案」为手动展开；学习路径自测走后端自动判分
+- `/path/requiz`（换新题重测）：输入节点 + 已出过的题目 + 上次批改要点，输出全新 2~3 题（含答案与解析），避免重测时重复出同一套题
 
 ## 版本
 

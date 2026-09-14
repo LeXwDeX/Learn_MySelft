@@ -140,6 +140,18 @@ SPEC 的 JSON 字段（全部必填）：
 3. per_question 数量与题目数一致、顺序一致。
 4. pass 规则：score>=60 且没有任何一题完全跑题（完全答非所问/空白）时为 true，否则 false。
 5. 评语用中文、直接、具体。""",
+    "requiz": """你在为同一学习节点重新出题（学生上一次自测未通过，且已看过题目与讲解）。
+
+只输出一个 JSON 对象字面量，不要解释、不要代码围栏，格式：
+{"questions":[{"q":"...","answer":"...","explain":"..."}]}
+
+规则：
+1. 出 2~3 道全新题；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。
+2. 严禁与「已出过的题目」相同或近似：题目情境、数字、问法、考察角度都必须变化；允许针对同一考点出变式题，但不得照搬。
+3. 结合「上次批改要点」，优先覆盖学生暴露的薄弱点：先补错，再巩固。
+4. 每题必须给 answer（参考答案）与 explain（解析）。
+5. 公式统一用 $...$ 的 LaTeX（前端 KaTeX 渲染），不要用 \\( \\)、\\[ \\] 或 $$ 定界。
+6. 数值必须自行验算正确。""",
 }
 
 
@@ -567,6 +579,26 @@ def _norm_node_detail(obj):
             "quiz": {"questions": qs}}
 
 
+def _norm_quiz_questions(obj):
+    """归一「重新出题」结果：{questions:[{q,answer,explain}]}，最多 3 题，至少 1 题有效，否则 None。"""
+    if not isinstance(obj, dict):
+        return None
+    qs = []
+    for q in (obj.get("questions") if isinstance(obj.get("questions"), list) else []):
+        if not isinstance(q, dict):
+            continue
+        question = clip(q.get("q") or q.get("question"), 300)
+        if not question:
+            continue
+        qs.append({"q": question, "answer": clip(q.get("answer"), 600),
+                   "explain": clip(q.get("explain"), 600)})
+        if len(qs) >= 3:
+            break
+    if not qs:
+        return None
+    return {"questions": qs}
+
+
 def _norm_quiz_result(obj, n):
     """归一 QuizResult；pass 硬规则：score>=60 且没有被判「完全跑题」。"""
     if not isinstance(obj, dict):
@@ -663,7 +695,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/state/all"):
             self._json(200, {"ok": True, "entries": self._state_all()})
         elif self.path.startswith("/health"):
-            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/state/all", "/state/put", "/state/del"]})
+            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/state/all", "/state/put", "/state/del"]})
         else:
             self._json(404, {"error": "not found"})
 
@@ -829,6 +861,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(502, {"error": "node detail generation failed"})
                 return
             self._json(200, detail)
+            return
+
+        # -- 重新出题（换新题重测）--
+        if path.startswith("/path/requiz"):
+            node = body.get("node") or {}
+            spec = _norm_spec(body.get("spec")) if body.get("spec") else None
+            used = []
+            for q in (body.get("used") or [])[:12]:
+                if isinstance(q, dict) and clip(q.get("q"), 300):
+                    used.append({"q": clip(q.get("q"), 300), "answer": clip(q.get("answer"), 300)})
+            fb = body.get("feedback") if isinstance(body.get("feedback"), dict) else {}
+            fb_payload = {
+                "上次得分": fb.get("score"),
+                "上次总评": clip(fb.get("feedback"), 600),
+                "逐题批语": [{"ok": bool(x.get("ok")), "comment": clip(x.get("comment"), 300)}
+                            for x in (fb.get("per_question") or [])[:3] if isinstance(x, dict)],
+            }
+            payload = {
+                "需求单": spec,
+                "节点": {"title": clip(node.get("title"), 120), "essence": clip(node.get("essence"), 200),
+                       "objectives": _str_list(node.get("objectives"), 3, 160)},
+                "已出过的题目": used,
+                "上次批改要点": fb_payload,
+            }
+            def _mk_requiz(extra=""):
+                return [
+                    {"role": "system", "content": _path_system("requiz")},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)
+                     + "\n请输出全新的自测题 JSON。" + extra},
+                ]
+            rq = _norm_quiz_questions(_json_block(_upstream_nonempty(
+                _mk_requiz(), max_tokens=PATH_MAX_TOKENS, temperature=0.6)))
+            if rq is None:
+                rq = _norm_quiz_questions(_json_block(_upstream_nonempty(
+                    _mk_requiz(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），必须含 2~3 道题，且与已出过的题目完全不同。"),
+                    max_tokens=PATH_MAX_TOKENS, temperature=0.4)))
+            if rq is None:
+                self._json(502, {"error": "requiz failed"})
+                return
+            self._json(200, rq)
             return
 
         # -- 自测判分 --
