@@ -65,10 +65,10 @@ ALLOWED_ORIGIN = re.compile(
 # 浏览器里的所有学习数据（进度标记、单元对话、学习路径生成物等 localStorage 键）会实时同步到这里。
 # 每键一个 JSON 文件，内容 {"key","v","ts"}；v=null 表示已删除（墓碑，防止旧设备把已删数据推回来）。
 STATE_DIR = os.environ.get("STATE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "state"))
-STATE_LOCK = threading.Lock()
+STATE_LOCK = threading.RLock()   # 可重入锁：_state_merge_put 的读-改-写在同一临界区内完成（内部读写函数会再取同一把锁）
 STATE_MAX_KEYS = 2000            # 单次请求键数上限
 STATE_MAX_VALUE = 2_000_000      # 单键值长度上限（字符）
-DELETE_PASSWORD = os.environ.get("DELETE_PASSWORD", "")   # 「删除资料」按钮密码（/state/delete 校验）；未配置则拒绝删除
+DELETE_PASSWORD = os.environ.get("DELETE_PASSWORD", "")   # 「删除资料」密码（/state/delete 与 /state/del 使用同一校验）；未配置则拒绝删除
 
 # ---- 生成单飞：同一份资料同一操作并发只执行一次；结果近时缓存 + 服务端状态直读 ----
 GEN_CACHE_TTL = 1800          # 成品结果近时缓存（秒）
@@ -193,20 +193,22 @@ def _state_write_key(key, value):
 
 
 def _state_merge_put(mkey, patch):
-    """生成写穿：读材料 → dict 合并 patch → 写回。失败只告警，不影响响应。
+    """生成写穿：读材料 → dict 合并 patch → 写回；读-改-写在同一临界区内原子完成。失败只告警，不影响响应。
 
-    这样即使页面在生成途中关闭，结果也已经落库，重开自动取回。
+    这样即使页面在生成途中关闭，结果也已经落库，重开自动取回；
+    并发写入（如保存节点材料的同时更新学习计划）不会互相覆盖丢更新。
     """
     try:
         mkey = (mkey or "").strip()
         if not mkey or not isinstance(patch, dict):
             return False
-        m = _state_material(mkey)
-        if m is None:
-            print("[warn] state merge put skipped (no material): %s" % mkey, file=sys.stderr)
-            return False
-        m.update(patch)
-        _state_write_key(mkey, json.dumps(m, ensure_ascii=False))
+        with STATE_LOCK:   # 读-改-写全程持锁（RLock 可重入，_state_read_key/_state_write_key 内部再取同一把锁）
+            m = _state_material(mkey)
+            if m is None:
+                print("[warn] state merge put skipped (no material): %s" % mkey, file=sys.stderr)
+                return False
+            m.update(patch)
+            _state_write_key(mkey, json.dumps(m, ensure_ascii=False))
         return True
     except Exception as e:
         print("[warn] state merge put failed: %s: %s" % (type(e).__name__, e), file=sys.stderr)
@@ -1541,7 +1543,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/path/refine"):
             key = clip(body.get("key"), 200)
             spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
-            plan = body.get("plan") if isinstance(body.get("plan"), dict) else {}
+            plan_in = body.get("plan") if isinstance(body.get("plan"), dict) else {}
             weak = []
             for w in (body.get("weaknesses") if isinstance(body.get("weaknesses"), list) else [])[:8]:
                 if not isinstance(w, dict):
@@ -1568,6 +1570,19 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         self._json(502, {"error": _gate["err"] or "细化生成仍在进行中，请稍后重试"})
                     return
+            # 服务端唯一数据源：以服务端已存储的最新 plan 为准（客户端传来的 plan 可能过期——
+            # 若拿旧计划重新编号并整份覆盖，会丢掉上一次细化新增的单元）
+            _stored = _state_material(mkey) if mkey else None
+            if isinstance(_stored, dict):
+                _sp = _stored.get("spec")
+                if isinstance(_sp, dict) and _sp:
+                    spec = _sp
+                if isinstance(_stored.get("plan"), dict) and (_stored["plan"].get("nodes") or []):
+                    plan = _stored["plan"]
+                else:
+                    plan = plan_in
+            else:
+                plan = plan_in
             try:
                 payload = {"学习主题": clip((spec or {}).get("topic") or (plan or {}).get("title"), 160),
                            "现有单元": [{"id": clip(n.get("id"), 20), "标题": clip(n.get("title"), 120)}
@@ -1605,7 +1620,8 @@ class Handler(BaseHTTPRequestHandler):
                 prev = last_by_parent.get(parent)
                 deps = [prev] if prev else ([parent] if parent else [])
                 node = {"id": nid, "title": u.get("title"), "essence": u.get("essence"),
-                        "deps": deps, "objectives": u.get("objectives") or []}
+                        "deps": deps, "objectives": u.get("objectives") or [],
+                        "refine": True}   # 细化/补救单元（前端解锁规则：原单元可达即可学）
                 nodes.append(node)
                 added.append(node)
                 for d in deps:
@@ -1678,8 +1694,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
-        # 删除资料（学习资料库 🗑 按钮）：与 /state/del 分开、必须校验密码；注意放在 put/del 分支之前
-        if path.startswith("/state/delete"):
+        # 删除资料（学习资料库 🗑 按钮 & 维护端点）：/state/delete 与 /state/del 同一密码校验（防绕过）；注意放在 put 分支之前
+        if path.startswith("/state/delete") or path.startswith("/state/del"):
             if not DELETE_PASSWORD:
                 self._json(503, {"ok": False, "error": "服务端未配置删除密码"})
                 return
@@ -1696,22 +1712,21 @@ class Handler(BaseHTTPRequestHandler):
             n = self._state_put(entries)
             self._json(200, {"ok": True, "n": n})
             return
-        # 学习数据同步端点：浏览器端全量推送（含删除墓碑）
-        if path.startswith("/state/put") or path.startswith("/state/del"):
+        # 学习数据同步端点：浏览器端全量推送（仅写入存值；删除一律走上面带密码的 /state/delete|/state/del）
+        if path.startswith("/state/put"):
             try:
                 body = self._read_body()
             except Exception as e:
                 self._json(400, {"error": "bad json: %s" % e})
                 return
             try:
-                if path.startswith("/state/put"):
-                    entries = body.get("entries") or {}
-                    if not isinstance(entries, dict):
-                        self._json(400, {"error": "entries must be an object"})
-                        return
-                else:
-                    keys = body.get("keys") or []
-                    entries = {k: None for k in keys if isinstance(k, str)}
+                entries = body.get("entries") or {}
+                if not isinstance(entries, dict):
+                    self._json(400, {"error": "entries must be an object"})
+                    return
+                if any(v is None for v in entries.values()):
+                    self._json(400, {"error": "null tombstone not allowed here; use /state/delete with password"})
+                    return
                 n = self._state_put(entries)
                 self._json(200, {"ok": True, "n": n})
             except Exception as e:

@@ -143,6 +143,7 @@
       });
     } catch (e) {}
   }
+  // 注：/state/del 已改为与 /state/delete 同一密码校验（防绕过），普通流程不再调用此函数。
   function delState(keys) {
     try {
       fetch(API + '/state/del', {
@@ -193,9 +194,6 @@
       if (!saveTimer) saveTimer = setTimeout(flushSave, 350);
     } catch (e) { console.warn('save failed', e); }
   }
-  function clearSave() {
-    delState([storeKey(), LAST_KEY, aiKey()]);
-  }
   // AI 辅助对话单独一个 key（learn-ai-v1-<slug>），与材料 save() 互不干扰
   function saveAi() {
     try {
@@ -240,10 +238,9 @@
       // 状态自洽性：learning 必须有 plan
       if (state.stage === 'learning' && !state.plan) state.stage = 'research';
       if (state.stage === 'research' && !state.spec) state.stage = 'intake';
-      // 历史「untitled」空壳键修复：主题可读后迁移到正确键名（旧键删除）
+      // 历史「untitled」空壳键修复：主题可读后迁移到正确键名（旧键不再删除——删除一律走带密码的 /state/delete；空壳键已被资料库列表过滤）
       var fixSlug = slug(state.topic);
       if (s === 'untitled' && fixSlug && fixSlug !== 'untitled') {
-        delState([USER_PATH + STORE_PREFIX + 'untitled', STORE_PREFIX + 'untitled']);
         save();
         s = fixSlug;
       }
@@ -361,7 +358,26 @@
   }
   function isDone(id) { return !!(state.nodeState[id] && state.nodeState[id].completed); }
   function isUnlocked(id) {
-    return depsOf(id).every(function (d) { return isDone(d); });
+    var memo = {}, busy = {};
+    function reach(x) {
+      if (memo[x] !== undefined) return memo[x];
+      if (busy[x]) return false;   // 数据环保护
+      busy[x] = 1;
+      var nd = nodeById(x);
+      var r = false;
+      if (nd) {
+        if (nd.refine) {
+          // 细化/补救单元：原单元可达即可学（依赖已完成，或依赖本身可解锁）
+          r = depsOf(x).every(function (d) { return isDone(d) || reach(d); });
+        } else {
+          r = depsOf(x).every(function (d) { return isDone(d); });
+        }
+      }
+      busy[x] = 0;
+      memo[x] = r;
+      return r;
+    }
+    return reach(id);
   }
   function depTitles(id) {
     return depsOf(id).map(function (d) { var n = nodeById(d); return n ? n.title : dispId(d); });
@@ -1564,8 +1580,8 @@
 
   // ---------- 重新开始 ----------
   function restart() {
-    if (!confirm('确定要清空当前学习路径并重新开始吗？')) return;
-    clearSave();
+    if (!confirm('确定要重新开始吗？（当前这一份会保留在资料库，不会删除）')) return;
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}   // 去掉 ?t=，刷新不会载回旧资料
     state = {
       stage: 'intake', topic: '', history: [], spec: null, queries: [], sources: [],
       brief: '', plan: null, nodeDetail: {}, nodeState: {}, aiHist: {}, pending: null
