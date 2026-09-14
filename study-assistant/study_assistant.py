@@ -345,7 +345,7 @@ func main() {
     "refine": """你是老师。学生在地图上有几个知识点掌握不牢（附失分或错误原因）。请把这些薄弱知识点拆解成更小、更基础的学习单元，补充进学习地图，供学生重新学习。
 
 只输出一个 JSON 对象字面量（不要解释、不要代码围栏）：
-{"units":[{"for":"<薄弱点原节点 id，原样返回>","title":"细化单元标题","essence":"一句话本质","objectives":["学完能做到…","…"]}]}
+{"units":[{"for":"<该弱点对应的内部节点 id：直接原样复制「薄弱点」数组里对应元素的 nid 字段值，例如 n3（不要写 L3，不要写中文标题）>","title":"细化单元标题","essence":"一句话本质","objectives":["学完能做到…","…"]}]}
 
 规则：
 1. 每个薄弱知识点拆 2~4 个更细的单元；全部单元合计不超过 12 个。
@@ -918,14 +918,33 @@ def _norm_gaps(obj):
     return {"summary": clip(obj.get("summary"), 600), "gaps": gaps}
 
 
+def _resolve_refine_parent(raw, nodes, ids):
+    """把 LLM 返回的父节点引用归一为 plan 内的节点 id。
+    容忍：精确 id（n3）、显示编号（L3 / 3 / L3 后跟标题）、标题包含匹配。"""
+    fid = str(raw or "").strip()
+    if not fid:
+        return ""
+    if fid in ids:
+        return fid
+    m = re.match(r"^[Ll]?\s*(\d+)(?![0-9])", fid)
+    if m:
+        k = int(m.group(1))
+        if 1 <= k <= len(nodes) and str(nodes[k - 1].get("id")) in ids:
+            return str(nodes[k - 1].get("id"))
+    if len(fid) >= 2:
+        for n in nodes:
+            t = str(n.get("title") or "").strip()
+            if t and len(t) >= 2 and (t in fid or fid in t):
+                return str(n.get("id"))
+    return ""
+
+
 def _norm_refine_units(obj, plan):
-    """归一细化单元；for 必须指向 plan 里已有节点 id，否则置空。"""
+    """归一细化单元；for 归一为 plan 里已有节点 id（容错 L 编号/标题写法），无法解析则置空。"""
     if not isinstance(obj, dict):
         return None
-    cur = set()
-    for n in ((plan or {}).get("nodes") or []):
-        if isinstance(n, dict) and n.get("id") is not None:
-            cur.add(str(n.get("id")))
+    nodes = [n for n in ((plan or {}).get("nodes") or []) if isinstance(n, dict)]
+    ids = {str(n.get("id")) for n in nodes if n.get("id") is not None}
     out = []
     for u in (obj.get("units") if isinstance(obj.get("units"), list) else []):
         if not isinstance(u, dict):
@@ -933,9 +952,7 @@ def _norm_refine_units(obj, plan):
         title = clip(u.get("title"), 120)
         if not title:
             continue
-        for_id = str(u.get("for") or "").strip()
-        if for_id not in cur:
-            for_id = ""
+        for_id = _resolve_refine_parent(u.get("for"), nodes, ids)
         out.append({"for": for_id, "title": title,
                     "essence": clip(u.get("essence"), 200),
                     "objectives": _str_list(u.get("objectives"), 4, 160)})

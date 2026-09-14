@@ -1539,7 +1539,7 @@
         state.plan = r.plan;
         save();
         renderPlan();
-        alert('已追加 ' + ((r.added) || 0) + ' 个细化单元（在列表末尾）');
+        alert('已追加 ' + ((r.added) || 0) + ' 个细化单元（已按依赖关系插入学习地图）');
       }
     }).catch(function (e) {
       if (btn) { btn.disabled = false; btn.textContent = '按薄弱点细化'; }

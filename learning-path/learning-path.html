@@ -1909,7 +1909,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
         state.plan = r.plan;
         save();
         renderPlan();
-        alert('已追加 ' + ((r.added) || 0) + ' 个细化单元（在列表末尾）');
+        alert('已追加 ' + ((r.added) || 0) + ' 个细化单元（已按依赖关系插入学习地图）');
       }
     }).catch(function (e) {
       if (btn) { btn.disabled = false; btn.textContent = '按薄弱点细化'; }
