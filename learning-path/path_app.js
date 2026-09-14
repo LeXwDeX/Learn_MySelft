@@ -8,7 +8,7 @@
 
   var API = location.protocol + '//' + location.hostname + ':8101';
   var TIMEOUT = 360000;               // 单次调用最长 180s（后端推理可能 30~90s）
-  var USER_PATH = 'u0/';              // 多用户口子——固定用户路径，将来替换为每用户 id
+  var USER_PATH = window.LearnUser.userId + '/';
   var STORE_PREFIX = 'learn-path-v1-';
   var LAST_KEY = USER_PATH + 'learn-path-v1-last'; // 指向最近一次会话的 slug（带用户前缀）
 
@@ -127,6 +127,7 @@
   var pendingEntries = null, saveTimer = null;
   var stateWrites = [], blockedStateKeys = {};
   function putState(entries) {
+    if (window.LearnUser.readOnly) return Promise.resolve();
     function send(keepalive) {
       var allowed = {};
       Object.keys(entries).forEach(function (key) {
@@ -134,7 +135,7 @@
       });
       if (!Object.keys(allowed).length) return Promise.resolve();
       var body = JSON.stringify({ entries: allowed });
-      return fetch(API + '/state/put', {
+      return window.LearnUser.fetch(API + '/state/put', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: body, keepalive: !!keepalive && new Blob([body]).size <= 60000
       }).then(function (r) {
@@ -156,7 +157,7 @@
     if (pendingEntries && !Object.keys(pendingEntries).length) pendingEntries = null;
     // Drain earlier saves before the tombstone; subsequent callbacks cannot resurrect it.
     return Promise.all(stateWrites.slice()).then(function () {
-      return fetch(API + '/state/delete', {
+      return window.LearnUser.fetch(API + '/state/delete', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keys: keys, password: password })
       });
@@ -180,14 +181,9 @@
     if (!pendingEntries) return;
     var payload = JSON.stringify({ entries: pendingEntries }); pendingEntries = null;
     try {
-      if (navigator.sendBeacon) {
-        if (navigator.sendBeacon(API + '/state/put', new Blob([payload], { type: 'text/plain;charset=UTF-8' }))) return;
-      }
-    } catch (e) {}
-    try {
-      fetch(API + '/state/put', {
+      window.LearnUser.fetch(API + '/state/put', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: payload, keepalive: true
+        body: payload, keepalive: new Blob([payload]).size <= 60000
       }).catch(function () {});
     } catch (e) {}
   }
@@ -195,6 +191,7 @@
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushBeacon(); });
 
   function save() {
+    if (window.LearnUser.readOnly) return;
     try {
       // 没有主题就不写：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
       if (!state.topic || blockedStateKeys[storeKey()]) return;
@@ -221,7 +218,7 @@
     } catch (e) { console.warn('saveAi failed', e); }
   }
   function serverLoad() {
-    return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    return window.LearnUser.fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j || !j.ok || !j.entries) return false;
       var entries = j.entries;
       // 支持 ?t=<slug> 深链（从「学习资料库」直接打开某份资料）；无参则从零开始新生成
@@ -286,7 +283,7 @@
   function post(path, body) {
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
-    return fetch(API + path, {
+    return window.LearnUser.fetch(API + path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1151,7 +1148,7 @@
     if (box) box.appendChild(target);
     aiScroll();
     var acc = '';
-    fetch(API + '/ask', {
+    window.LearnUser.fetch(API + '/ask', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ unit: aiUnit(id), question: q, history: hist })
     }).then(function (res) {
@@ -1307,7 +1304,7 @@
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
     return window.QuizDialog.open({
-      api: API, key: storeKey(), nodeId: id, roundId: roundId, title: n.title + ' · 单元测验',
+      readOnly: window.LearnUser.readOnly, api: API, key: storeKey(), nodeId: id, roundId: roundId, title: n.title + ' · 单元测验',
       render: mdRender, decorate: function (el) { renderMathIn(el); highlightIn(el); },
       onLoad: function (quiz) { d.quiz = quiz; },
       onResult: function (res) {
@@ -1423,7 +1420,7 @@
 
   // ---------- 学习资料库（服务端数据动态扫描） ----------
   function fetchMaterials() {
-    return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    return window.LearnUser.fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       var entries = (j && j.entries) || {}, out = [];
       Object.keys(entries).forEach(function (k) {
         var biz = stripUser(k);   // 先剥用户前缀，再按原业务键逻辑处理
@@ -1452,7 +1449,7 @@
   }
   var QUIZ_PREFIX = 'quiz-map-v1-';
   function fetchQuizMaps() {
-    return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    return window.LearnUser.fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       var entries = (j && j.entries) || {}, out = [];
       Object.keys(entries).forEach(function (k) {
         var biz = stripUser(k);   // 先剥用户前缀
@@ -1580,7 +1577,7 @@
 
   // ---------- 初始化 ----------
   // 页面不做任何本地保存；每次打开都从服务端远程加载
-  function init() { boot(); }
+  function init() { window.LearnUser.ready.then(boot); }
   function boot() {
     $('chat-send').addEventListener('click', sendMessage);
     $('chat-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
@@ -1633,7 +1630,7 @@
       }
       renderProgress();
       renderAgentPanel();
-      if (restored) resumeIfPending();   // 上次生成中断→自动取回/重放（节点会自动展开卡片）
+      if (restored && !window.LearnUser.readOnly) resumeIfPending();   // 上次生成中断→自动取回/重放（节点会自动展开卡片）
     });
   }
 

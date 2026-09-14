@@ -2,7 +2,7 @@
 
 自托管的 AI 辅助学习工具套件：**知识地图**（单元级 AI 对话）+ **学习路径**（对话采集 → 主动研究 → 依赖路径图 → 门控自测）+ **服务端学习数据同步**（换设备自动恢复）。
 
-纯原生前端（无框架、无 CDN）+ 纯 Python 标准库后端（无第三方依赖）。仅适配桌面（整页最低宽度 1360px）。
+纯原生前端（无框架、无 CDN）+ 纯 Python 标准库后端（无第三方依赖）。入口管理页和测验弹窗支持手机布局，知识地图保留宽屏阅读布局。
 
 ---
 
@@ -15,8 +15,16 @@
 | `knowledge-map/` | 知识地图 | 将结构化知识数据生成为交互式知识页：单元卡片 + 四态进度标记 + 每单元独立 AI 对话（每单元 = 每对话）。数据自备（未随仓库提供），由 `gen_math_map.py` 生成 |
 | `learning-path/` | 学习路径 | 输入主题 → 对话式采集需求 → 主动研究（SearXNG 检索）→ 生成依赖路径图。节点按依赖解锁（前置全部完成才可学），自测通过（≥60 分）标记完成 |
 | `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask` `/suggest` `/compress` `/health` `/path/intake` `/path/research` `/path/plan` `/path/node` `/path/quiz` `/path/requiz` `/state/all` `/state/put` `/state/del` |
-| `home/` | 固定首页 | 学习工具固定入口（部署为 `<站点>/learn/`）；`state_sync.js` 为全站学习数据同步脚本（部署为 `<站点>/state_sync.js`） |
+| `home/` | 固定首页 | 登录、账号管理与个人资料库（部署为 `<站点>/learn/`）；公共身份脚本位于 `shared/user-session.js` |
 | `deploy/` | 部署 | systemd 单元文件（`zixueshe-web.service`、`study-assistant.service`、`static-pages.service`） |
+
+## 多用户
+
+管理员从 `/learn/` 登录后创建、搜索、改名、停用用户或重置密码，并查看所有用户的学习资料。普通用户登录后进入自己的 `/learn/u/<用户ID>/`，学习地图、讨论、测验和进度按服务端身份隔离。管理员查看别人的空间时只读。
+
+已有 `u0` 数据归 `admin`，原有学习文件保留；首次初始化使用服务器原有 `DELETE_PASSWORD`，之后可在页面修改密码。删除自己的资料也使用当前登录密码。停用、重置密码和修改密码使该用户现有会话失效；账号停用不会删除资料。
+
+备份时同时保存学习数据目录与其同级的账号目录，后者包含密码哈希及会话，应保留目录 700、账号文件 600 权限。恢复后运行 `scripts/check-local.sh` 并验证登录和各用户路径。
 
 ## 架构与数据流
 
@@ -37,13 +45,13 @@
 - Linux 主机 + Python 3.10+（前后端均只用标准库）
 - 一个 OpenAI 兼容对话接口（LLM 网关）及其密钥
 - （可选）SearXNG 检索服务（「主动研究」阶段用；没有也能生成路径、只是无外部来源）
-- 一个静态文件服务器（示例：`python3 -m http.server`）
+- 使用随仓库提供的 `study-assistant/web_server.py` 静态服务，以支持用户独立路径
 
 ### 1. AI 后端
 
 ```bash
 sudo mkdir -p /opt/study-assistant
-sudo cp study-assistant/study_assistant.py study-assistant/quiz_harness.py /opt/study-assistant/
+sudo cp study-assistant/study_assistant.py study-assistant/quiz_harness.py study-assistant/user_accounts.py study-assistant/web_server.py /opt/study-assistant/
 # 编辑 deploy/study-assistant.service：把 LLM_KEY 改为实际密钥（按需调整 LLM_BASE 等，见下表）
 sudo cp deploy/study-assistant.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now study-assistant
@@ -55,12 +63,17 @@ curl -s http://127.0.0.1:8101/health   # 验证
 ```bash
 # R = 静态根目录（当前部署：/DATA/AppData/zixueshe-web，由 deploy/zixueshe-web.service 以 :8100 服务）
 R=/path/to/static-root
-mkdir -p $R/learn $R/diagram-design/learning-path
+mkdir -p $R/learn/assets $R/diagram-design/learning-path
 cp home/index.html                     $R/learn/index.html
-cp home/state_sync.js                  $R/state_sync.js
+cp home/home.js                       $R/learn/assets/home.js
+cp shared/user-session.js             $R/learn/assets/user-session.js
 # 知识地图页（可选）：先用「生成器」把自备数据生成为页面，再把产物放到：
 #   $R/diagram-design/learning-path/<你的页面名>.html
-cp learning-path/learning-path.html    $R/diagram-design/learning-path/learning-path.html
+cp learning-path/learning-path.html learning-path/quiz-map.html $R/diagram-design/learning-path/
+cp knowledge-map/math-knowledge-map.html $R/diagram-design/learning-path/junior-math-linalg.html
+sudo cp deploy/zixueshe-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart zixueshe-web
 # KaTeX（公式渲染，第三方 0.18.7，未收录本仓库）：从 npm 镜像取 dist 解压到：
 #   $R/diagram-design/learning-path/katex/
 #   npm pack katex@0.18.7 --registry=https://registry.npmmirror.com && tar xf katex-0.18.7.tgz
@@ -79,7 +92,7 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 
 - 固定入口：`http://192.168.33.146:8100/learn/`（systemd 服务 `zixueshe-web`；旧 `:8091/learn/` 地址自动跳转）
 - 后端：`http://192.168.33.146:8101`（systemd 服务 `study-assistant`）
-- 静态根：`/DATA/AppData/zixueshe-web`（python http.server :8100）
+- 静态根：`/DATA/AppData/zixueshe-web`（`web_server.py` :8100）
 
 ## 配置
 
@@ -93,11 +106,12 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 | `LLM_MODEL` | `deepseek` | 模型名 |
 | `REASONING_EFFORT` | `max` | 推理档位（`none` 关闭 / `minimal` / `high` / `max`） |
 | `SEARXNG_BASE` | `http://192.168.33.146:8103`（当前部署所用） | SearXNG 地址（可选；「主动研究」用） |
-| `STATE_DIR` | `<脚本目录>/state` | 学习数据存储目录 |
+| `STATE_DIR` | `<脚本目录>/state` | 学习数据存储目录；账号文件放在同级的 `state-accounts`（实际为 `STATE_DIR` 加 `-accounts`） |
+| `DELETE_PASSWORD` | （空） | 首次启动初始化 admin 的密码；账号文件存在后不会覆盖管理员密码 |
 
 ### 前端地址约定（换部署地址时看这里）
 
-- `state_sync.js`：自动请求「当前页面主机名 `:8101`」——**静态站与后端同机部署时零配置**。
+- `shared/user-session.js`：携带登录 Cookie 和当前用户标识，自动请求「当前页面主机名 `:8101`」——**静态站与后端同机部署时零配置**。
 - `learning-path/path_app.js`：顶部常量 `var API = 'http://192.168.33.146:8101'`——部署到其他地址时改这一处，然后重新执行 `gen_path_page.py` 生成页面。
 - `knowledge-map/ai_panel.js`：知识地图的 API 常量同理（改动后重新执行 `gen_math_map.py`）。
 - 后端内置 CORS 白名单：`localhost / 127.0.0.1 / 192.168.x.x / 10.x.x.x`——只允许这些来源，刻意如此。

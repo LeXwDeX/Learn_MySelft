@@ -3,6 +3,7 @@ import concurrent.futures
 import copy
 import importlib.util
 import json
+from email.message import Message
 from pathlib import Path
 import tempfile
 import threading
@@ -27,12 +28,19 @@ class StateRegressionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.env = patch.multiple(study, STATE_DIR=self.tmp.name, DELETE_PASSWORD="test-password")
+        self.env = patch.multiple(study, STATE_DIR=str(Path(self.tmp.name) / "state"), DELETE_PASSWORD="test-password")
         self.env.start()
         self.addCleanup(self.env.stop)
         study._GEN_GATES.clear()
         study._GEN_CACHE.clear()
+        self.store = study._accounts()
+        _, self.token = self.store.login('admin', 'test-password', '127.0.0.1')
         self.handler = object.__new__(study.Handler)
+        self.handler.headers = Message()
+        self.handler.headers['Host'] = '127.0.0.1'
+        self.handler.headers['Content-Type'] = 'application/json'
+        self.handler.headers['Cookie'] = 'learn_session=' + self.token
+        self.handler.client_address = ('127.0.0.1', 0)
         self.responses = []
         self.handler._json = lambda status, data: self.responses.append((status, data))
         self.initial = {"topic": "Regression", "plan": copy.deepcopy(PLAN), "nodeDetail": {},
@@ -60,22 +68,22 @@ class StateRegressionTests(unittest.TestCase):
             self.assertIsNone(study._state_read_key(KEY))
             study._state_write_key(KEY, json.dumps(self.initial))
 
-    def test_missing_password_configuration_fails_closed(self):
+    def test_account_password_survives_environment_change(self):
         with patch.object(study, "DELETE_PASSWORD", ""):
-            self.assertEqual(self.post('/state/del', {'keys': [KEY]})[0], 503)
+            self.assertEqual(self.post('/state/del', {'keys': [KEY]})[0], 403)
         self.assertEqual(self.material(), self.initial)
 
     def test_mixed_batch_is_not_partially_applied(self):
-        self.assertEqual(self.post('/state/put', {'entries': {'metadata': 'changed', KEY: None}})[0], 403)
-        self.assertIsNone(study._state_read_key('metadata'))
+        self.assertEqual(self.post('/state/put', {'entries': {'u0/metadata': 'changed', KEY: None}})[0], 403)
+        self.assertIsNone(study._state_read_key('u0/metadata'))
         self.assertEqual(self.material(), self.initial)
 
     def test_invalid_material_values_cannot_disappear_from_library(self):
         for value in ['null', '[]', '{}', 'not-json', 'true', 3, {}, [], {'spec': {'topic': 'hidden draft'}}]:
             with self.subTest(value=value):
-                self.assertEqual(self.post('/state/put', {'entries': {'metadata': 'changed', KEY: value}})[0], 400)
+                self.assertEqual(self.post('/state/put', {'entries': {'u0/metadata': 'changed', KEY: value}})[0], 400)
                 self.assertEqual(self.material(), self.initial)
-                self.assertIsNone(study._state_read_key('metadata'))
+                self.assertIsNone(study._state_read_key('u0/metadata'))
 
     def test_ordinary_draft_metadata_and_quiz_saves(self):
         entries = {'u0/learn-path-v1-draft': json.dumps({'topic': 'new', 'stage': 'intake'}),
@@ -165,7 +173,7 @@ class StateRegressionTests(unittest.TestCase):
         try:
             url = 'http://127.0.0.1:%d/state/del' % server.server_port
             def request(body):
-                req = urllib.request.Request(url, json.dumps(body).encode(), {'Content-Type': 'application/json'})
+                req = urllib.request.Request(url, json.dumps(body).encode(), {'Content-Type': 'application/json', 'Cookie': 'learn_session=' + self.token})
                 try:
                     with urllib.request.urlopen(req) as response:
                         return response.status

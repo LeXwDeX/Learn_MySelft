@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+<script src="/learn/assets/user-session.js"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>测验地图 · 按知识点出题 → 在线作答 → 自动判分</title>
@@ -106,7 +107,7 @@ __QUIZ_DIALOG_JS__
 
   var API = location.protocol + '//' + location.hostname + ':8101';
   var TIMEOUT = 360000;
-  var USER_PATH = 'u0/';              // 多用户口子——固定用户路径，将来替换为每用户 id
+  var USER_PATH = window.LearnUser.userId + '/';
   var QUIZ_PREFIX = 'quiz-map-v1-';
   var MAP_PREFIX = 'learn-path-v1-';
   var LAST_KEY = 'learn-path-v1-last';
@@ -175,7 +176,7 @@ __QUIZ_DIALOG_JS__
   function post(path, body) {
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
-    return fetch(API + path, {
+    return window.LearnUser.fetch(API + path, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body), signal: ctrl.signal
     }).then(function (r) {
@@ -190,7 +191,7 @@ __QUIZ_DIALOG_JS__
     });
   }
   function fetchEntries() {
-    return fetch(API + '/state/all', { cache: 'no-store' })
+    return window.LearnUser.fetch(API + '/state/all', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (j) { return (j && j.entries) || {}; });
   }
@@ -252,7 +253,7 @@ __QUIZ_DIALOG_JS__
     var related = Object.keys(currentEntries).filter(function (key) {
       try { return JSON.parse(currentEntries[key]).sourceKey === d.sourceKey; } catch (error) { return false; }
     }).sort(function (a, b) { return (JSON.parse(currentEntries[a]).created || 0) - (JSON.parse(currentEntries[b]).created || 0); });
-    return window.QuizDialog.open({relatedKeys: related, api: API, key: USER_PATH + QUIZ_PREFIX + slug, title: d.title,
+    return window.QuizDialog.open({readOnly: window.LearnUser.readOnly, relatedKeys: related, api: API, key: USER_PATH + QUIZ_PREFIX + slug, title: d.title,
       render: mdRender, decorate: function (el) { renderMathIn(el); highlightIn(el); },
       onLoad: function (quiz) { Object.assign(d, quiz); currentD = d; },
       onResult: function (res, key) { if (key !== USER_PATH + QUIZ_PREFIX + slug) return; Object.assign(d, res.quiz); currentD = d; currentQs = d.questions; showResult(res); }
@@ -299,7 +300,7 @@ __QUIZ_DIALOG_JS__
   function persistQuiz(slug, d) {
     var entries = {};
     entries[USER_PATH + QUIZ_PREFIX + slug] = JSON.stringify(d);
-    return fetch(API + '/state/put', {
+    return window.LearnUser.fetch(API + '/state/put', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entries: entries }), keepalive: true
     }).catch(function () { /* 回写失败不阻断作答 */ });
@@ -536,8 +537,9 @@ __QUIZ_DIALOG_JS__
     var slug = param('t');
     if (slug) { renderView(slug); } else { renderSelect(); }
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  function init() { window.LearnUser.ready.then(boot); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 
 </script>

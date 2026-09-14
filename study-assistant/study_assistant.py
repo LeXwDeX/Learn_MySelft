@@ -24,9 +24,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import quiz_harness as harness
+from user_accounts import AccountStore, AccountError, COOKIE_NAME, SESSION_TTL, USER_ID
 
 LLM_BASE = os.environ.get("LLM_BASE", "http://192.168.33.110:8000/v1")
 LLM_KEY = os.environ.get("LLM_KEY", "")
@@ -73,6 +75,19 @@ STATE_LOCK = threading.RLock()
 STATE_MAX_KEYS = 2000            # 单次请求键数上限
 STATE_MAX_VALUE = 2_000_000      # 单键值长度上限（字符）
 DELETE_PASSWORD = os.environ.get("DELETE_PASSWORD", "")   # 「删除资料」按钮密码（/state/delete 校验）；未配置则拒绝删除
+
+# Account metadata is separate from learning data and is never exposed by /state/all.
+_ACCOUNT_STORES = {}
+_ACCOUNT_LOCK = threading.Lock()
+
+
+def _accounts():
+    directory = os.path.abspath(STATE_DIR + '-accounts')
+    with _ACCOUNT_LOCK:
+        if directory not in _ACCOUNT_STORES:
+            _ACCOUNT_STORES[directory] = AccountStore(directory, DELETE_PASSWORD)
+        return _ACCOUNT_STORES[directory]
+
 
 # ---- 生成单飞：同一份资料同一操作并发只执行一次；结果近时缓存 + 服务端状态直读 ----
 GEN_CACHE_TTL = 1800          # 成品结果近时缓存（秒）
@@ -129,7 +144,12 @@ def _state_read_key(key):
     """读服务端单个 key 的原始值字符串（不存在/墓碑 → None）。"""
     try:
         with STATE_LOCK:
-            with open(os.path.join(STATE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json"), "r", encoding="utf-8") as f:
+            path = os.path.join(STATE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json")
+            if not os.path.exists(path) and key.startswith('u0/'):
+                legacy = key[3:]
+                if '/' not in legacy and legacy.startswith(('learn-', 'quiz-map-', 'knowledge-map-')):
+                    path = os.path.join(STATE_DIR, hashlib.sha1(legacy.encode('utf-8')).hexdigest() + '.json')
+            with open(path, 'r', encoding='utf-8') as f:
                 d = json.load(f)
     except Exception:
         return None
@@ -139,7 +159,7 @@ def _state_read_key(key):
 def _split_ukey(key):
     """拆分「user path + 业务键」：'u0/learn-path-v1-x' → ('u0/', 'learn-path-v1-x')。
 
-    固定 user path 为 'u0/'（给多用户留口子）；无 '/' 段的旧键视为无 user（返回空段）。
+    用户段由服务端鉴权；u0保留升级前资料，无前缀旧键仅兼容u0。
     """
     k = (key or "").strip()
     if "/" in k:
@@ -981,7 +1001,7 @@ def _issued_quiz(questions):
     return {"questions": questions, "round_id": issued["id"], "rounds": [issued]}
 
 
-def _quiz_update(key, node_id, update):
+def _quiz_update(key, node_id, update, persist=True):
     """Run a short quiz-state transaction; model requests stay outside the lock."""
     with STATE_LOCK:
         material = _state_material(key)
@@ -999,12 +1019,13 @@ def _quiz_update(key, node_id, update):
             quiz = material
         harness.ensure_round(quiz)
         result = update(quiz, material)
-        _state_write_key(key, json.dumps(material, ensure_ascii=False))
+        if persist:
+            _state_write_key(key, json.dumps(material, ensure_ascii=False))
         return result
 
 
-def _quiz_snapshot(key, node_id):
-    return _quiz_update(key, node_id, lambda quiz, material: json.loads(json.dumps(quiz)))
+def _quiz_snapshot(key, node_id, read_only=False):
+    return _quiz_update(key, node_id, lambda quiz, material: json.loads(json.dumps(quiz)), persist=not read_only)
 
 
 def _judge_criteria(items):
@@ -1029,19 +1050,32 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
 
+    def _valid_origin(self):
+        origin = self.headers.get('Origin', '')
+        if not origin:
+            return True
+        parsed = urllib.parse.urlsplit(origin)
+        host = urllib.parse.urlsplit('http://' + self.headers.get('Host', '')).hostname
+        return parsed.scheme in ('http', 'https') and parsed.hostname == host
+
     def _cors(self):
         origin = self.headers.get("Origin", "")
-        if origin and ALLOWED_ORIGIN.match(origin):
+        if origin and self._valid_origin():
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Credentials", "true")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Learn-User")
 
     def _json(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if getattr(self, "session_cookie", None):
+            self.send_header("Set-Cookie", self.session_cookie)
+            self.session_cookie = None
         self._cors()
         self.end_headers()
         self.wfile.write(body)
@@ -1056,22 +1090,121 @@ class Handler(BaseHTTPRequestHandler):
     def _state_path(self, key):
         return os.path.join(STATE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json")
 
-    def _state_all(self):
-        out = {}
+    def _state_all(self, user_id=None):
+        user_id = user_id or self.actor['id']
+        prefix = user_id + '/'
+        out, legacy = {}, {}
         if not os.path.isdir(STATE_DIR):
             return out
         with STATE_LOCK:
-            for fn in os.listdir(STATE_DIR):
-                if not fn.endswith(".json"):
+            for filename in os.listdir(STATE_DIR):
+                if not filename.endswith('.json'):
                     continue
                 try:
-                    with open(os.path.join(STATE_DIR, fn), "r", encoding="utf-8") as f:
-                        d = json.load(f)
-                    if isinstance(d, dict) and isinstance(d.get("key"), str):
-                        out[d["key"]] = d.get("v")
-                except Exception:
+                    with open(os.path.join(STATE_DIR, filename), encoding='utf-8') as source:
+                        record = json.load(source)
+                    key = record.get('key')
+                    if not isinstance(key, str):
+                        continue
+                    if key.startswith(prefix):
+                        out[key] = record.get('v')
+                    elif user_id == 'u0' and '/' not in key and key.startswith(('learn-', 'quiz-map-', 'knowledge-map-')):
+                        legacy[prefix + key] = record.get('v')
+                except (ValueError, OSError, AttributeError):
                     continue
-        return out
+        return {**legacy, **out}
+
+    def _session_token(self):
+        try:
+            cookie = SimpleCookie(self.headers.get('Cookie', ''))
+            return cookie[COOKIE_NAME].value if COOKIE_NAME in cookie else ''
+        except Exception:
+            return ''
+
+    def _authenticate(self):
+        self.actor = _accounts().authenticate(self._session_token())
+        return self.actor
+
+    def _target_user(self, write=False):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        target = self.headers.get('X-Learn-User') or (query.get('user') or [self.actor['id']])[0]
+        return _accounts().authorize_target(self.actor, target, write=write)
+
+    def _authorize_key(self, key, write):
+        if not isinstance(key, str) or '/' not in key:
+            raise AccountError(400, '状态键必须包含用户路径')
+        user_id, business = key.split('/', 1)
+        if not business or '/' in business or len(key) > 512:
+            raise AccountError(400, '无效的状态键')
+        _accounts().authorize_target(self.actor, user_id, write=write)
+        if user_id != self._target_user(write=write)['id']:
+            raise AccountError(403, '请求与当前用户路径不一致')
+
+    def _authorize_body(self, path, body):
+        if not isinstance(body, dict):
+            raise AccountError(400, '请求必须为JSON对象')
+        read_only = path == '/path/quiz/state'
+        self._target_user(write=not read_only)
+        if path == '/state/put':
+            entries = body.get('entries')
+            if not isinstance(entries, dict):
+                raise AccountError(400, 'entries must be an object')
+            for key in entries:
+                self._authorize_key(key, write=True)
+        elif path in ('/state/delete', '/state/del'):
+            keys = body.get('keys')
+            if not isinstance(keys, list):
+                raise AccountError(400, 'keys must be an array')
+            for key in keys:
+                self._authorize_key(key, write=True)
+        elif body.get('key') is not None:
+            self._authorize_key(body['key'], write=not read_only)
+
+    def _user_overview(self):
+        users = _accounts().list_users(self.actor)
+        for user in users:
+            stats = {'maps': 0, 'quizzes': 0, 'completed_nodes': 0, 'total_nodes': 0}
+            for key, value in self._state_all(user['id']).items():
+                try:
+                    material = json.loads(value) if isinstance(value, str) else None
+                except ValueError:
+                    continue
+                if not isinstance(material, dict):
+                    continue
+                business = key.split('/', 1)[1]
+                if business.startswith('learn-path-v1-') and business != 'learn-path-v1-last':
+                    stats['maps'] += 1
+                    stats['total_nodes'] += len((material.get('plan') or {}).get('nodes') or [])
+                    stats['completed_nodes'] += sum(bool(node.get('completed')) for node in (material.get('nodeState') or {}).values() if isinstance(node, dict))
+                elif business.startswith('quiz-map-v1-'):
+                    stats['quizzes'] += 1
+            user['stats'] = stats
+        return users
+
+    def _auth_post(self, path, body):
+        store = _accounts()
+        if path == '/auth/login':
+            user, token = store.login(body.get('username'), body.get('password'), self.client_address[0])
+            self.session_cookie = '%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d' % (COOKIE_NAME, token, SESSION_TTL)
+            self._json(200, {'ok': True, 'user': user})
+            return
+        self._authenticate()
+        if path == '/auth/logout':
+            store.logout(self._session_token())
+            self.session_cookie = COOKIE_NAME + '=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'
+            self._json(200, {'ok': True})
+        elif path == '/auth/password':
+            store.change_password(self.actor, body.get('old_password'), body.get('new_password'))
+            self.session_cookie = COOKIE_NAME + '=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'
+            self._json(200, {'ok': True})
+        elif path == '/admin/users/create':
+            user = store.create_user(self.actor, body.get('username'), body.get('display_name'), body.get('password'))
+            self._json(201, {'ok': True, 'user': user})
+        elif path == '/admin/users/update':
+            user = store.update_user(self.actor, body.get('user_id'), body.get('changes'))
+            self._json(200, {'ok': True, 'user': user})
+        else:
+            self._json(404, {'error': 'not found'})
 
     def _state_put(self, entries, trusted=False):
         """写入/删除（v=None 为墓碑）。返回成功条数。"""
@@ -1139,12 +1272,33 @@ class Handler(BaseHTTPRequestHandler):
         return len(prepared)
 
     def do_GET(self):
-        if self.path.startswith("/state/all"):
-            self._json(200, {"ok": True, "entries": self._state_all()})
-        elif self.path.startswith("/health"):
-            self._json(200, {"status": "ok", "revision": _release_revision(), "quiz_harness_version": harness.VERSION, "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/path/quizmap", "/path/gaps", "/path/refine", "/state/all", "/state/put", "/state/del", "/state/delete"]})
-        else:
-            self._json(404, {"error": "not found"})
+        path = urllib.parse.urlsplit(self.path).path
+        try:
+            if path == '/health':
+                self._json(200, {"status": "ok", "revision": _release_revision(), "quiz_harness_version": harness.VERSION, "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/path/quizmap", "/path/gaps", "/path/refine", "/state/all", "/state/put", "/state/del", "/state/delete"]})
+                return
+            if path == '/auth/session':
+                try:
+                    actor = self._authenticate()
+                except AccountError as error:
+                    if error.status != 401:
+                        raise
+                    self._json(200, {'ok': True, 'user': None})
+                    return
+                target = self._target_user()
+                self._json(200, {'ok': True, 'user': actor, 'target': target, 'read_only': target['id'] != actor['id']})
+                return
+            self._authenticate()
+            if path == '/state/all':
+                target = self._target_user()
+                self._json(200, {'ok': True, 'entries': self._state_all(target['id'])})
+            elif path == '/admin/users':
+                self._json(200, {'ok': True, 'users': self._user_overview()})
+            else:
+                self._json(404, {'error': 'not found'})
+        except AccountError as error:
+            self._json(error.status, {'ok': False, 'error': str(error)})
+
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -1726,7 +1880,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "key required"})
                 return
             if path == "/path/quiz/state":
-                self._json(200, _quiz_snapshot(key, node_id))
+                self._json(200, _quiz_snapshot(key, node_id, read_only=not key.startswith(self.actor["id"] + "/")))
                 return
             answers = body.get("answers")
             sequence = body.get("sequence")
@@ -1808,10 +1962,29 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        path = self.path.split("?")[0]
+        path = urllib.parse.urlsplit(self.path).path
+        try:
+            if not self._valid_origin():
+                raise AccountError(403, '不允许的请求来源')
+            if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
+                raise AccountError(415, '请使用application/json提交')
+            if path.startswith(('/auth/', '/admin/')):
+                body = self._read_body()
+                if not isinstance(body, dict):
+                    raise AccountError(400, '请求必须为JSON对象')
+                self._auth_post(path, body)
+                return
+            self._authenticate()
+        except AccountError as error:
+            self._json(error.status, {'ok': False, 'error': str(error)})
+            return
+        except (ValueError, TypeError):
+            self._json(400, {'ok': False, 'error': '无效的JSON请求'})
+            return
         if path in ("/state/delete", "/state/del", "/state/put"):
             try:
                 body = self._read_body()
+                self._authorize_body(path, body)
                 if not isinstance(body, dict):
                     raise ValueError("body must be an object")
                 if path == "/state/put":
@@ -1824,15 +1997,14 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("keys must be an array of strings")
                     entries = dict.fromkeys(keys)
                 if any(v is None for v in entries.values()):
-                    if not DELETE_PASSWORD:
-                        self._json(503, {"ok": False, "error": "服务端未配置删除密码"})
-                        return
                     password = body.get("password")
-                    if not isinstance(password, str) or not hmac.compare_digest(password.encode(), DELETE_PASSWORD.encode()):
+                    if not _accounts().check_password(self.actor, password):
                         self._json(403, {"ok": False, "error": "密码错误"})
                         return
                 n = self._state_put(entries)
                 self._json(200, {"ok": True, "n": n})
+            except AccountError as e:
+                self._json(e.status, {"ok": False, "error": str(e)})
             except (ValueError, TypeError) as e:
                 self._json(400, {"ok": False, "error": str(e)})
             except Exception as e:
@@ -1846,7 +2018,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "bad json: %s" % e})
                 return
             try:
+                self._authorize_body(path, body)
                 self._handle_path(path, body)
+            except AccountError as error:
+                self._json(error.status, {"ok": False, "error": str(error)})
             except urllib.error.HTTPError as e:
                 self._json(502, {"error": "upstream HTTP %s" % e.code})
             except Exception as e:
@@ -1862,6 +2037,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "bad json: %s" % e})
             return
 
+        try:
+            self._authorize_body(path, body)
+        except AccountError as error:
+            self._json(error.status, {'ok': False, 'error': str(error)})
+            return
         ctx = body.get("unit") or {}
         history = body.get("history") or []
 
@@ -1986,6 +2166,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    _accounts()  # Initialize or load credentials before accepting business traffic.
     port = int(os.environ.get("PORT", "8101"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     srv.daemon_threads = True
