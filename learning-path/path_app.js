@@ -536,7 +536,7 @@
 
   function omLink(n) {
     var prompt = n.title + '。学习目标：' + (n.objectives || []).join('；') + '。本质：' + (n.essence || '');
-    return 'http://192.168.33.110:8094/workbench/new?prompt=' + encodeURIComponent(prompt);
+    return 'http://192.168.33.146:8102/workbench/new?prompt=' + encodeURIComponent(prompt);
   }
 
   function renderNodeDetail(id) {

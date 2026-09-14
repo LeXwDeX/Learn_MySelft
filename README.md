@@ -90,7 +90,7 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 | `LLM_KEY` | （空） | 网关密钥；**仓库内以 `CHANGE_ME` 占位，部署时替换，禁止提交真实密钥** |
 | `LLM_MODEL` | `deepseek` | 模型名 |
 | `REASONING_EFFORT` | `max` | 推理档位（`none` 关闭 / `minimal` / `high` / `max`） |
-| `SEARXNG_BASE` | `http://192.168.33.110:8095`（当前部署所用） | SearXNG 地址（可选；「主动研究」用） |
+| `SEARXNG_BASE` | `http://192.168.33.146:8103`（当前部署所用） | SearXNG 地址（可选；「主动研究」用） |
 | `STATE_DIR` | `<脚本目录>/state` | 学习数据存储目录 |
 
 ### 前端地址约定（换部署地址时看这里）

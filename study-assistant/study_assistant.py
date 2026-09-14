@@ -48,7 +48,7 @@ MAX_TOKENS = 393216        # DeepSeek API 官方最大输出（384K=393216；实
 UPSTREAM_TIMEOUT = 180
 
 # ---- 学习路径（/path/*）相关常量 ----
-SEARXNG_BASE = os.environ.get("SEARXNG_BASE", "http://192.168.33.110:8095")
+SEARXNG_BASE = os.environ.get("SEARXNG_BASE", "http://192.168.33.146:8103")
 # 路径类端点（尤其 /path/plan、/path/node）输出长；思考与正文共享输出配额（DeepSeek 官方设计），
 # 一律顶格官方最大输出 393216（384K），不再出现被思考挤爆→正文截断。
 PATH_MAX_TOKENS = 393216
