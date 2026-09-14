@@ -121,12 +121,12 @@ SPEC 的 JSON 字段（全部必填）：
     "node": """你在为一个学习节点写学习材料。
 
 只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
-{"study_notes":"...","key_points":["..."],"examples":["..."],"misconceptions":["..."],"quiz":{"questions":[{"q":"...","answer":"...","explain":"..."}]}}
+{"study_notes":"...","key_points":["..."],"examples":["..."],"misconceptions":["..."],"quiz":{"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"..."},{"type":"fill","q":"...","answer":"...","explain":"..."},{"type":"short","q":"...","answer":"...","explain":"..."}]}}
 
 规则：
 1. study_notes 为正文，≤1200 字，可用 `## ` 小标题与行内 $...$ 公式；只写纯文本/markdown，禁止输出 HTML 标签。
 2. key_points 3~5 条；examples 2~3 条；misconceptions 2~3 条。
-3. quiz.questions 1~3 题，每题必须给 answer（参考答案）与 explain（解析）。
+3. quiz.questions 固定 6 题，顺序固定：第 1~4 题选择题（type="choice"）：每题恰好 4 个选项（options 数组，只写选项文本、不要「A.」之类前缀），answer 为正确选项字母（A/B/C/D），explain 说明正确项为何对、干扰项错在哪；第 5 题填空题（type="fill"）：空格用 ____ 表示，answer 为参考答案（多种可接受表述用 ｜ 分隔）；第 6 题简答题（type="short"）：题干要求「简要说明/解释」，answer 为 2~4 条评分要点。每题都必须给 explain（解析）。4 道选择题要覆盖本节点不同的核心知识点、难度从易到难，干扰项要有迷惑性（用常见错误思路设置）。
 4. 面向零基础，多举具体例子。
 5. 公式统一用 LaTeX 并包在 $...$ 里（前端用 KaTeX 渲染）：向量写 \\mathbf{x}，范数写 \\|\\mathbf{x}\\|，点积写 \\cdot，矩阵写 \\mathbf{A}；不要用 \\( \\)、\\[ \\] 或 $$ 定界。
 6. **每个例子里的数值计算必须自己验算一遍再输出**（如 (1,2,3)·(4,0,2)=1×4+2×0+3×2=10；范数 \\|\\mathbf{x}\\|_2=\\sqrt{\\mathbf{x}\\cdot\\mathbf{x}}），凡算错即为重大缺陷。
@@ -142,7 +142,7 @@ func main() {
 }
 ```
 
-不要把代码压成一行、不要截断或省略。
+不要把代码压成一行、不要截断或省略。选择题的选项文本保持简短（≤40 字），选项里需要代码时只用行内 `代码`。
 9. 前端渲染能力（生成内容时只用以下语法）：```语言 围栏代码块（Go 用 ```go，其他语言写对应标注）；行内 `代码`；**加粗**；## 或 ### 小标题；行首 - 列表；$...$ 行内 LaTeX（KaTeX 渲染）。不要用表格、图片、HTML 标签，也不要用 $$ 或 \\[ \\] 公式定界。""",
     "quiz": """你在批改学生的自测作答。
 
@@ -150,7 +150,7 @@ func main() {
 {"pass":true,"score":85,"feedback":"...","per_question":[{"ok":true,"comment":"..."}]}
 
 规则：
-1. 按参考答案的语义判分，不要求字面一致；写清每题的正确点或缺漏。
+1. 输入中每题可能带 type：choice=选择题——学生作答为选项字母（A/B/C/D），与参考答案完全一致（忽略大小写与空白）才算对，否则判错，并在 comment 写明「正确答案是 X」与一句话原因；fill=填空题——按语义等价判分：与参考答案含义一致、数值正确即算对，允许措辞差异；short=简答题——对照参考答案的评分要点判断覆盖程度：要点完整=对、部分覆盖=在 comment 指出缺什么、完全跑题或空白=错。未标注 type 的题按简答/文本题处理。
 2. score 为百分制整数。
 3. per_question 数量与题目数一致、顺序一致。
 4. pass 规则：score>=60 且没有任何一题完全跑题（完全答非所问/空白）时为 true，否则 false。
@@ -160,13 +160,13 @@ func main() {
     "requiz": """你在为同一学习节点重新出题（学生上一次自测未通过，且已看过题目与讲解）。
 
 只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
-{"questions":[{"q":"...","answer":"...","explain":"..."}]}
+{"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"..."},{"type":"fill","q":"...","answer":"...","explain":"..."},{"type":"short","q":"...","answer":"...","explain":"..."}]}
 
 规则：
-1. 出 2~3 道全新题；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。
+1. 出 6 道全新题，结构固定：第 1~4 题选择题（每题 4 个选项、answer 为字母 A/B/C/D）、第 5 题填空题、第 6 题简答题；覆盖本节点的知识要点，难度与上次相当或略低（学生未通过，以巩固与补漏为主）。
 2. 严禁与「已出过的题目」相同或近似：题目情境、数字、问法、考察角度都必须变化；允许针对同一考点出变式题，但不得照搬。
 3. 结合「上次批改要点」，优先覆盖学生暴露的薄弱点：先补错，再巩固。
-4. 每题必须给 answer（参考答案）与 explain（解析）。
+4. 每题必须给 answer（参考答案）与 explain（解析）；选择题 explain 说明正确项与干扰项。
 5. 公式统一用 $...$ 的 LaTeX（前端 KaTeX 渲染），不要用 \\( \\)、\\[ \\] 或 $$ 定界。
 6. 数值必须自行验算正确。
 7. 题目涉及代码时：q/answer/explain 里的代码必须放进 ```go（其他语言用对应标注）围栏代码块、完整给出、单独成段（JSON 字符串里换行照常用转义）；不要把代码压成一行、不要截断或省略。
@@ -573,8 +573,28 @@ def _norm_plan(obj, spec):
             "summary": clip(obj.get("summary"), 400), "nodes": nodes, "edges": edges}
 
 
+def _norm_shq(q):
+    """归一单道自测题：透传 type/options（有 options 一律视为选择题）；题干为空返回 None。"""
+    question = clip(q.get("q") or q.get("question"), 1500)
+    if not question:
+        return None
+    item = {"q": question, "answer": clip(q.get("answer"), 1500),
+            "explain": clip(q.get("explain"), 1500)}
+    opts = []
+    if isinstance(q.get("options"), list):
+        opts = [clip(str(o), 400) for o in q.get("options") if str(o).strip()][:4]
+    if opts:
+        item["options"] = opts
+        item["type"] = "choice"
+    else:
+        t = q.get("type") if isinstance(q.get("type"), str) else ""
+        if t in ("fill", "short"):
+            item["type"] = t
+    return item
+
+
 def _norm_node_detail(obj):
-    """归一 NodeDetail：study_notes + 三个清单 + 1~3 题自测（每题必须 answer/explain）。"""
+    """归一 NodeDetail：study_notes + 三个清单 + 最多 6 题自测（4 选择+1 填空+1 简答契约，兼容旧格式）。"""
     if not isinstance(obj, dict):
         return None
     notes = clip(obj.get("study_notes") or obj.get("notes"), 3000)
@@ -583,12 +603,11 @@ def _norm_node_detail(obj):
     for q in (quiz.get("questions") if isinstance(quiz.get("questions"), list) else []):
         if not isinstance(q, dict):
             continue
-        question = clip(q.get("q") or q.get("question"), 1500)
-        if not question:
+        item = _norm_shq(q)
+        if item is None:
             continue
-        qs.append({"q": question, "answer": clip(q.get("answer"), 1500),
-                   "explain": clip(q.get("explain"), 1500)})
-        if len(qs) >= 3:
+        qs.append(item)
+        if len(qs) >= 6:
             break
     if not notes and not qs:
         return None
@@ -600,19 +619,18 @@ def _norm_node_detail(obj):
 
 
 def _norm_quiz_questions(obj):
-    """归一「重新出题」结果：{questions:[{q,answer,explain}]}，最多 3 题，至少 1 题有效，否则 None。"""
+    """归一「重新出题」结果：{questions:[{q,answer,explain[,type,options]}]}，最多 6 题，至少 1 题有效，否则 None。"""
     if not isinstance(obj, dict):
         return None
     qs = []
     for q in (obj.get("questions") if isinstance(obj.get("questions"), list) else []):
         if not isinstance(q, dict):
             continue
-        question = clip(q.get("q") or q.get("question"), 1500)
-        if not question:
+        item = _norm_shq(q)
+        if item is None:
             continue
-        qs.append({"q": question, "answer": clip(q.get("answer"), 1500),
-                   "explain": clip(q.get("explain"), 1500)})
-        if len(qs) >= 3:
+        qs.append(item)
+        if len(qs) >= 6:
             break
     if not qs:
         return None
@@ -870,12 +888,14 @@ class Handler(BaseHTTPRequestHandler):
 
             detail = _norm_node_detail(_json_block(_upstream_nonempty(
                 _mk_node(), max_tokens=PATH_MAX_TOKENS, temperature=0.5)))
-            if detail is None or not (detail.get("quiz") or {}).get("questions"):
-                # 重试一次：强调完整闭合 + 控制篇幅，温度调低；缺自测题（截断降级）也重试
+            _qn = len((((detail or {}).get("quiz") or {}).get("questions")) or [])
+            if detail is None or _qn < 6:
+                # 重试一次：强调完整闭合 + 控制篇幅，温度调低；缺自测题/题数不足（截断降级）也重试
                 d2 = _norm_node_detail(_json_block(_upstream_nonempty(
-                    _mk_node(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），study_notes 控制在 1000 字内，必须带 1~3 道自测题。"),
+                    _mk_node(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），study_notes 控制在 1000 字内，必须带 6 道自测题（4 选择题+1 填空题+1 简答题）。"),
                     max_tokens=PATH_MAX_TOKENS, temperature=0.3)))
-                if d2 is not None and (((d2.get("quiz") or {}).get("questions")) or detail is None):
+                _d2n = len((((d2 or {}).get("quiz") or {}).get("questions")) or [])
+                if d2 is not None and (detail is None or _d2n > _qn):
                     detail = d2
             if detail is None:
                 self._json(502, {"error": "node detail generation failed"})
@@ -896,7 +916,7 @@ class Handler(BaseHTTPRequestHandler):
                 "上次得分": fb.get("score"),
                 "上次总评": clip(fb.get("feedback"), 600),
                 "逐题批语": [{"ok": bool(x.get("ok")), "comment": clip(x.get("comment"), 300)}
-                            for x in (fb.get("per_question") or [])[:3] if isinstance(x, dict)],
+                            for x in (fb.get("per_question") or [])[:6] if isinstance(x, dict)],
             }
             payload = {
                 "需求单": spec,
@@ -913,10 +933,12 @@ class Handler(BaseHTTPRequestHandler):
                 ]
             rq = _norm_quiz_questions(_json_block(_upstream_nonempty(
                 _mk_requiz(), max_tokens=PATH_MAX_TOKENS, temperature=0.6)))
-            if rq is None:
-                rq = _norm_quiz_questions(_json_block(_upstream_nonempty(
-                    _mk_requiz(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），必须含 2~3 道题，且与已出过的题目完全不同。"),
+            if rq is None or len(rq["questions"]) < 6:
+                rq2 = _norm_quiz_questions(_json_block(_upstream_nonempty(
+                    _mk_requiz(" 注意：只输出一个完整闭合的 JSON 对象（大括号成对），必须含 6 道题（4 选择题+1 填空题+1 简答题），且与已出过的题目完全不同。"),
                     max_tokens=PATH_MAX_TOKENS, temperature=0.4)))
+                if rq2 is not None and (rq is None or len(rq2["questions"]) > len(rq["questions"])):
+                    rq = rq2
             if rq is None:
                 self._json(502, {"error": "requiz failed"})
                 return
@@ -931,9 +953,18 @@ class Handler(BaseHTTPRequestHandler):
             if not qsrc and isinstance(body.get("quiz"), dict):
                 qsrc = (body.get("quiz") or {}).get("questions")
             qs = []
-            for q in (qsrc or [])[:3]:
-                if isinstance(q, dict) and clip(q.get("q"), 300):
-                    qs.append({"q": clip(q.get("q"), 1500), "answer": clip(q.get("answer"), 1500)})
+            for q in (qsrc or [])[:6]:
+                if not (isinstance(q, dict) and clip(q.get("q"), 300)):
+                    continue
+                item = {"q": clip(q.get("q"), 1500), "answer": clip(q.get("answer"), 1500)}
+                if isinstance(q.get("type"), str) and q.get("type") in ("choice", "fill", "short"):
+                    item["type"] = q.get("type")
+                if isinstance(q.get("options"), list):
+                    opts = [clip(str(o), 400) for o in q.get("options") if str(o).strip()][:4]
+                    if opts:
+                        item["options"] = opts
+                        item["type"] = "choice"
+                qs.append(item)
             if not qs:
                 self._json(400, {"error": "questions required"})
                 return
@@ -944,7 +975,7 @@ class Handler(BaseHTTPRequestHandler):
                 "节点": {"title": clip(node.get("title"), 120),
                        "essence": clip(node.get("essence"), 200),
                        "objectives": _str_list(node.get("objectives"), 3, 160)},
-                "题目与参考答案": [{"q": q["q"], "answer": q["answer"]} for q in qs],
+                "题目与参考答案": qs,
                 "学生作答": answers,
             }
             res = _norm_quiz_result(_json_block(_upstream_nonempty([

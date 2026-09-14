@@ -186,6 +186,13 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 .dm-pass:focus{outline:none;border-color:var(--accent)}
 .dm-err{color:#c0392b;font-size:12.5px;margin:8px 0 0}
 .dm-foot{display:flex;gap:10px;justify-content:flex-end;padding:14px 22px;border-top:1px solid var(--rule);background:#fbfbfb;border-radius:0 0 10px 10px}
+/* ---- 选择题（点选选项） ---- */
+.quiz-box .qopts{margin:2px 0 0;display:flex;flex-direction:column;gap:6px}
+.quiz-box .qopt{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border:1px solid var(--rule);border-radius:6px;background:#fff;cursor:pointer;font-size:13.5px;line-height:1.6}
+.quiz-box .qopt:hover{border-color:var(--accent);background:var(--accent-tint)}
+.quiz-box .qopt input{margin:3px 0 0;flex:none;accent-color:var(--accent)}
+.quiz-box .qopt span{flex:1 1 auto;min-width:0;white-space:pre-wrap}
+.quiz-box .qopt pre.md-code{margin:4px 0 0}
 </style>
 <link rel="stylesheet" href="./katex/katex.min.css">
 <link rel="stylesheet" href="./highlight/github.min.css">

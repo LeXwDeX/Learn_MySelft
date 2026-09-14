@@ -622,14 +622,43 @@
       arr.map(function (x) { return '<li>' + mdRender(x) + '</li>'; }).join('') + '</ul></div>';
   }
 
+  // ---------- 自测题渲染（选择题点选 / 填空·简答文本作答） ----------
+  var choiceAns = {};   // { 题号: 字母 } —— 选择题当前选择
+  function quizQHtml(q, i, radioPrefix, areaPrefix, cur) {
+    var head = '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + mdRender(q.q) + '</p>';
+    if (q.options && q.options.length) {
+      var opts = q.options.map(function (o, j) {
+        var letter = String.fromCharCode(65 + j);
+        var checked = choiceAns[i] === letter ? ' checked' : '';
+        return '<label class="qopt"><input type="radio" name="' + radioPrefix + i + '" value="' + letter + '"' + checked + '>' +
+          '<span>' + letter + '. ' + mdRender(o) + '</span></label>';
+      }).join('');
+      return head + '<div class="qopts">' + opts + '</div></div>';
+    }
+    return head + '<textarea id="' + areaPrefix + i + '" placeholder="写下你的答案…">' + (cur != null ? esc(cur) : '') + '</textarea></div>';
+  }
+  function choiceChange(e) {
+    var t = e.target;
+    if (!t || t.type !== 'radio') return;
+    var m = (t.name || '').match(/^(opt|qmo)-(\d+)$/);
+    if (m) choiceAns[+m[2]] = t.value;
+  }
+  function syncChoiceRadios() {
+    var ins = document.querySelectorAll('#panel-body input[type=radio]');
+    for (var i = 0; i < ins.length; i++) {
+      var m = (ins[i].name || '').match(/^opt-(\d+)$/);
+      if (m && choiceAns[+m[1]] != null) ins[i].checked = (ins[i].value === choiceAns[+m[1]]);
+    }
+  }
+
   function renderNodeDetail(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
     panelHead(id, n.title, n.essence, 'NODE ' + id + (isDone(id) ? ' · 已完成' : ''));
     var qs = ((d.quiz && d.quiz.questions) || []);
+    choiceAns = {};
     var quizHtml = qs.map(function (q, i) {
-      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + mdRender(q.q) + '</p>' +
-        '<textarea id="ans-' + i + '" placeholder="写下你的答案…"></textarea></div>';
+      return quizQHtml(q, i, 'opt-', 'ans-', null);
     }).join('');
     var prev = state.nodeState[id] || {};
     var prevResult = '';
@@ -671,8 +700,7 @@
     var qs = (d.quiz && d.quiz.questions) || [];
     var h = qs.map(function (q, i) {
       var cur = $('ans-' + i) ? $('ans-' + i).value : '';
-      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + mdRender(q.q) + '</p>' +
-        '<textarea id="qma-' + i + '" placeholder="写下你的答案…">' + esc(cur) + '</textarea></div>';
+      return quizQHtml(q, i, 'qmo-', 'qma-', cur);
     }).join('');
     $('qm-body').innerHTML = h;
     renderMathIn($('qm-body'));
@@ -687,6 +715,7 @@
         var src = $('qma-' + i), dst = $('ans-' + i);
         if (src && dst) dst.value = src.value;
       });
+      syncChoiceRadios();
     }
     $('quiz-modal').hidden = true;
     modalNodeId = null;
@@ -701,6 +730,7 @@
     var n = nodeById(id), d = state.nodeDetail[id];
     var qs = ((d.quiz && d.quiz.questions) || []);
     var answers = qs.map(function (q, i) {
+      if (q.options && q.options.length) return choiceAns[i] || '';
       var el = $('ans-' + i);
       return el ? (el.value || '').trim() : '';
     });
@@ -710,7 +740,12 @@
     hideError();
     post('/path/quiz', {
       node: { title: n.title, essence: n.essence, objectives: n.objectives || [] },
-      questions: qs.map(function (q) { return { q: q.q, answer: q.answer }; }),
+      questions: qs.map(function (q) {
+        var o = { q: q.q, answer: q.answer };
+        if (q.type) o.type = q.type;
+        if (q.options && q.options.length) o.options = q.options;
+        return o;
+      }),
       answers: answers
     }).then(function (res) {
       var st = state.nodeState[id] || {};
@@ -950,6 +985,8 @@
     $('qm-x').addEventListener('click', function () { closeQuizModal(true); });
     $('qm-cancel').addEventListener('click', function () { closeQuizModal(true); });
     $('qm-submit').addEventListener('click', submitQuizFromModal);
+    $('panel-body').addEventListener('change', choiceChange);
+    $('qm-body').addEventListener('change', choiceChange);
     $('quiz-modal').addEventListener('click', function (e) { if (e.target === this) closeQuizModal(true); });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && !$('quiz-modal').hidden) closeQuizModal(true);
