@@ -54,6 +54,18 @@
     } catch (e) { /* 渲染失败保留原始文本 */ }
   }
   function storeKey() { return STORE_PREFIX + slug(state.topic); }
+  // 答案框自动扩展：随输入增高（以 CSS min-height 为下限）
+  function bindAutoGrow(el) {
+    if (!el || el.__ag) return;
+    el.__ag = true;
+    var fit = function () {
+      el.style.height = 'auto';
+      var mh = parseFloat(window.getComputedStyle(el).minHeight) || 140;
+      el.style.height = Math.max(el.scrollHeight, mh) + 'px';
+    };
+    el.addEventListener('input', fit);
+    fit();
+  }
   function domain(u) { try { return new URL(u).hostname; } catch (e) { return u; } }
 
   // ---------- 服务端读写（页面不做任何本地保存；所有数据只在服务端） ----------
@@ -590,14 +602,52 @@
       (qs.length ? '<div class="panel-sec"><h4>自测（' + qs.length + ' 题）</h4>' + quizHtml + '</div>' : '') +
       prevResult;
     renderMathIn($('panel-body'));
+    qs.forEach(function (q, i) { bindAutoGrow($('ans-' + i)); });
 
     var foot = '';
     if (qs.length && !isDone(id)) foot += '<button class="btn primary" id="submit-quiz" type="button">提交自测</button>';
+    if (qs.length && !isDone(id)) foot += '<button class="btn" id="zoom-quiz" type="button">⤢ 放大答题</button>';
     if (qs.length && !isDone(id) && typeof prev.score === 'number') foot += '<button class="btn" id="redo-quiz" type="button">换新题，再试一次</button>';
     if (isDone(id)) foot += '<span class="tip">✅ 已完成</span>';
     setFoot(foot);
     if ($('submit-quiz')) $('submit-quiz').addEventListener('click', function () { submitQuiz(id); });
+    if ($('zoom-quiz')) $('zoom-quiz').addEventListener('click', function () { openQuizModal(id); });
     if ($('redo-quiz')) $('redo-quiz').addEventListener('click', function () { redoQuiz(id); });
+  }
+
+  // ---------- 放大答题（模态框） ----------
+  var modalNodeId = null;
+  function openQuizModal(id) {
+    var n = nodeById(id), d = state.nodeDetail[id];
+    if (!n || !d) return;
+    modalNodeId = id;
+    $('qm-title').textContent = 'NODE ' + id + ' · ' + n.title + ' — 自测答题';
+    var qs = (d.quiz && d.quiz.questions) || [];
+    var h = qs.map(function (q, i) {
+      var cur = $('ans-' + i) ? $('ans-' + i).value : '';
+      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + esc(q.q) + '</p>' +
+        '<textarea id="qma-' + i + '" placeholder="写下你的答案…">' + esc(cur) + '</textarea></div>';
+    }).join('');
+    $('qm-body').innerHTML = h;
+    renderMathIn($('qm-body'));
+    qs.forEach(function (q, i) { bindAutoGrow($('qma-' + i)); });
+    $('quiz-modal').hidden = false;
+  }
+  function closeQuizModal(saveBack) {
+    if (saveBack && modalNodeId != null) {
+      var qs = (((state.nodeDetail[modalNodeId] || {}).quiz) || {}).questions || [];
+      qs.forEach(function (q, i) {
+        var src = $('qma-' + i), dst = $('ans-' + i);
+        if (src && dst) dst.value = src.value;
+      });
+    }
+    $('quiz-modal').hidden = true;
+    modalNodeId = null;
+  }
+  function submitQuizFromModal() {
+    var id = modalNodeId;
+    closeQuizModal(true);
+    if (id != null) submitQuiz(id);
   }
 
   function submitQuiz(id) {
@@ -803,6 +853,13 @@
     $('errretry').addEventListener('click', function () { var f = retryFn; hideError(); if (f) f(); });
     window.addEventListener('resize', function () { if (state.plan) drawEdges(); });
     $('backend-label').textContent = API;
+    $('qm-x').addEventListener('click', function () { closeQuizModal(true); });
+    $('qm-cancel').addEventListener('click', function () { closeQuizModal(true); });
+    $('qm-submit').addEventListener('click', submitQuizFromModal);
+    $('quiz-modal').addEventListener('click', function (e) { if (e.target === this) closeQuizModal(true); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !$('quiz-modal').hidden) closeQuizModal(true);
+    });
     libBind();
 
     purgeLocalLegacy();   // 清理历史遗留的浏览器本地数据（页面已不再本地保存任何东西）

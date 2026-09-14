@@ -124,8 +124,21 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .notes code{font-family:var(--mono);font-size:12.5px;background:#f5f5f5;border:1px solid var(--rule);border-radius:4px;padding:0 4px}
 .quiz-box{background:#fbfbfb;border:1px solid var(--rule);border-radius:7px;padding:11px 13px;margin:0 0 10px}
 .quiz-box .q{margin:0 0 8px;font-size:13.5px;font-weight:600}
-.quiz-box textarea{width:100%;min-height:66px;font-family:var(--sans);font-size:13.5px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:#fff;color:var(--ink);resize:vertical;outline:none}
+.quiz-box textarea{width:100%;min-height:140px;font-family:var(--sans);font-size:13.5px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:#fff;color:var(--ink);resize:vertical;outline:none}
 .quiz-box textarea:focus{border-color:var(--accent)}
+/* ---- 放大答题（模态框） ---- */
+#quiz-modal{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(45,49,66,.38)}
+#quiz-modal[hidden]{display:none}
+.qm-card{background:#fff;border:1px solid var(--rule);border-radius:10px;width:min(880px,92vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(45,49,66,.18)}
+.qm-head{flex:none;display:flex;align-items:center;gap:12px;padding:16px 22px;border-bottom:1px solid var(--rule)}
+.qm-head .eyebrow{margin:0}
+.qm-head h3{margin:0;font-family:var(--serif);font-weight:400;font-size:19px}
+.qm-close{margin-left:auto;border:1px solid var(--rule);background:#fff;border-radius:6px;width:30px;height:30px;font-size:16px;color:var(--muted);cursor:pointer}
+.qm-close:hover{border-color:var(--accent);color:var(--accent)}
+.qm-body{flex:1 1 auto;overflow-y:auto;padding:16px 22px}
+.qm-body .quiz-box textarea{min-height:170px}
+.qm-foot{flex:none;display:flex;gap:10px;justify-content:flex-end;align-items:center;padding:14px 22px;border-top:1px solid var(--rule);background:#fbfbfb;border-radius:0 0 10px 10px}
+.qm-hint{margin-right:auto;color:var(--soft);font-size:12px}
 .result{margin-top:8px;font-size:13px;border-left:2px solid var(--accent);padding-left:10px}
 .result.ok{border-left-color:var(--ok)}
 .result.bad{border-left-color:#b23a48}
@@ -313,6 +326,18 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     } catch (e) { /* 渲染失败保留原始文本 */ }
   }
   function storeKey() { return STORE_PREFIX + slug(state.topic); }
+  // 答案框自动扩展：随输入增高（以 CSS min-height 为下限）
+  function bindAutoGrow(el) {
+    if (!el || el.__ag) return;
+    el.__ag = true;
+    var fit = function () {
+      el.style.height = 'auto';
+      var mh = parseFloat(window.getComputedStyle(el).minHeight) || 140;
+      el.style.height = Math.max(el.scrollHeight, mh) + 'px';
+    };
+    el.addEventListener('input', fit);
+    fit();
+  }
   function domain(u) { try { return new URL(u).hostname; } catch (e) { return u; } }
 
   // ---------- 服务端读写（页面不做任何本地保存；所有数据只在服务端） ----------
@@ -849,14 +874,52 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       (qs.length ? '<div class="panel-sec"><h4>自测（' + qs.length + ' 题）</h4>' + quizHtml + '</div>' : '') +
       prevResult;
     renderMathIn($('panel-body'));
+    qs.forEach(function (q, i) { bindAutoGrow($('ans-' + i)); });
 
     var foot = '';
     if (qs.length && !isDone(id)) foot += '<button class="btn primary" id="submit-quiz" type="button">提交自测</button>';
+    if (qs.length && !isDone(id)) foot += '<button class="btn" id="zoom-quiz" type="button">⤢ 放大答题</button>';
     if (qs.length && !isDone(id) && typeof prev.score === 'number') foot += '<button class="btn" id="redo-quiz" type="button">换新题，再试一次</button>';
     if (isDone(id)) foot += '<span class="tip">✅ 已完成</span>';
     setFoot(foot);
     if ($('submit-quiz')) $('submit-quiz').addEventListener('click', function () { submitQuiz(id); });
+    if ($('zoom-quiz')) $('zoom-quiz').addEventListener('click', function () { openQuizModal(id); });
     if ($('redo-quiz')) $('redo-quiz').addEventListener('click', function () { redoQuiz(id); });
+  }
+
+  // ---------- 放大答题（模态框） ----------
+  var modalNodeId = null;
+  function openQuizModal(id) {
+    var n = nodeById(id), d = state.nodeDetail[id];
+    if (!n || !d) return;
+    modalNodeId = id;
+    $('qm-title').textContent = 'NODE ' + id + ' · ' + n.title + ' — 自测答题';
+    var qs = (d.quiz && d.quiz.questions) || [];
+    var h = qs.map(function (q, i) {
+      var cur = $('ans-' + i) ? $('ans-' + i).value : '';
+      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' + esc(q.q) + '</p>' +
+        '<textarea id="qma-' + i + '" placeholder="写下你的答案…">' + esc(cur) + '</textarea></div>';
+    }).join('');
+    $('qm-body').innerHTML = h;
+    renderMathIn($('qm-body'));
+    qs.forEach(function (q, i) { bindAutoGrow($('qma-' + i)); });
+    $('quiz-modal').hidden = false;
+  }
+  function closeQuizModal(saveBack) {
+    if (saveBack && modalNodeId != null) {
+      var qs = (((state.nodeDetail[modalNodeId] || {}).quiz) || {}).questions || [];
+      qs.forEach(function (q, i) {
+        var src = $('qma-' + i), dst = $('ans-' + i);
+        if (src && dst) dst.value = src.value;
+      });
+    }
+    $('quiz-modal').hidden = true;
+    modalNodeId = null;
+  }
+  function submitQuizFromModal() {
+    var id = modalNodeId;
+    closeQuizModal(true);
+    if (id != null) submitQuiz(id);
   }
 
   function submitQuiz(id) {
@@ -1062,6 +1125,13 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     $('errretry').addEventListener('click', function () { var f = retryFn; hideError(); if (f) f(); });
     window.addEventListener('resize', function () { if (state.plan) drawEdges(); });
     $('backend-label').textContent = API;
+    $('qm-x').addEventListener('click', function () { closeQuizModal(true); });
+    $('qm-cancel').addEventListener('click', function () { closeQuizModal(true); });
+    $('qm-submit').addEventListener('click', submitQuizFromModal);
+    $('quiz-modal').addEventListener('click', function (e) { if (e.target === this) closeQuizModal(true); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !$('quiz-modal').hidden) closeQuizModal(true);
+    });
     libBind();
 
     purgeLocalLegacy();   // 清理历史遗留的浏览器本地数据（页面已不再本地保存任何东西）
@@ -1097,5 +1167,21 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 })();
 
 </script>
+
+<div id="quiz-modal" hidden>
+  <div class="qm-card">
+    <div class="qm-head">
+      <p class="eyebrow">放大答题</p>
+      <h3 id="qm-title">自测</h3>
+      <button class="qm-close" id="qm-x" type="button" title="关闭">✕</button>
+    </div>
+    <div class="qm-body" id="qm-body"></div>
+    <div class="qm-foot">
+      <span class="qm-hint">关闭时自动保留已写内容</span>
+      <button class="btn" id="qm-cancel" type="button">保存并关闭</button>
+      <button class="btn primary" id="qm-submit" type="button">提交自测</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
