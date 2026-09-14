@@ -1,4 +1,4 @@
-# 自学社 — 内网 AI 学习工具（v1.0）
+# 自学社 — AI 学习工具（v1.0）
 
 自托管的 AI 辅助学习工具套件：**知识地图**（单元级 AI 对话）+ **学习路径**（对话采集 → 主动研究 → 依赖路径图 → 门控自测）+ **服务端学习数据同步**（换设备自动恢复）。
 
@@ -73,7 +73,7 @@ python3 knowledge-map/gen_math_map.py         # 自备数据（math_data.py）�
 cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js → learning-path.html
 ```
 
-### 本内网部署实例
+### 当前部署实例
 
 - 固定入口：`http://192.168.33.146:8091/learn/`
 - 后端：`http://192.168.33.146:8096`（systemd 服务 `study-assistant`）
@@ -86,11 +86,11 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PORT` | `8096` | 监听端口 |
-| `LLM_BASE` | `http://192.168.33.110:8000/v1`（本内网网关） | OpenAI 兼容网关地址；部署到其他环境必须显式设置 |
+| `LLM_BASE` | `http://192.168.33.110:8000/v1`（当前部署所用网关） | OpenAI 兼容网关地址；部署到其他环境必须显式设置 |
 | `LLM_KEY` | （空） | 网关密钥；**仓库内以 `CHANGE_ME` 占位，部署时替换，禁止提交真实密钥** |
 | `LLM_MODEL` | `deepseek` | 模型名 |
 | `REASONING_EFFORT` | `max` | 推理档位（`none` 关闭 / `minimal` / `high` / `max`） |
-| `SEARXNG_BASE` | `http://192.168.33.110:8095`（本内网） | SearXNG 地址（可选；「主动研究」用） |
+| `SEARXNG_BASE` | `http://192.168.33.110:8095`（当前部署所用） | SearXNG 地址（可选；「主动研究」用） |
 | `STATE_DIR` | `<脚本目录>/state` | 学习数据存储目录 |
 
 ### 前端地址约定（换部署地址时看这里）
@@ -98,7 +98,7 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 - `state_sync.js`：自动请求「当前页面主机名 `:8096`」——**静态站与后端同机部署时零配置**。
 - `learning-path/path_app.js`：顶部常量 `var API = 'http://192.168.33.146:8096'`——部署到其他地址时改这一处，然后重新执行 `gen_path_page.py` 生成页面。
 - `knowledge-map/ai_panel.js`：知识地图的 API 常量同理（改动后重新执行 `gen_math_map.py`）。
-- 后端内置 CORS 白名单：`localhost / 127.0.0.1 / 192.168.x.x / 10.x.x.x`——仅限内网使用，刻意如此。
+- 后端内置 CORS 白名单：`localhost / 127.0.0.1 / 192.168.x.x / 10.x.x.x`——只允许这些来源，刻意如此。
 
 ## 数据与备份
 
