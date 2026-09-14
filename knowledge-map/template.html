@@ -177,6 +177,8 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
 .lib-foot a:hover{text-decoration:underline}
 .lib-count{font-family:var(--mono);font-size:10.5px;color:var(--soft)}
 .lib-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:10px 2px 4px}
+.km-banner{background:#fff4ef;border:1px solid rgba(235,108,54,.4);border-left:3px solid var(--accent);border-radius:6px;padding:12px 16px;margin:0 0 18px;font-size:13.5px;color:#8a4b2a}
+.km-banner[hidden]{display:none}
 </style>
 <script src="/state_sync.js?v=2"></script>
 </head>
@@ -190,8 +192,7 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
     <button class="btn" id="btn-expand">展开所有自测</button>
     <button class="btn" id="btn-reset">重置进度</button>
     <div class="lib-wrap" id="lib-wrap">
-      <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>
-      <div class="lib-pop" id="lib-pop" hidden></div>
+      <a class="btn" id="lib-btn" href="/learn/" title="返回固定入口的学习资料库">学习资料库 →</a>
     </div>
     <span class="stat" id="stat"></span>
   </div>
@@ -199,6 +200,7 @@ footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-fa
 <div class="content-row">
 <div class="main">
 <div class="wrap">
+  <div class="km-banner" id="km-banner" hidden></div>
   <p class="eyebrow">Knowledge Map</p>
   <h1>知识地图</h1>
   <p class="sub">__NCOUNT__ 个知识点，按「命题与逻辑 → 数与式 → 方程 → 函数 → 几何 → 统计」的依赖顺序排列。每个知识点只做三件事：<strong>看懂本质、避开陷阱、通过自测</strong>。自测不过就标「需复习」，已掌握的不再重刷。</p>
@@ -259,15 +261,35 @@ __LINALG__
 </div><!-- /.main -->
 <script>
 (function(){
-  var KEY = 'math-map-v1';
+  var API = location.protocol + '//' + location.hostname + ':8101';
+  var USER_PATH = 'u0/';   // 多用户口子——固定用户路径，将来替换为每用户 id
+  var MARKS_KEY = USER_PATH + 'knowledge-map-v1-marks';   // 服务端键（唯一数据源）
   var store = {};
-  try { store = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { store = {}; }
   var nodes = [].slice.call(document.querySelectorAll('.node'));
   var panels = [].slice.call(document.querySelectorAll('.tabpanel'));
-  var TKEY = 'math-map-v1-tab';
+  var TKEY = 'math-map-v1-tab';                  // 仅 UI 偏好，保留 localStorage
   var tabbar = document.getElementById('tabs');
+  var saveTimer = null;
 
-  function save(){ try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} }
+  // 服务端状态：启动时 GET /state/all 一次（失败重试一次；再失败返回 null）
+  function fetchEntriesOnce(){
+    return fetch(API + '/state/all', { cache: 'no-store' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ return (j && j.entries) || {}; });
+  }
+  window.__kmStateReady = fetchEntriesOnce().catch(function(){ return fetchEntriesOnce(); }).catch(function(){ return null; });
+
+  // 防抖 300ms 写服务端（与学习地图页 serverSave 同一约定）
+  function flushMarks(){
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    var entries = {}; entries[MARKS_KEY] = JSON.stringify(store);
+    fetch(API + '/state/put', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: entries }), keepalive: true
+    }).catch(function(){ /* 回写失败保留内存态 */ });
+  }
+  function save(){ if (saveTimer) clearTimeout(saveTimer); saveTimer = setTimeout(flushMarks, 300); }
+  window.addEventListener('pagehide', function(){ if (saveTimer) flushMarks(); });
   function stateOf(id){ return (store[id] && store[id].s) || 'todo'; }
 
   // ---- 同级课程标签页 ----
@@ -391,8 +413,20 @@ __LINALG__
     if (confirm('确定清空全部进度标记？')) { store = {}; save(); paint(); }
   });
 
-  buildTabs();
-  paint();
+  // 启动顺序：先取服务端状态 → 再初始化 UI（marks / 标签页 / AI 面板）
+  window.__kmStateReady.then(function(entries){
+    if (entries == null) {
+      var b = document.getElementById('km-banner');
+      if (b) { b.hidden = false; b.textContent = '服务端连接失败：标记与对话本次不可用'; }
+      entries = {};
+    }
+    try {
+      var raw = entries[MARKS_KEY];
+      if (typeof raw === 'string') { var d = JSON.parse(raw); if (d && typeof d === 'object') store = d; }
+    } catch (e) { store = {}; }
+    buildTabs();
+    paint();
+  });
 })();
 </script>
 <aside class="ai-drawer no-topic" id="ai-drawer" aria-label="AI 辅助">
@@ -433,6 +467,7 @@ __LINALG__
 <script>
 (function(){
   var HOST = 'http://' + location.hostname + ':8101';
+  var USER_PATH = 'u0/';   // 多用户口子——固定用户路径，将来替换为每用户 id
   var ASK = HOST + '/ask', SUGGEST = HOST + '/suggest', COMPRESS = HOST + '/compress';
   var MAX_IMG_BYTES = 10 * 1024 * 1024;   // 上传上限 10MB
   var MAX_SIDE = 3840;                    // 最长边压到 4K 以内
@@ -457,6 +492,8 @@ __LINALG__
   var history = [];        // 当前话题的完整对话
   var pending = null;      // 待发送的图片 {dataUrl, thumb, bytes, w, h, origBytes, name}
   var busy = false;
+  var kmEntries = {};      // 服务端 /state/all 的 entries（启动后填充）
+  window.__kmStateReady.then(function(e){ kmEntries = e || {}; });
 
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function fmt(s){
@@ -467,23 +504,38 @@ __LINALG__
   }
   function fmtSize(b){ return b >= 1048576 ? (b/1048576).toFixed(2)+' MB' : Math.round(b/1024)+' KB'; }
   function fmtK(n){ return n >= 1000 ? (n/1000).toFixed(1) + 'K' : String(n); }
-  function hkey(id){ return 'math-map-ai-' + id; }
-  function loadHist(id){ try { return JSON.parse(localStorage.getItem(hkey(id)) || '[]'); } catch(e){ return []; } }
-
-  // 存历史：图片只留小缩略图，否则 localStorage 很快爆
-  function saveHist(id, h){
-    try {
-      var slim = h.map(function(m){
-        var o = { role: m.role, content: (m.content || '').slice(0, 4000) };
-        if (m.role === 'summary') o.content = m.content || '';
-        if (m.image) o.image = m.thumb || m.image;
-        return o;
-      });
-      localStorage.setItem(hkey(id), JSON.stringify(slim));
-    } catch(e){
-      console.warn('history save failed', e);
-    }
+  function hkey(id){ return USER_PATH + 'knowledge-map-ai-v1-' + id; }
+  function loadHist(id){
+    var raw = kmEntries[hkey(id)];
+    if (typeof raw !== 'string') return [];
+    try { return JSON.parse(raw) || []; } catch(e){ return []; }
   }
+
+  // 存历史：图片只留小缩略图；防抖 300ms 写服务端（唯一数据源）
+  var histTimer = null, histId = null, histSlim = null;
+  function slimHist(h){
+    return h.map(function(m){
+      var o = { role: m.role, content: (m.content || '').slice(0, 4000) };
+      if (m.role === 'summary') o.content = m.content || '';
+      if (m.image) o.image = m.thumb || m.image;
+      return o;
+    });
+  }
+  function flushHist(){
+    if (histTimer) { clearTimeout(histTimer); histTimer = null; }
+    if (!histId) return;
+    var entries = {}; entries[hkey(histId)] = JSON.stringify(histSlim || []);
+    fetch(HOST + '/state/put', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: entries }), keepalive: true
+    }).catch(function(){ /* 失败保留内存态 */ });
+  }
+  function saveHist(id, h){
+    histId = id; histSlim = slimHist(h);
+    if (histTimer) clearTimeout(histTimer);
+    histTimer = setTimeout(flushHist, 300);
+  }
+  window.addEventListener('pagehide', flushHist);
 
   // ---------- 上下文预算：≈ token（中文约 0.75/字，西文约 4 字符/token）----------
   function estTokens(s){
@@ -811,86 +863,6 @@ __LINALG__
   });
 
   setTopicOff();
-})();
-</script>
-<script>
-/* 学习资料库 · 动态扫描（同源 localStorage 中已生成的学习路径/学习资料） */
-(function () {
-  'use strict';
-  var PREFIX = 'learn-path-v1-', LAST = 'learn-path-v1-last';
-  function $(id) { return document.getElementById(id); }
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-  function stageLabel(s) {
-    return ({ intake: '阶段 A · 需求采集', research: '阶段 B · 主动研究', learning: '阶段 C · 学习路径' })[s] || s || '';
-  }
-  function scan() {
-    var out = [];
-    try {
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        if (!k || k.indexOf(PREFIX) !== 0 || k === LAST) continue;
-        var d = null;
-        try { d = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { d = null; }
-        var it = { slug: k.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
-        if (d && typeof d === 'object') {
-          if (!d.topic && !d.plan && (!d.history || !d.history.length)) continue;   // 跳过历史空壳
-          it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
-          it.stage = d.stage || '';
-          if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
-          var ns = d.nodeState || {};
-          for (var id in ns) { if (ns[id] && ns[id].completed) it.done++; }
-        } else { it.topic = it.slug; }
-        out.push(it);
-      }
-    } catch (e) {}
-    out.sort(function (a, b) {
-      var pa = a.stage === 'learning' ? 0 : 1, pb = b.stage === 'learning' ? 0 : 1;
-      return pa - pb || b.done - a.done;
-    });
-    return out;
-  }
-  function render() {
-    var pop = $('lib-pop');
-    if (!pop) return;
-    var items = scan();
-    var cnt = $('lib-count');
-    if (cnt) cnt.textContent = ' (' + items.length + ')';
-    var h = '<p class="lib-h"><span>学习资料库</span><i>动态扫描 · 自动同步</i></p>';
-    h += '<p class="lib-sub">学习路径（动态扫描）</p>';
-    if (!items.length) {
-      h += '<p class="lib-empty">暂无生成的学习路径——去生成一个吧。</p>';
-    } else {
-      for (var i = 0; i < items.length; i++) {
-        var it = items[i], meta = stageLabel(it.stage);
-        if (it.stage === 'learning') meta = it.total ? (it.done + '/' + it.total + ' 节点完成') : '路径已生成';
-        h += '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
-             '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>';
-      }
-    }
-    h += '<div class="lib-foot">' +
-         '<a href="learning-path.html?new=1">＋ 生成新的学习路径</a>' +
-         '</div>';
-    pop.innerHTML = h;
-  }
-  function bind() {
-    var btn = $('lib-btn'), pop = $('lib-pop'), wrap = $('lib-wrap');
-    if (!btn || !pop) return;
-    var cnt = $('lib-count');
-    if (cnt) { var n = scan().length; cnt.textContent = ' (' + n + ')'; }
-    btn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      if (pop.hidden) { render(); pop.hidden = false; } else { pop.hidden = true; }
-    });
-    document.addEventListener('click', function (e) {
-      if (!pop.hidden && wrap && !wrap.contains(e.target)) pop.hidden = true;
-    });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') pop.hidden = true; });
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
-  else bind();
 })();
 </script>
 </body>

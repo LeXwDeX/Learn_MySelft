@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识地图</title>
+<style>
+:root{
+  --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
+  --soft:#7a8399; --rule:rgba(45,49,66,.12); --accent:#eb6c36;
+  --accent-tint:rgba(235,108,54,.08); --ok:#2f7d5d; --warn:#b8860b;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --serif:Georgia,"Songti SC","SimSun",serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
+  --min-page-w:1360px;     /* 页面最低宽度，只保证桌面 */
+  --max-w:1616px;          /* 「内容 + AI 面板」整块最大宽度：单元卡片=1132px（=最初版 1180 容器 − 左右各 24px） */
+  --toolbar-h:89px;        /* 顶栏实际高度，AI 面板贴在其下方 */
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.65;min-width:var(--min-page-w)}
+.wrap{margin:0;padding:40px 32px 80px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin:0 0 8px}
+h1{font-family:var(--serif);font-weight:400;font-size:34px;margin:0 0 8px;letter-spacing:.01em}
+.sub{color:var(--muted);margin:0 0 28px;max-width:64ch}
+.rule{height:1px;background:var(--rule);border:0;margin:32px 0}
+h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+.dcode{font-family:var(--mono);font-size:12px;background:var(--ink);color:var(--paper);border-radius:4px;padding:3px 7px;letter-spacing:.08em}
+.domain{margin:0 0 40px}
+.domain-head p{color:var(--soft);margin:0 0 16px;font-size:13.5px}
+.node{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:18px 20px;margin:0 0 14px;border-left:3px solid var(--rule)}
+.node-head{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.node-id{font-family:var(--mono);font-size:11px;color:var(--soft);border:1px solid var(--rule);border-radius:4px;padding:2px 6px;margin-top:3px}
+.node-title{flex:1 1 300px}
+.node-title h3{margin:0;font-size:17px;font-weight:600}
+.essence{margin:2px 0 0;color:var(--muted);font-size:13.5px}
+.state-ui{display:flex;gap:6px;flex-wrap:wrap}
+.st{font-family:var(--sans);font-size:12px;padding:5px 11px;border:1px solid var(--rule);background:transparent;color:var(--muted);border-radius:6px;cursor:pointer}
+.st:hover{border-color:var(--soft)}
+.st[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-tint);color:var(--accent);font-weight:600}
+.node-body{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:14px}
+.col-label{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:0 0 6px}
+ul{margin:0;padding-left:18px}
+li{margin:2px 0;font-size:13.5px}
+.traps li{color:#8a4b2a}
+.quizzone{margin-top:14px;border-top:1px dashed var(--rule);padding-top:12px}
+.quiz{background:#fbfbfb;border:1px solid var(--rule);border-radius:6px;padding:10px 12px;margin:8px 0}
+.qq{margin:0 0 6px;font-size:13.5px;display:flex;gap:8px}
+.qno{font-family:var(--mono);font-size:11px;color:var(--accent);border:1px solid rgba(235,108,54,.4);border-radius:4px;padding:0 5px;line-height:17px;flex:none;margin-top:3px}
+.reveal,.toggle-quiz{font-family:var(--sans);font-size:12px;background:transparent;border:1px solid var(--rule);border-radius:6px;padding:4px 10px;color:var(--muted);cursor:pointer}
+.reveal:hover,.toggle-quiz:hover{border-color:var(--accent);color:var(--accent)}
+.ans{margin-top:8px;border-left:2px solid var(--accent);padding-left:10px}
+.answerline{margin:0 0 3px;font-size:14px}
+.whyline{margin:0;color:var(--muted);font-size:13px}
+.pathbar{display:flex;height:10px;border-radius:6px;overflow:hidden;border:1px solid var(--rule);background:#fff}
+.pathbar span{display:block;height:100%}
+.pb-done{background:var(--ok)} .pb-doing{background:var(--accent)} .pb-again{background:var(--warn)}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--muted);margin:10px 0 0}
+.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}
+.cards{display:grid;grid-template-columns:1.15fr 1fr .9fr;gap:16px;margin:22px 0 0}
+.card{background:var(--paper2);border:1px solid var(--rule);border-radius:6px;padding:16px 18px}
+.card h3{margin:6px 0 8px;font-size:15px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.day{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:16px 20px;margin:0 0 14px}
+.day-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.daytag{font-family:var(--mono);font-size:11px;background:var(--ink);color:var(--paper);border-radius:4px;padding:3px 8px;letter-spacing:.08em}
+.day-head h3{margin:0;font-size:16px}
+.day-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:10px}
+.checks li::marker{color:var(--accent)}
+.prereq{margin:10px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pre{font-family:var(--mono);font-size:11px;border:1px solid var(--rule);border-radius:4px;padding:2px 7px;color:var(--muted)}
+.review-item{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:13.5px}
+.review-item a{color:var(--accent);text-decoration:none;font-family:var(--mono);font-size:12px}
+.empty{color:var(--soft);font-size:13.5px}
+footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px;font-family:var(--mono);font-size:11px;color:var(--soft)}
+.toolbar{position:sticky;top:0;background:rgba(245,245,245,.95);border-bottom:1px solid var(--rule);padding:10px 0;margin:0 0 24px;z-index:5}
+.toolbar-inner{max-width:var(--max-w);margin:0 auto;padding:0 32px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.tabbtn{font-family:var(--sans);font-size:12.5px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:5px 11px;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.tabbtn:hover{border-color:var(--soft)}
+.tabbtn[aria-selected="true"]{border-color:var(--ink);color:var(--ink);font-weight:600;background:#fff;box-shadow:inset 0 -2px 0 var(--accent)}
+.tabcount{font-family:var(--mono);font-size:10.5px;color:var(--soft);font-weight:400}
+.tabbtn[aria-selected="true"] .tabcount{color:var(--accent)}
+.tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.tabpanel[hidden]{display:none}
+.btn{font-family:var(--sans);font-size:12px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:5px 11px;color:var(--muted);cursor:pointer}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.stat{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+
+/* ---- 单元级「AI 辅助」----
+   设计前提：只保证桌面（最低宽度 1360px），不兼容手机；AI 面板常驻右侧。 */
+.layout{min-width:var(--min-page-w)}
+/* 「单元卡片 + AI 面板」整块：限宽居中，左侧卡片就撑到面板左边缘 */
+.content-row{display:flex;align-items:flex-start;max-width:var(--max-w);margin:0 auto}
+.main{flex:1 1 auto;min-width:0}
+.node{scroll-margin-top:132px}
+/* 单元卡片：一排一个、通栏（宽度=内容列宽，等同最初版 1180 容器通栏 ≈1132px） */
+.nodes{display:flex;flex-direction:column;gap:16px}
+.nodes>.node{margin-bottom:0;width:100%}
+.ai-open{font-family:var(--sans);font-size:12px;border:1px solid rgba(235,108,54,.45);background:var(--accent-tint);color:var(--accent);border-radius:6px;padding:5px 11px;cursor:pointer;flex:none}
+.ai-open:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.ai-drawer{position:sticky;top:var(--toolbar-h);flex:0 0 420px;width:420px;height:calc(100vh - var(--toolbar-h));background:#fff;border-left:1px solid var(--rule);z-index:4;display:flex;flex-direction:column;overflow:hidden;box-shadow:-12px 0 24px -18px rgba(45,49,66,.35)}
+/* 未选话题：整块降级为不可用态 */
+.ai-drawer.no-topic .ai-ctx,.ai-drawer.no-topic .ai-chips,.ai-drawer.no-topic .ai-chips-label,.ai-drawer.no-topic .ai-meter{display:none}
+.ai-head{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--rule)}
+.ai-unit{font-family:var(--mono);font-size:11px;color:var(--accent);margin:0 0 2px;letter-spacing:.06em}
+.ai-head h3{margin:0;font-size:16px;font-weight:600}
+.ai-domain{margin:4px 0 0;color:var(--muted);font-size:12.5px}
+.ai-close{font-family:var(--mono);font-size:13px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:3px 9px;color:var(--muted);cursor:pointer;flex:none}
+.ai-close:hover{border-color:var(--accent);color:var(--accent)}
+.ai-ctx{padding:10px 18px;border-bottom:1px solid var(--rule);background:#fbfbfb}
+.ai-ctx summary{font-family:var(--mono);font-size:11px;color:var(--soft);cursor:pointer}
+.ai-ctx div{padding-top:8px;font-size:12.5px;color:var(--muted)}
+.ai-ctx p{margin:0 0 6px;line-height:1.6}
+.ai-msgs{flex:1;overflow-y:auto;padding:14px 18px}
+.ai-empty{margin:0;padding:14px;border:1px dashed var(--rule);border-radius:8px;background:#fbfbfb}
+.ai-empty p{margin:0 0 8px;font-size:12.5px;color:var(--muted);line-height:1.7}
+.ai-empty p:last-child{margin:0}
+.ai-msg{margin:0 0 12px}
+.ai-who{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin:0 0 4px}
+.ai-bubble{font-size:13.5px;line-height:1.7;border-radius:8px;padding:9px 12px;border:1px solid var(--rule);background:#fbfbfb;white-space:normal;word-break:break-word}
+.ai-msg.user .ai-bubble{background:var(--accent-tint);border-color:rgba(235,108,54,.3)}
+.ai-msg.user .ai-who{color:var(--accent)}
+.ai-bubble code{font-family:var(--mono);font-size:12px;background:rgba(45,49,66,.06);padding:1px 4px;border-radius:3px}
+.ai-typing{color:var(--soft);font-family:var(--mono);font-size:12px}
+.ai-chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 18px 10px}
+.ai-chips-label{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);padding:0 18px 6px;margin:0}
+.chip{font-family:var(--sans);font-size:11.5px;border:1px solid var(--rule);background:#fff;border-radius:999px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:left}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip[disabled]{opacity:.45;cursor:default}
+.ai-input{display:flex;gap:8px;padding:12px 18px 16px;border-top:1px solid var(--rule);align-items:flex-end}
+.ai-input-col{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
+.ai-input textarea{width:100%;font-family:var(--sans);font-size:13.5px;line-height:1.6;border:1px solid var(--rule);border-radius:8px;padding:8px 10px;resize:vertical;color:var(--ink);background:#fff}
+.ai-input textarea:focus{outline:none;border-color:var(--accent)}
+.ai-input textarea:disabled{background:#f0f0ef;color:#9aa0ad;border-color:var(--rule);cursor:not-allowed}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:disabled:hover{border-color:var(--rule);color:var(--muted)}
+/* 图片附件 */
+.attach-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.attach-btn{font-family:var(--sans);font-size:11.5px;border:1px solid var(--rule);background:#fff;border-radius:6px;padding:4px 10px;color:var(--muted);cursor:pointer}
+.attach-btn:hover{border-color:var(--accent);color:var(--accent)}
+.attach-btn:disabled{opacity:.45;cursor:not-allowed}
+.attach-hint{font-family:var(--mono);font-size:10px;color:var(--soft)}
+.thumb-wrap{position:relative;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--rule);border-radius:6px;padding:4px 6px;background:#fbfbfb}
+.thumb-wrap img{height:44px;border-radius:4px;display:block}
+.thumb-meta{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.4}
+.thumb-x{border:1px solid var(--rule);background:#fff;border-radius:4px;font-size:11px;color:var(--muted);cursor:pointer;padding:1px 6px}
+.thumb-x:hover{border-color:var(--accent);color:var(--accent)}
+/* 上下文计量：≈token / 500K */
+.ai-meter{padding:8px 18px 10px;border-bottom:1px solid var(--rule)}
+.ai-meter span{font-family:var(--mono);font-size:10.5px;color:var(--soft);display:block;margin-bottom:5px}
+.ai-meter-bar{height:3px;border-radius:2px;background:rgba(45,49,66,.09);overflow:hidden}
+.ai-meter-bar i{display:block;height:100%;background:var(--ok);transition:width .3s}
+.ai-meter.warn .ai-meter-bar i{background:var(--warn)}
+.ai-meter.full .ai-meter-bar i{background:var(--accent)}
+.ai-meter.warn span{color:var(--warn)}
+.ai-meter.full span{color:var(--accent)}
+/* 压缩后的前情摘要 */
+.ai-summary{margin:0 0 12px;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-tint);padding:8px 10px}
+.ai-summary summary{font-family:var(--mono);font-size:10.5px;color:var(--accent);cursor:pointer}
+.ai-summary div{padding-top:8px;font-size:12.5px;color:var(--muted);line-height:1.7}
+.ai-compressing{font-family:var(--mono);font-size:11px;color:var(--accent);padding:8px 10px;border:1px dashed var(--accent);border-radius:8px;margin-bottom:12px}
+.ai-msg .ai-bubble img{max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--rule)}
+
+/* ---- 学习资料库（动态扫描入口） ---- */
+.lib-wrap{position:relative;display:inline-block}
+.lib-pop{position:absolute;right:0;top:calc(100% + 8px);min-width:360px;max-width:470px;background:#fff;border:1px solid var(--rule);border-radius:8px;box-shadow:0 14px 34px -18px rgba(45,49,66,.5);padding:12px 14px;z-index:40;text-align:left}
+.lib-pop[hidden]{display:none}
+.lib-h{margin:0 0 6px;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);display:flex;justify-content:space-between;gap:10px}
+.lib-h i{font-style:normal;letter-spacing:0;text-transform:none;color:var(--soft)}
+.lib-item{display:flex;flex-direction:column;gap:2px;padding:8px 9px;border-radius:6px;text-decoration:none;color:var(--ink);margin:2px 0}
+.lib-item:hover{background:var(--accent-tint)}
+.lib-item .t{font-size:13.5px;font-weight:600}
+.lib-item .m{font-family:var(--mono);font-size:11px;color:var(--soft)}
+.lib-empty{color:var(--soft);font-size:13px;margin:6px 9px}
+.lib-foot{margin-top:8px;border-top:1px solid var(--rule);padding-top:8px;display:flex;flex-direction:column;gap:6px}
+.lib-foot a{font-size:12.5px;color:var(--accent);text-decoration:none}
+.lib-foot a:hover{text-decoration:underline}
+.lib-count{font-family:var(--mono);font-size:10.5px;color:var(--soft)}
+.lib-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:10px 2px 4px}
+.km-banner{background:#fff4ef;border:1px solid rgba(235,108,54,.4);border-left:3px solid var(--accent);border-radius:6px;padding:12px 16px;margin:0 0 18px;font-size:13.5px;color:#8a4b2a}
+.km-banner[hidden]{display:none}
+</style>
+<script src="/state_sync.js?v=2"></script>
+</head>
+<body>
+<div class="layout">
+<div class="toolbar"><div class="toolbar-inner">
+  <div class="tabs" id="tabs" role="tablist" aria-label="同级课程标签页"></div>
+  <div class="tools">
+    <button class="btn" id="btn-review">只看需复习</button>
+    <button class="btn" id="btn-all">显示全部</button>
+    <button class="btn" id="btn-expand">展开所有自测</button>
+    <button class="btn" id="btn-reset">重置进度</button>
+    <div class="lib-wrap" id="lib-wrap">
+      <a class="btn" id="lib-btn" href="/learn/" title="返回固定入口的学习资料库">学习资料库 →</a>
+    </div>
+    <span class="stat" id="stat"></span>
+  </div>
+</div></div>
+<div class="content-row">
+<div class="main">
+<div class="wrap">
+  <div class="km-banner" id="km-banner" hidden></div>
+  <p class="eyebrow">Knowledge Map</p>
+  <h1>知识地图</h1>
+  <p class="sub">32 个知识点，按「命题与逻辑 → 数与式 → 方程 → 函数 → 几何 → 统计」的依赖顺序排列。每个知识点只做三件事：<strong>看懂本质、避开陷阱、通过自测</strong>。自测不过就标「需复习」，已掌握的不再重刷。</p>
+
+  <div class="pathbar" id="pathbar"></div>
+  <div class="legend">
+    <span><i style="background:#2f7d5d"></i>已掌握</span>
+    <span><i style="background:#eb6c36"></i>学习中</span>
+    <span><i style="background:#b8860b"></i>需复习</span>
+    <span><i style="background:#dfe2e8"></i>未学</span>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <p class="col-label">学习原则</p>
+      <h3><span class="dot" style="background:#eb6c36"></span> 三条硬规则</h3>
+      <ul>
+        <li>每个知识点必须通过自测才算「已掌握」——自测不过一律标「需复习」。</li>
+        <li>错题只记「错在哪一步」，不抄整道题。</li>
+        <li>复习只刷标记「需复习」的，已掌握的不再重刷。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="col-label">复习节奏</p>
+      <h3><span class="dot" style="background:#4f5d75"></span> 间隔重复</h3>
+      <ul>
+        <li>当天：学完立刻自测一次。</li>
+        <li>D+1：只看「需复习」的。</li>
+        <li>D+3、D+7：各复现一次。</li>
+        <li>每周一次跨域混合测（随机抽 5 个知识点）。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="col-label">目标顺序</p>
+      <h3><span class="dot" style="background:#2f7d5d"></span> 为什么先补初中</h3>
+      <ul>
+        <li>线代是「符号运算 + 解方程 + 几何直觉」三者的合成。</li>
+        <li>因式分解 → 特征多项式；一元二次方程 → 求特征值。</li>
+        <li>坐标系与勾股定理 → 向量与投影的直觉基础。</li>
+      </ul>
+    </div>
+  </div>
+
+  <hr class="rule">
+  <h2 style="margin-bottom:14px">今日复习队列</h2>
+  <div id="reviewbox"><p class="empty">还没有标记任何「需复习」的知识点。</p></div>
+
+  <hr class="rule">
+<section class="domain tabpanel" id="dom-L" data-tab="L" data-label="L 命题与逻辑"><div class="domain-head"><h2><span class="dcode">L</span>命题与逻辑</h2><p>数学的语言：什么叫命题、怎样判断真假、怎样证明。几何证明与线代推导都靠它。</p></div><div class="nodes"><article class="node" id="L1" data-id="L1"><header class="node-head"><div class="node-id">L1</div><div class="node-title"><h3>命题与真假</h3><p class="essence">能判断真假的陈述句，才叫命题。</p></div><div class="state-ui" role="group" aria-label="命题与真假 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>命题 = 可以判断真假的陈述句</li><li>真命题 / 假命题的判断</li><li>疑问句、祈使句、感叹句都不是命题</li><li>推翻一个全称命题，只需举一个反例</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>「π 是无理数吗？」不是命题（疑问句无法判真假）</li><li>含未知数的开句（如 x&gt;3）真假不定，不是命题</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>判断「对顶角相等」是不是命题</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>是命题，且是真命题</p><p class="whyline">它是陈述句，并且可以判断真假——对顶角一定相等，所以是真命题。</p></div></div><div class="quiz"><p class="qq"><span class="qno">2</span>「请把门关上」是命题吗？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>不是</p><p class="whyline">祈使句没有真假可言，不构成命题。只有能判断真假的陈述句才是命题。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="L2" data-id="L2"><header class="node-head"><div class="node-id">L2</div><div class="node-title"><h3>命题的条件与结论</h3><p class="essence">每个命题都能写成「如果 p，那么 q」。</p></div><div class="state-ui" role="group" aria-label="命题的条件与结论 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>p 是条件，q 是结论</li><li>把普通语句改写为「如果……那么……」的形式</li><li>改写时需要补全省略的部分</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>条件与结论找反（尤其句子语序颠倒时）</li><li>有的命题要先补全主语才能看出条件</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>把「两直线平行，同位角相等」写成如果……那么……</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>如果两直线平行，那么同位角相等</p><p class="whyline">前半句是条件 p，后半句是结论 q。写成标准形式后才能研究它的逆命题。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="L3" data-id="L3"><header class="node-head"><div class="node-id">L3</div><div class="node-title"><h3>四种命题与逆否等价</h3><p class="essence">原命题与逆否命题同真同假——这是反证法的地基。</p></div><div class="state-ui" role="group" aria-label="四种命题与逆否等价 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>逆命题：交换条件与结论（若 q 则 p）</li><li>否命题：条件结论同时否定（若 ¬p 则 ¬q）</li><li>逆否命题：交换后同时否定（若 ¬q 则 ¬p）</li><li>原命题 ⇔ 逆否命题（同真同假）；原命题真不代表逆命题真</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>默认逆命题也成立——这是最常见的逻辑错误</li><li>把否命题与逆否命题搞混（否命题不与原命题等价）</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>写出「若 a=0，则 ab=0」的逆否命题</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>若 ab≠0，则 a≠0</p><p class="whyline">先交换再同时否定。它与原命题同真同假，故也是真命题。补一句：它的逆命题「若 ab=0 则 a=0」是假的。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="L4" data-id="L4"><header class="node-head"><div class="node-id">L4</div><div class="node-title"><h3>逻辑联结词与真值表</h3><p class="essence">且、或、非是三个运算，复合命题的真假可算出来。</p></div><div class="state-ui" role="group" aria-label="逻辑联结词与真值表 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>p∧q（且）：两者都真才真</li><li>p∨q（或）：至少一个真就真</li><li>¬p（非）：真假相反</li><li>德摩根律：¬(p∧q) = (¬p)∨(¬q)；¬(p∨q) = (¬p)∧(¬q)</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>把 ¬(p∧q) 当成 (¬p)∧(¬q)——两者不同，这是最高频错误</li><li>「或」在数学里是「至少一个」，不是「二选一」</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>p 真、q 假，求 ¬(p∧q) 与 (¬p)∧(¬q) 的值</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>前者为真，后者为假</p><p class="whyline">p∧q = 假，故 ¬(p∧q) = 真；而 (¬p)∧(¬q) = 假∧真 = 假。两者不等——这就是德摩根律要表达的。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="L5" data-id="L5"><header class="node-head"><div class="node-id">L5</div><div class="node-title"><h3>充分条件、必要条件与充要条件</h3><p class="essence">p⇒q 的一句话翻译。</p></div><div class="state-ui" role="group" aria-label="充分条件、必要条件与充要条件 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>p 是 q 的充分条件：有 p 就够推出 q（p⇒q）</li><li>p 是 q 的必要条件：要 q 必须有 p（q⇒p）</li><li>充要条件：p⇔q（互相都能推出）</li><li>用集合判断：小集合能推出大集合（范围小的推范围大的）</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>充分与必要的方向说反</li><li>把「充分不必要」与「必要不充分」混淆</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>x&gt;3 是 x&gt;1 的什么条件？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>充分不必要条件</p><p class="whyline">x&gt;3 一定满足 x&gt;1（充分）；但 x&gt;1 不一定 x&gt;3（不必要）。范围小 ⇒ 充分。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="L6" data-id="L6"><header class="node-head"><div class="node-id">L6</div><div class="node-title"><h3>证明的方法与书写</h3><p class="essence">每一步都要有依据——这就是证明。</p></div><div class="state-ui" role="group" aria-label="证明的方法与书写 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>证明的格式：已知 → 求证 → 证明</li><li>综合法：由已知一步一步推向结论（由因导果）</li><li>反证法三步：反设（假设结论不成立）→ 归谬（推出矛盾）→ 结论（原命题成立）</li><li>证伪只需一个反例</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>举几个例子就当成证明了全称命题（特殊不能代替一般）</li><li>循环论证——把要证的结论当条件用</li><li>反证法归谬之后忘了回到原结论</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>证明「√2 是无理数」应该用什么方法？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>反证法</p><p class="whyline">假设 √2 是有理数，设 √2 = p/q（最简分数），推出 p、q 都是偶数与最简矛盾，故假设不成立。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="L7" data-id="L7"><header class="node-head"><div class="node-id">L7</div><div class="node-title"><h3>数学归纳法</h3><p class="essence">两步完成对无限多个情形的验证。</p></div><div class="state-ui" role="group" aria-label="数学归纳法 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>第一步奠基：验证 n = 1（或起始值）时命题成立</li><li>第二步递推：假设 n = k 成立，证明 n = k+1 也成立</li><li>两步缺一不可</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>只验证 n=1,2,3 就下结论（没有递推就不是证明）</li><li>递推时没用到归纳假设</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>用归纳法证明 1+2+…+n = n(n+1)/2，第一步做什么？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>验证 n=1 时成立</p><p class="whyline">左边 = 1，右边 = 1×2/2 = 1，等式成立。这就是奠基步；之后再做递推。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article></div></section><section class="domain tabpanel" id="dom-N" data-tab="N" data-label="N 数与式"><div class="domain-head"><h2><span class="dcode">N</span>数与式</h2><p>计算的地基。后续所有内容都是它的组合。</p></div><div class="nodes"><article class="node" id="N1" data-id="N1"><header class="node-head"><div class="node-id">N1</div><div class="node-title"><h3>有理数与数轴</h3><p class="essence">数轴上一个点 = 一个数。符号规则是全部计算的地基。</p></div><div class="state-ui" role="group" aria-label="有理数与数轴 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>数轴三要素：原点、正方向、单位长度</li><li>相反数、绝对值的意义与求法</li><li>有理数四则运算的符号法则</li><li>乘方意义与运算顺序（先乘方、再乘除、后加减）</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>−2² = −4（负号不在括号内，不参与乘方）</li><li>括号前是负号时，去括号各项都要变号</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>计算 −2² + (−3)×2</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>−10</p><p class="whyline">先乘方：−2²=−4；再乘法：(−3)×2=−6；最后相加：−4+(−6)=−10。</p></div></div><div class="quiz"><p class="qq"><span class="qno">2</span>求 |−5| − |3|</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>2</p><p class="whyline">绝对值先去符号：5−3=2，顺序不能颠倒。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="N2" data-id="N2"><header class="node-head"><div class="node-id">N2</div><div class="node-title"><h3>实数与二次根式</h3><p class="essence">有理数不够用，补上无理数；开方与平方互逆。</p></div><div class="state-ui" role="group" aria-label="实数与二次根式 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>平方根、算术平方根、立方根的区别</li><li>√a 有意义的条件：a ≥ 0</li><li>√(a²) = |a|（必须先取绝对值）</li><li>最简二次根式与分母有理化</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>√16 = 4，不是 ±4（√ 只表示算术平方根）</li><li>√(a²) 直接写成 a 是错的，必须写 |a|</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>化简 √48</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>4√3</p><p class="whyline">48 = 16×3，√16 = 4，故 4√3。先提最大平方因子。</p></div></div><div class="quiz"><p class="qq"><span class="qno">2</span>计算 √((−7)²)</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>7</p><p class="whyline">√(a²) = |a|，所以等于 |−7| = 7。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="N3" data-id="N3"><header class="node-head"><div class="node-id">N3</div><div class="node-title"><h3>整式运算</h3><p class="essence">字母当作数，同类项才可合并。</p></div><div class="state-ui" role="group" aria-label="整式运算 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>幂的四条法则：aᵐ·aⁿ=aᵐ⁺ⁿ、(aᵐ)ⁿ=aᵐⁿ、(ab)ⁿ=aⁿbⁿ、aᵐ÷aⁿ=aᵐ⁻ⁿ</li><li>单项式×多项式、多项式×多项式</li><li>合并同类项：字母与指数都相同</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>a²·a³ = a⁵（不是 a⁶）；(a²)³ = a⁶</li><li>同底数幂相乘指数相加，幂的乘方指数相乘——别混</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>计算 x² · x³</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>x⁵</p><p class="whyline">同底数幂相乘，指数相加：2+3 = 5。</p></div></div><div class="quiz"><p class="qq"><span class="qno">2</span>计算 (2a²b)³</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>8a⁶b³</p><p class="whyline">积的乘方：系数 2³ = 8，各字母指数分别乘 3。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="N4" data-id="N4"><header class="node-head"><div class="node-id">N4</div><div class="node-title"><h3>乘法公式</h3><p class="essence">两个必须背到条件反射的恒等式。</p></div><div class="state-ui" role="group" aria-label="乘法公式 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>平方差：(a+b)(a−b) = a² − b²</li><li>完全平方：(a±b)² = a² ± 2ab + b²</li><li>公式的逆用（用于因式分解与配方）</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>完全平方最容易漏中间项 2ab</li><li>(a+b)² ≠ a² + b²</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>展开 (3x+2)(3x−2)</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>9x²−4</p><p class="whyline">符合平方差 (a+b)(a−b)，a=3x、b=2，直接得 a²−b²。</p></div></div><div class="quiz"><p class="qq"><span class="qno">2</span>展开 (x−5)²</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>x²−10x+25</p><p class="whyline">完全平方 a²−2ab+b² = x² − 2·x·5 + 25。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="N5" data-id="N5"><header class="node-head"><div class="node-id">N5</div><div class="node-title"><h3>因式分解</h3><p class="essence">把「和」变成「积」——解方程的关键一步。</p></div><div class="state-ui" role="group" aria-label="因式分解 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>顺序：提公因式 → 公式法 → 十字相乘</li><li>分解必须彻底（直到不能再分）</li><li>检验方法：把结果乘回去</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>分解不彻底，如 x⁴−1 只写到 (x²+1)(x²−1) 就停</li><li>x²+4 在实数范围内无法分解，别硬拆</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>分解 x²−6x+9</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>(x−3)²</p><p class="whyline">首尾是平方、中间是 −2ab 型，直接套完全平方公式。</p></div></div><div class="quiz"><p class="qq"><span class="qno">2</span>分解 2x²−8</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>2(x+2)(x−2)</p><p class="whyline">先提公因式 2，再对 x²−4 用平方差。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="N6" data-id="N6"><header class="node-head"><div class="node-id">N6</div><div class="node-title"><h3>分式</h3><p class="essence">除法写成分数形式，分母永远不能为零。</p></div><div class="state-ui" role="group" aria-label="分式 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>分式有意义的条件：分母 ≠ 0</li><li>约分、通分（最简公分母）</li><li>分式四则运算</li><li>分式方程去分母后必须验根</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>约分只能约「因式」，不能直接约掉加减项</li><li>去分母产生的增根必须舍去</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>化简 (x²−4)/(x+2)</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>x−2（x≠−2）</p><p class="whyline">分子用平方差分解为 (x+2)(x−2)，约去 (x+2)。别忘写 x≠−2。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="N7" data-id="N7"><header class="node-head"><div class="node-id">N7</div><div class="node-title"><h3>不等式与不等式组</h3><p class="essence">解集是一个范围，用数轴表达最清楚。</p></div><div class="state-ui" role="group" aria-label="不等式与不等式组 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>两边同乘（除）负数，不等号方向要改变</li><li>解集在数轴上表示：实心点含端点、空心点不含</li><li>不等式组取公共部分（交集）</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>乘除负数忘变号——最高频错误</li><li>「无解」也是合法答案（如 x&gt;3 且 x&lt;1）</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>解不等式 −2x &gt; 6</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>x &lt; −3</p><p class="whyline">两边同除 −2 并变号：x &lt; −3。步骤：移项 → 系数化 1（除负数要变号）。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article></div></section><section class="domain tabpanel" id="dom-E" data-tab="E" data-label="E 方程与不等式"><div class="domain-head"><h2><span class="dcode">E</span>方程与不等式</h2><p>把条件写成等式/不等式再解出来。</p></div><div class="nodes"><article class="node" id="E1" data-id="E1"><header class="node-head"><div class="node-id">E1</div><div class="node-title"><h3>一元一次方程</h3><p class="essence">等式两边同做同一种运算，等式仍成立。</p></div><div class="state-ui" role="group" aria-label="一元一次方程 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>解方程五步：去分母 → 去括号 → 移项 → 合并同类项 → 系数化为 1</li><li>移项必须变号</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>移项忘记变号</li><li>去分母时漏乘不含分母的项</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>解方程 3x − 5 = 7</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>x = 4</p><p class="whyline">移项：3x = 7+5 = 12；系数化 1：x = 4。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="E2" data-id="E2"><header class="node-head"><div class="node-id">E2</div><div class="node-title"><h3>二元一次方程组</h3><p class="essence">两个条件同时满足 = 两条直线的交点。</p></div><div class="state-ui" role="group" aria-label="二元一次方程组 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>代入消元法：把一个未知数用另一个表示</li><li>加减消元法：让某未知数系数相同后相减</li><li>解必须同时满足两个方程</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>只解出一个未知数就停笔</li><li>消元后回代时代入的不是原方程</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>解方程组 x+y=5，x−y=1</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>x=3, y=2</p><p class="whyline">两式相加消去 y：2x=6 → x=3；回代 x+y=5 得 y=2。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="E3" data-id="E3"><header class="node-head"><div class="node-id">E3</div><div class="node-title"><h3>一元二次方程</h3><p class="essence">含平方项的方程，最多两个实根。</p></div><div class="state-ui" role="group" aria-label="一元二次方程 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>三种解法：因式分解法、配方法、公式法</li><li>判别式 Δ = b²−4ac：Δ&gt;0 两根、Δ=0 一根、Δ&lt;0 无实根</li><li>韦达定理：x₁+x₂ = −b/a，x₁·x₂ = c/a</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>公式法漏除 2a（x = (−b±√Δ)/2a）</li><li>Δ&lt;0 时仍强行求根</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>解 x² − 5x + 6 = 0</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>x = 2 或 x = 3</p><p class="whyline">十字相乘得 (x−2)(x−3)=0。也可用 Δ = 25−24 = 1 代入公式。</p></div></div><div class="quiz"><p class="qq"><span class="qno">2</span>判断 x²+2x+5 = 0 的根的情况</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>无实根</p><p class="whyline">Δ = 4−20 = −16 &lt; 0，无实数根。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="E4" data-id="E4"><header class="node-head"><div class="node-id">E4</div><div class="node-title"><h3>分式方程</h3><p class="essence">去分母、求解、验根——三步缺一不可。</p></div><div class="state-ui" role="group" aria-label="分式方程 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>解法：去分母 → 解整式方程 → 代入最简公分母验根</li><li>使最简公分母为 0 的根是增根，必须舍去</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>跳过验根直接给答案</li><li>增根不是算错，是去分母带来的必然产物</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>解 1/x + 1/(x−2) = 1</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>x = 2±√2（需验根）</p><p class="whyline">去分母乘 x(x−2)：(x−2)+x = x(x−2)，整理得 x²−4x+2=0，代入求根公式。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article></div></section><section class="domain tabpanel" id="dom-F" data-tab="F" data-label="F 函数"><div class="domain-head"><h2><span class="dcode">F</span>函数</h2><p>变化关系的图像语言——线性代数直觉的来源。</p></div><div class="nodes"><article class="node" id="F1" data-id="F1"><header class="node-head"><div class="node-id">F1</div><div class="node-title"><h3>平面直角坐标系</h3><p class="essence">每个点有一个唯一地址 (x, y)。</p></div><div class="state-ui" role="group" aria-label="平面直角坐标系 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>四个象限内点的符号规律</li><li>点的平移：右加左减、上加下减</li><li>关于 x 轴 / y 轴 / 原点对称的坐标变化</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>坐标书写顺序颠倒 (x,y)</li><li>对称时搞混哪个坐标变号</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>点 (−3, 2) 关于 x 轴的对称点</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>(−3, −2)</p><p class="whyline">关于 x 轴对称：横坐标不变，纵坐标变号。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="F2" data-id="F2"><header class="node-head"><div class="node-id">F2</div><div class="node-title"><h3>一次函数</h3><p class="essence">匀速变化的世界就是一条直线。</p></div><div class="state-ui" role="group" aria-label="一次函数 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>y = kx + b：k 决定增减与倾斜，b 决定与 y 轴交点</li><li>k&gt;0 递增、k&lt;0 递减</li><li>图像与 x 轴交点 = 对应方程的根</li><li>两直线平行 ⇔ k 相等</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>k&lt;0 时误以为斜率大就上升</li><li>求与 x 轴交点应令 y=0（不是 x=0）</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>求 y = 2x − 4 与 x 轴的交点</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>(2, 0)</p><p class="whyline">令 y=0：0 = 2x−4 → x = 2，交点 (2,0)。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="F3" data-id="F3"><header class="node-head"><div class="node-id">F3</div><div class="node-title"><h3>反比例函数</h3><p class="essence">两量乘积固定，一个变大另一个就变小。</p></div><div class="state-ui" role="group" aria-label="反比例函数 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>y = k/x（k≠0），图像是双曲线（两支）</li><li>k&gt;0 在一、三象限，k&lt;0 在二、四象限</li><li>k 的几何意义：图像上一点向两轴作矩形的面积 = |k|</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>误认为整个双曲线都递减（要分两支讨论）</li><li>k 的几何意义与坐标符号混淆</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>y = k/x 经过点 (2, 3)，求 k</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>k = 6</p><p class="whyline">把坐标代入：k = xy = 2×3 = 6。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="F4" data-id="F4"><header class="node-head"><div class="node-id">F4</div><div class="node-title"><h3>二次函数</h3><p class="essence">抛物线的顶点就是最值——初中函数的顶点站。</p></div><div class="state-ui" role="group" aria-label="二次函数 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>一般式 y=ax²+bx+c；顶点式 y=a(x−h)²+k，顶点 (h, k)</li><li>对称轴 x = −b/(2a)</li><li>开口方向由 a 确定；与 x 轴交点个数由 Δ 确定</li><li>二次函数与一元二次方程是同一件事的两种看法</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>顶点坐标符号写反（顶点式里是 x−h）</li><li>a&gt;0 开口向上、有最小值（容易背反）</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>求 y = x² − 4x + 3 的顶点</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>(2, −1)</p><p class="whyline">配方：y = (x−2)² − 1，顶点 (2,−1)。公式法：−b/2a = 4/2 = 2。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article></div></section><section class="domain tabpanel" id="dom-G" data-tab="G" data-label="G 几何"><div class="domain-head"><h2><span class="dcode">G</span>几何</h2><p>空间与形状的推理。全等/相似/圆是主干。</p></div><div class="nodes"><article class="node" id="G1" data-id="G1"><header class="node-head"><div class="node-id">G1</div><div class="node-title"><h3>相交线与平行线</h3><p class="essence">平行线的性质与判定是一对互逆命题。</p></div><div class="state-ui" role="group" aria-label="相交线与平行线 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>对顶角相等、邻补角互补</li><li>三线八角：同位角、内错角、同旁内角</li><li>判定：同位角相等 / 内错角相等 / 同旁内角互补 → 平行</li><li>性质：已知平行 → 上述角关系成立</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>把「判定」和「性质」的条件与结论用反</li><li>只有两直线平行的前提下，这些角关系才成立</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>两直线平行，同旁内角有什么关系</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>互补（和为 180°）</p><p class="whyline">平行线的性质：同旁内角互补。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="G2" data-id="G2"><header class="node-head"><div class="node-id">G2</div><div class="node-title"><h3>三角形基础与全等</h3><p class="essence">形状大小完全相同的两个三角形。</p></div><div class="state-ui" role="group" aria-label="三角形基础与全等 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>内角和 180°；两边之和大于第三边</li><li>全等五判定：SSS、SAS、ASA、AAS、HL（直角三角形专用）</li><li>全等 → 对应边、对应角全部相等</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>SSA（边边角）不能判定全等——经典陷阱</li><li>写全等时对应顶点顺序要一一对应</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>已知两边及其夹角，可用哪个判定</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>SAS</p><p class="whyline">两边夹一角 ⇒ SAS。注意必须是夹角。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="G3" data-id="G3"><header class="node-head"><div class="node-id">G3</div><div class="node-title"><h3>等腰与等边三角形</h3><p class="essence">对称性带来的「三线合一」。</p></div><div class="state-ui" role="group" aria-label="等腰与等边三角形 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>等边对等角、等角对等边</li><li>三线合一：顶角平分线 = 底边中线 = 底边高</li><li>等边三角形三边相等、三角各 60°</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>三线合一必须在等腰三角形中，且指顶角那一条</li><li>底边上的高与腰上的高不是同一条</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>等腰三角形顶角 40°，求底角</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>70°</p><p class="whyline">内角和 180°，两底角相等：(180−40)/2 = 70°。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="G4" data-id="G4"><header class="node-head"><div class="node-id">G4</div><div class="node-title"><h3>勾股定理</h3><p class="essence">直角三角形专属的边长关系。</p></div><div class="state-ui" role="group" aria-label="勾股定理 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>a² + b² = c²（c 为斜边）</li><li>逆定理：满足 a²+b²=c² → 该三角形是直角三角形</li><li>特殊比例：30°-60°-90° 为 1:√3:2；45°-45°-90° 为 1:1:√2</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>把斜边当直角边代入</li><li>只有直角三角形才能用</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>直角边 3、4，求斜边</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>5</p><p class="whyline">3²+4² = 9+16 = 25，c = √25 = 5。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="G5" data-id="G5"><header class="node-head"><div class="node-id">G5</div><div class="node-title"><h3>相似三角形</h3><p class="essence">形状相同、大小成比例。</p></div><div class="state-ui" role="group" aria-label="相似三角形 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>判定：AA、SAS（两边成比例且夹角相等）、SSS（三边成比例）</li><li>对应边成比例、对应角相等</li><li>平行于三角形一边的直线截出的三角形与原三角形相似</li><li>周长比 = 相似比，面积比 = 相似比的平方</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>对应边找错（顺序不对应）</li><li>面积比忘记平方，直接写成相似比</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>相似比 1:2 的两个三角形，面积比是多少</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>1:4</p><p class="whyline">面积比 = 相似比的平方 = 1²:2² = 1:4。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="G6" data-id="G6"><header class="node-head"><div class="node-id">G6</div><div class="node-title"><h3>四边形</h3><p class="essence">平行四边形的判定是整章的枢纽。</p></div><div class="state-ui" role="group" aria-label="四边形 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>平行四边形判定：两组对边分别平行 / 相等、对角线互相平分、一组对边平行且相等</li><li>矩形 = 平行四边形 + 一个直角（对角线相等）</li><li>菱形 = 平行四边形 + 一组邻边相等（对角线互相垂直）</li><li>正方形 = 矩形 + 菱形</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>把「对角线相等」当成平行四边形的性质（那是矩形特有）</li><li>判定条件混用</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>对角线互相垂直平分的四边形是什么</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>菱形</p><p class="whyline">对角线互相平分 ⇒ 平行四边形；再加垂直 ⇒ 菱形。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="G7" data-id="G7"><header class="node-head"><div class="node-id">G7</div><div class="node-title"><h3>圆</h3><p class="essence">到定点距离相等的点集；圆的定理都围绕「半径相等」展开。</p></div><div class="state-ui" role="group" aria-label="圆 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>垂径定理：垂直于弦的直径平分弦及弧</li><li>圆心角 = 2× 同弧所对圆周角</li><li>直径所对的圆周角 = 90°</li><li>切线判定与性质：切线垂直于过切点的半径</li><li>弧长 l = nπr/180，扇形面积 S = nπr²/360</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>同弧所对的圆周角与圆心角的倍数关系记反</li><li>切线证明漏掉「过半径外端」这一条件</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>直径所对的圆周角是多少度</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>90°</p><p class="whyline">半圆所对的圆周角是直角，这是圆中最常用的结论之一。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="G8" data-id="G8"><header class="node-head"><div class="node-id">G8</div><div class="node-title"><h3>图形变换与锐角三角函数</h3><p class="essence">sin/cos/tan 是直角三角形里边的比值。</p></div><div class="state-ui" role="group" aria-label="图形变换与锐角三角函数 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>平移、旋转、轴对称的性质（对应线段相等、对应角相等）</li><li>sin A = 对边/斜边、cos A = 邻边/斜边、tan A = 对边/邻边</li><li>特殊角：sin30°=1/2、sin45°=√2/2、sin60°=√3/2</li><li>解直角三角形：已知一边一角或两边求其余</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>tan 的分子分母记反</li><li>特殊角函数值记串</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>sin 30° = ?</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>1/2</p><p class="whyline">特殊角记忆：30°/45°/60° 的正弦依次为 1/2、√2/2、√3/2。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article></div></section><section class="domain tabpanel" id="dom-S" data-tab="S" data-label="S 统计与概率"><div class="domain-head"><h2><span class="dcode">S</span>统计与概率</h2><p>数据的描述与不确定性的度量。</p></div><div class="nodes"><article class="node" id="S1" data-id="S1"><header class="node-head"><div class="node-id">S1</div><div class="node-title"><h3>统计量</h3><p class="essence">用一个数概括一堆数据的中心与离散程度。</p></div><div class="state-ui" role="group" aria-label="统计量 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>平均数、中位数、众数的意义与求法</li><li>方差：衡量波动大小，越小越稳定</li><li>中位数要先排序，偶数个取中间两个的平均</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>求中位数前忘记排序</li><li>方差越小说明越稳定（容易背反）</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>数据 1,2,3,4,5 的中位数</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>3</p><p class="whyline">已有序，5 个数的中位数是第 3 个。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article><article class="node" id="S2" data-id="S2"><header class="node-head"><div class="node-id">S2</div><div class="node-title"><h3>概率初步</h3><p class="essence">古典概型：P = 有利结果数 / 总结果数。</p></div><div class="state-ui" role="group" aria-label="概率初步 掌握状态"><button class="st" data-state="todo" type="button">未学</button><button class="st" data-state="doing" type="button">学习中</button><button class="st" data-state="done" type="button">已掌握</button><button class="st" data-state="again" type="button">需复习</button></div><button class="ai-open" type="button" data-ai="1">AI 辅助</button></header><div class="node-body"><div class="col"><p class="col-label">必会</p><ul class="musts"><li>必然事件 P=1、不可能事件 P=0</li><li>列举所有等可能结果：列表法、树状图</li><li>两步试验必须把所有组合列全</li></ul></div><div class="col"><p class="col-label">陷阱</p><ul class="traps"><li>两步试验漏组合（如抛两次硬币漏掉顺序）</li><li>把「至少一次」当成「恰好一次」</li></ul></div></div><div class="quizzone" hidden><p class="col-label">自测（先想，再看答案）</p><div class="quiz"><p class="qq"><span class="qno">1</span>抛两次硬币，两次都正面的概率</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>1/4</p><p class="whyline">总结果 4 种（正正/正反/反正/反反），有利 1 种，P = 1/4。</p></div></div></div><button class="toggle-quiz" type="button">展开自测 ▾</button></article></div></section>
+
+  <hr class="rule">
+<section class="domain tabpanel" data-tab="linalg" data-label="线代 7 天冲刺"><p class="eyebrow">Sprint · 7 Days</p><h2 style="margin-bottom:6px">7 天冲刺</h2><p class="sub" style="margin-bottom:18px">每天一个主题，当天必须通过检验自测才进入下一天。标了「需先补」的知识点，卡住时就切到对应标签页点开那张卡片。</p><article class="day"><div class="day-head"><span class="daytag">Day 1</span><h3>向量与线性组合</h3></div><div class="day-grid"><div><p class="col-label">今日核心</p><ul><li>向量加法的三角形/平行四边形法则、数乘的伸缩意义</li><li>线性组合：c₁v₁ + c₂v₂ 的一切可能结果构成「张成空间」</li><li>在 ℝ²、ℝ³ 中把向量画成箭头，理解「张成一条线/一个平面/整个空间」</li></ul></div><div><p class="col-label">当日检验标准</p><ul class="checks"><li>能画图说明两个不共线向量的张成是整个平面</li><li>能说出零向量为什么永远在张成空间里</li></ul></div></div><div class="quiz"><p class="qq"><span class="qno">测</span>把 v=(1,2)、w=(2,4) 作线性组合，它们能张成整个平面吗？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>不能</p><p class="whyline">w = 2v，两向量共线，张成的是一条直线，不是平面。</p></div></div><p class="prereq"><span class="col-label">需先补</span><span class="pre">F1 坐标系</span><span class="pre">G4 勾股定理</span></p></article><article class="day"><div class="day-head"><span class="daytag">Day 2</span><h3>矩阵与矩阵运算</h3></div><div class="day-grid"><div><p class="col-label">今日核心</p><ul><li>矩阵加法、数乘、转置</li><li>矩阵乘法（行×列）；乘法不可交换，AB ≠ BA</li><li>单位矩阵 I、逆矩阵 A⁻¹：把变换「撤销」</li><li>矩阵乘法 = 线性变换的复合</li></ul></div><div><p class="col-label">当日检验标准</p><ul class="checks"><li>能徒手完成 2×2 与 2×3 的矩阵乘法</li><li>能解释为什么 AB 一般不等于 BA</li></ul></div></div><div class="quiz"><p class="qq"><span class="qno">测</span>A = [[1,2],[3,4]]，写出第 1 行第 2 列的元素。</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>2</p><p class="whyline">矩阵元素按（行, 列）定位：A[1][2] = 2。</p></div></div><p class="prereq"><span class="col-label">需先补</span><span class="pre">N3 整式运算</span></p></article><article class="day"><div class="day-head"><span class="daytag">Day 3</span><h3>线性方程组与消元</h3></div><div class="day-grid"><div><p class="col-label">今日核心</p><ul><li>高斯消元、行阶梯形、行最简形</li><li>秩 rank(A) 的含义：有效方程的个数</li><li>解的存在性：无解 / 唯一解 / 无穷多解（由秩判定）</li><li>LU 分解的思想</li></ul></div><div><p class="col-label">当日检验标准</p><ul class="checks"><li>能用消元法解 3 元一次方程组</li><li>能通过比较 rank(A) 与 rank([A|b]) 判断解的情况</li></ul></div></div><div class="quiz"><p class="qq"><span class="qno">测</span>方程组 x+y=1、x+y=2 有解吗？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>无解</p><p class="whyline">两式相减得 0 = 1，矛盾。秩判定：rank(A)=1 &lt; rank([A|b])=2。</p></div></div><p class="prereq"><span class="col-label">需先补</span><span class="pre">E2 二元一次方程组</span><span class="pre">E3 一元二次方程</span></p></article><article class="day"><div class="day-head"><span class="daytag">Day 4</span><h3>向量空间与基</h3></div><div class="day-grid"><div><p class="col-label">今日核心</p><ul><li>向量空间与子空间的判定（对加法与数乘封闭）</li><li>线性无关：唯一表示零向量的组合是全部系数为 0</li><li>基与维数：能张成且线性无关的一组向量</li><li>四个基本子空间：列空间、零空间、行空间、左零空间</li></ul></div><div><p class="col-label">当日检验标准</p><ul class="checks"><li>能判断一组向量是否线性无关</li><li>能说出维数的意义：描述该空间所需的最少向量个数</li></ul></div></div><div class="quiz"><p class="qq"><span class="qno">测</span>{(1,0,0), (0,1,0), (1,1,0)} 线性相关还是无关？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>相关</p><p class="whyline">第三个等于前两个之和，存在非平凡组合为零向量，故线性相关。</p></div></div><p class="prereq"><span class="col-label">需先补</span><span class="pre">F2 一次函数（把函数看作映射）</span></p></article><article class="day"><div class="day-head"><span class="daytag">Day 5</span><h3>正交性、投影与最小二乘</h3></div><div class="day-grid"><div><p class="col-label">今日核心</p><ul><li>内积、长度（范数）、夹角、正交</li><li>投影：把向量分解为「在子空间内」+「垂直于子空间」两部分</li><li>最小二乘：无精确解时求最优近似解</li><li>Gram–Schmidt 正交化；QR 分解</li></ul></div><div><p class="col-label">当日检验标准</p><ul class="checks"><li>能推导一维投影公式 proj = (aᵀb / aᵀa)·a</li><li>能说明最小二乘解为什么是投影的自然结果</li></ul></div></div><div class="quiz"><p class="qq"><span class="qno">测</span>求 b=(1,1) 在 a=(1,0) 上的投影</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>(1, 0)</p><p class="whyline">aᵀb = 1，aᵀa = 1，投影 = 1·(1,0) = (1,0)。</p></div></div><p class="prereq"><span class="col-label">需先补</span><span class="pre">G4 勾股定理</span><span class="pre">G8 三角函数</span></p></article><article class="day"><div class="day-head"><span class="daytag">Day 6</span><h3>行列式、特征值与对角化</h3></div><div class="day-grid"><div><p class="col-label">今日核心</p><ul><li>行列式：计算、性质（|AB| = |A||B|）、几何意义（面积/体积的伸缩因子）</li><li>特征值与特征向量：Av = λv（方向不变，只被拉伸）</li><li>特征多项式 det(A − λI) = 0 求特征值</li><li>对角化 A = PDP⁻¹（需有 n 个线性无关的特征向量）</li></ul></div><div><p class="col-label">当日检验标准</p><ul class="checks"><li>能计算 2×2、3×3 的行列式</li><li>能由特征多项式解出特征值并求对应特征向量</li></ul></div></div><div class="quiz"><p class="qq"><span class="qno">测</span>A = [[2,0],[0,3]] 的特征值是什么？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>2 和 3</p><p class="whyline">对角矩阵的特征值就是对角线元素。一般矩阵解 det(A−λI) = 0。</p></div></div><p class="prereq"><span class="col-label">需先补</span><span class="pre">N5 因式分解</span><span class="pre">E3 一元二次方程</span></p></article><article class="day"><div class="day-head"><span class="daytag">Day 7</span><h3>对称矩阵、二次型与 SVD</h3></div><div class="day-grid"><div><p class="col-label">今日核心</p><ul><li>对称矩阵：特征值全为实数、特征向量两两正交</li><li>正定矩阵的判定</li><li>二次型与其矩阵表示</li><li>奇异值分解 A = UΣVᵀ 及其应用（降维、推荐、压缩、PCA）</li></ul></div><div><p class="col-label">当日检验标准</p><ul class="checks"><li>能说出 SVD 与特征值分解的关系</li><li>能把 SVD 解释为「旋转—拉伸—旋转」</li></ul></div></div><div class="quiz"><p class="qq"><span class="qno">测</span>为什么 SVD 对任意矩阵都存在，而特征值分解只对可对角化矩阵存在？</p><button class="reveal" type="button">看答案</button><div class="ans" hidden><p class="answerline"><strong>答案：</strong>因为 SVD 借助 AᵀA 的对称性</p><p class="whyline">AᵀA 对称半正定，必有标准正交特征基，由此构造出 U、Σ、V。</p></div></div><p class="prereq"><span class="col-label">需先补</span><span class="pre">F4 二次函数</span><span class="pre">N4 乘法公式</span></p></article></section>
+
+  <footer>
+    32 个知识点 · 进度实时同步到服务端，换设备自动恢复
+  </footer>
+</div><!-- /.wrap -->
+</div><!-- /.main -->
+<script>
+(function(){
+  var API = location.protocol + '//' + location.hostname + ':8101';
+  var USER_PATH = 'u0/';   // 多用户口子——固定用户路径，将来替换为每用户 id
+  var MARKS_KEY = USER_PATH + 'knowledge-map-v1-marks';   // 服务端键（唯一数据源）
+  var store = {};
+  var nodes = [].slice.call(document.querySelectorAll('.node'));
+  var panels = [].slice.call(document.querySelectorAll('.tabpanel'));
+  var TKEY = 'math-map-v1-tab';                  // 仅 UI 偏好，保留 localStorage
+  var tabbar = document.getElementById('tabs');
+  var saveTimer = null;
+
+  // 服务端状态：启动时 GET /state/all 一次（失败重试一次；再失败返回 null）
+  function fetchEntriesOnce(){
+    return fetch(API + '/state/all', { cache: 'no-store' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ return (j && j.entries) || {}; });
+  }
+  window.__kmStateReady = fetchEntriesOnce().catch(function(){ return fetchEntriesOnce(); }).catch(function(){ return null; });
+
+  // 防抖 300ms 写服务端（与学习地图页 serverSave 同一约定）
+  function flushMarks(){
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    var entries = {}; entries[MARKS_KEY] = JSON.stringify(store);
+    fetch(API + '/state/put', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: entries }), keepalive: true
+    }).catch(function(){ /* 回写失败保留内存态 */ });
+  }
+  function save(){ if (saveTimer) clearTimeout(saveTimer); saveTimer = setTimeout(flushMarks, 300); }
+  window.addEventListener('pagehide', function(){ if (saveTimer) flushMarks(); });
+  function stateOf(id){ return (store[id] && store[id].s) || 'todo'; }
+
+  // ---- 同级课程标签页 ----
+  function buildTabs(){
+    var cur = '*';
+    try { cur = localStorage.getItem(TKEY) || '*'; } catch (e) {}
+    var html = '<button class="tabbtn" data-target="*" role="tab">全部<span class="tabcount" id="cnt-all"></span></button>';
+    panels.forEach(function(p){
+      var t = p.getAttribute('data-tab');
+      html += '<button class="tabbtn" data-target="' + t + '" role="tab">' +
+              p.getAttribute('data-label') + '<span class="tabcount" data-cnt="' + t + '"></span></button>';
+    });
+    tabbar.innerHTML = html;
+    [].forEach.call(tabbar.querySelectorAll('.tabbtn'), function(b){
+      b.addEventListener('click', function(){
+        showTab(b.getAttribute('data-target'));
+        try { localStorage.setItem(TKEY, b.getAttribute('data-target')); } catch (e) {}
+        clearFilter();
+      });
+    });
+    showTab(cur);
+  }
+  function showTab(target){
+    panels.forEach(function(p){
+      p.hidden = !(target === '*' || p.getAttribute('data-tab') === target);
+    });
+    [].forEach.call(tabbar.querySelectorAll('.tabbtn'), function(b){
+      b.setAttribute('aria-selected', b.getAttribute('data-target') === target ? 'true' : 'false');
+    });
+  }
+  function clearFilter(){ nodes.forEach(function(n){ n.style.display = ''; }); }
+  function updateCounts(){
+    panels.forEach(function(p){
+      var ids = [].slice.call(p.querySelectorAll('.node')).map(function(n){ return n.getAttribute('data-id'); });
+      var done = ids.filter(function(i){ return stateOf(i) === 'done'; }).length;
+      var el = tabbar.querySelector('[data-cnt="' + p.getAttribute('data-tab') + '"]');
+      if (el) el.textContent = ids.length ? (done + '/' + ids.length) : '';
+    });
+    var elAll = document.getElementById('cnt-all');
+    if (elAll) {
+      var d = nodes.filter(function(n){ return stateOf(n.getAttribute('data-id')) === 'done'; }).length;
+      elAll.textContent = d + '/' + nodes.length;
+    }
+  }
+
+  function review(){
+    var box = document.getElementById('reviewbox');
+    var again = nodes.filter(function(n){ return stateOf(n.getAttribute('data-id')) === 'again'; });
+    if (!again.length) {
+      box.innerHTML = '<p class="empty">还没有标记任何「需复习」的知识点。自测失败就去卡片右上角点一下「需复习」。</p>';
+      return;
+    }
+    box.innerHTML = again.map(function(n){
+      var id = n.getAttribute('data-id');
+      var t = n.querySelector('.node-title h3').textContent;
+      return '<div class="review-item"><a href="#' + id + '">' + id + '</a><span>' + t + '</span></div>';
+    }).join('');
+  }
+
+  function paint(){
+    var c = { done: 0, doing: 0, again: 0, todo: 0 };
+    nodes.forEach(function(n){
+      var id = n.getAttribute('data-id'), s = stateOf(id);
+      c[s]++;
+      [].forEach.call(n.querySelectorAll('.st'), function(b){
+        b.setAttribute('aria-pressed', b.getAttribute('data-state') === s ? 'true' : 'false');
+      });
+      n.style.borderLeftColor = s === 'again' ? '#b8860b' : s === 'done' ? '#2f7d5d' : s === 'doing' ? '#eb6c36' : 'rgba(45,49,66,.12)';
+    });
+    var total = nodes.length || 1;
+    document.getElementById('pathbar').innerHTML =
+      '<span class="pb-done" style="width:' + (c.done / total * 100) + '%"></span>' +
+      '<span class="pb-doing" style="width:' + (c.doing / total * 100) + '%"></span>' +
+      '<span class="pb-again" style="width:' + (c.again / total * 100) + '%"></span>';
+    document.getElementById('stat').textContent =
+      '已掌握 ' + c.done + '/' + nodes.length + ' · 需复习 ' + c.again + ' · 学习中 ' + c.doing;
+    review();
+    updateCounts();
+  }
+
+  nodes.forEach(function(n){
+    [].forEach.call(n.querySelectorAll('.st'), function(b){
+      b.addEventListener('click', function(){
+        var id = n.getAttribute('data-id');
+        store[id] = { s: b.getAttribute('data-state'), t: Date.now() };
+        save(); paint();
+      });
+    });
+    var tq = n.querySelector('.toggle-quiz'), qz = n.querySelector('.quizzone');
+    tq.addEventListener('click', function(){
+      qz.hidden = !qz.hidden;
+      tq.textContent = qz.hidden ? '展开自测 ▾' : '收起自测 ▴';
+    });
+  });
+
+  [].forEach.call(document.querySelectorAll('.reveal'), function(b){
+    b.addEventListener('click', function(){
+      var a = b.parentNode.querySelector('.ans');
+      a.hidden = !a.hidden;
+      b.textContent = a.hidden ? '看答案' : '收起';
+    });
+  });
+
+  document.getElementById('btn-review').addEventListener('click', function(){
+    showTab('*');
+    try { localStorage.setItem(TKEY, '*'); } catch (e) {}
+    nodes.forEach(function(n){
+      n.style.display = stateOf(n.getAttribute('data-id')) === 'again' ? '' : 'none';
+    });
+  });
+  document.getElementById('btn-all').addEventListener('click', function(){
+    clearFilter();
+  });
+  document.getElementById('btn-expand').addEventListener('click', function(){
+    nodes.forEach(function(n){
+      n.querySelector('.quizzone').hidden = false;
+      n.querySelector('.toggle-quiz').textContent = '收起自测 ▴';
+    });
+  });
+  document.getElementById('btn-reset').addEventListener('click', function(){
+    if (confirm('确定清空全部进度标记？')) { store = {}; save(); paint(); }
+  });
+
+  // 启动顺序：先取服务端状态 → 再初始化 UI（marks / 标签页 / AI 面板）
+  window.__kmStateReady.then(function(entries){
+    if (entries == null) {
+      var b = document.getElementById('km-banner');
+      if (b) { b.hidden = false; b.textContent = '服务端连接失败：标记与对话本次不可用'; }
+      entries = {};
+    }
+    try {
+      var raw = entries[MARKS_KEY];
+      if (typeof raw === 'string') { var d = JSON.parse(raw); if (d && typeof d === 'object') store = d; }
+    } catch (e) { store = {}; }
+    buildTabs();
+    paint();
+  });
+})();
+</script>
+<aside class="ai-drawer no-topic" id="ai-drawer" aria-label="AI 辅助">
+  <header class="ai-head">
+    <div class="ai-head-txt">
+      <p class="ai-unit" id="ai-unit-id">未选择话题</p>
+      <h3 id="ai-unit-title">AI 辅助</h3>
+      <p class="ai-domain" id="ai-unit-domain">在左侧 Knowledge Map 里点任意单元卡片右侧的「AI 辅助」，它就拿到那个单元的全部上下文。</p>
+    </div>
+    <button class="ai-close" id="ai-close" type="button" title="清除当前话题" aria-label="清除当前话题">✕</button>
+  </header>
+  <details class="ai-ctx">
+    <summary id="ai-ctx-summary">已附带该单元上下文</summary>
+    <div id="ai-ctx-body"></div>
+  </details>
+  <div class="ai-meter" id="ai-meter">
+    <span id="ai-meter-txt">上下文 ≈0 / 500K</span>
+    <div class="ai-meter-bar"><i id="ai-meter-fill" style="width:0.5%"></i></div>
+  </div>
+  <div class="ai-msgs" id="ai-msgs"></div>
+  <p class="ai-chips-label" id="ai-chips-label">AI 建议你接着问</p>
+  <div class="ai-chips" id="ai-chips"></div>
+  <form class="ai-input" id="ai-form">
+    <div class="ai-input-col">
+      <div class="attach-row">
+        <button class="attach-btn" id="ai-attach" type="button" disabled>＋ 图片</button>
+        <span class="attach-hint">≤10MB，自动压成 JPG 90% / 最长边 ≤4K</span>
+      </div>
+      <div id="ai-thumb"></div>
+      <textarea id="ai-text" rows="2" disabled placeholder="请在单元内选择话题…"></textarea>
+    </div>
+    <button class="btn ai-send" id="ai-send" type="submit" disabled>发送</button>
+    <input type="file" id="ai-file" accept="image/*" style="display:none">
+  </form>
+</aside>
+</div><!-- /.content-row -->
+</div><!-- /.layout -->
+<script>
+(function(){
+  var HOST = 'http://' + location.hostname + ':8101';
+  var USER_PATH = 'u0/';   // 多用户口子——固定用户路径，将来替换为每用户 id
+  var ASK = HOST + '/ask', SUGGEST = HOST + '/suggest', COMPRESS = HOST + '/compress';
+  var MAX_IMG_BYTES = 10 * 1024 * 1024;   // 上传上限 10MB
+  var MAX_SIDE = 3840;                    // 最长边压到 4K 以内
+  var JPEG_Q = 0.9;                       // 保底 JPG 90%
+  var CTX_LIMIT = 500000;                 // 每个对话的上下文上限（token），超了就压缩
+  var KEEP_RECENT = 8;                    // 压缩时保留最近 N 条不压
+  var SYS_OVERHEAD = 900;                 // 后端 system prompt 的固定开销估算
+
+  var drawer = document.getElementById('ai-drawer');
+  var msgsEl = document.getElementById('ai-msgs');
+  var textEl = document.getElementById('ai-text');
+  var sendBtn = document.getElementById('ai-send');
+  var attachBtn = document.getElementById('ai-attach');
+  var fileEl = document.getElementById('ai-file');
+  var thumbEl = document.getElementById('ai-thumb');
+  var chipsEl = document.getElementById('ai-chips');
+  var chipsLabel = document.getElementById('ai-chips-label');
+  var meterTxt = document.getElementById('ai-meter-txt');
+  var meterFill = document.getElementById('ai-meter-fill');
+  var meterEl = document.getElementById('ai-meter');
+  var cur = null;          // 当前话题（单元）
+  var history = [];        // 当前话题的完整对话
+  var pending = null;      // 待发送的图片 {dataUrl, thumb, bytes, w, h, origBytes, name}
+  var busy = false;
+  var kmEntries = {};      // 服务端 /state/all 的 entries（启动后填充）
+  window.__kmStateReady.then(function(e){ kmEntries = e || {}; });
+
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function fmt(s){
+    return esc(s)
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\n/g, '<br>');
+  }
+  function fmtSize(b){ return b >= 1048576 ? (b/1048576).toFixed(2)+' MB' : Math.round(b/1024)+' KB'; }
+  function fmtK(n){ return n >= 1000 ? (n/1000).toFixed(1) + 'K' : String(n); }
+  function hkey(id){ return USER_PATH + 'knowledge-map-ai-v1-' + id; }
+  function loadHist(id){
+    var raw = kmEntries[hkey(id)];
+    if (typeof raw !== 'string') return [];
+    try { return JSON.parse(raw) || []; } catch(e){ return []; }
+  }
+
+  // 存历史：图片只留小缩略图；防抖 300ms 写服务端（唯一数据源）
+  var histTimer = null, histId = null, histSlim = null;
+  function slimHist(h){
+    return h.map(function(m){
+      var o = { role: m.role, content: (m.content || '').slice(0, 4000) };
+      if (m.role === 'summary') o.content = m.content || '';
+      if (m.image) o.image = m.thumb || m.image;
+      return o;
+    });
+  }
+  function flushHist(){
+    if (histTimer) { clearTimeout(histTimer); histTimer = null; }
+    if (!histId) return;
+    var entries = {}; entries[hkey(histId)] = JSON.stringify(histSlim || []);
+    fetch(HOST + '/state/put', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: entries }), keepalive: true
+    }).catch(function(){ /* 失败保留内存态 */ });
+  }
+  function saveHist(id, h){
+    histId = id; histSlim = slimHist(h);
+    if (histTimer) clearTimeout(histTimer);
+    histTimer = setTimeout(flushHist, 300);
+  }
+  window.addEventListener('pagehide', flushHist);
+
+  // ---------- 上下文预算：≈ token（中文约 0.75/字，西文约 4 字符/token）----------
+  function estTokens(s){
+    if (!s) return 0;
+    var cjk = (s.match(/[\u2e80-\u9fff\u3000-\u303f\uff00-\uffef]/g) || []).length;
+    return Math.round(cjk * 0.75 + (s.length - cjk) / 4);
+  }
+  function ctxTokens(){
+    var n = SYS_OVERHEAD + estTokens(cur ? JSON.stringify(cur) : '');
+    history.forEach(function(m){ n += estTokens(m.content || '') + 6; });
+    return n;
+  }
+  function updateMeter(extra){
+    if (!meterEl) return;
+    var n = ctxTokens(), pct = Math.min(100, Math.round(n / CTX_LIMIT * 100));
+    meterTxt.textContent = '上下文 ≈' + fmtK(n) + ' / ' + fmtK(CTX_LIMIT) + '（' + pct + '%）' + (extra || '');
+    meterFill.style.width = Math.max(0.5, pct) + '%';
+    meterEl.classList.toggle('warn', pct >= 60);
+    meterEl.classList.toggle('full', pct >= 90);
+  }
+
+  // ---------- 话题状态 ----------
+  function setTopicOff(){
+    cur = null; history = []; pending = null;
+    drawer.classList.add('no-topic');
+    document.getElementById('ai-unit-id').textContent = '未选择话题';
+    document.getElementById('ai-unit-title').textContent = 'AI 辅助';
+    document.getElementById('ai-unit-domain').textContent = '在左侧 Knowledge Map 里点任意单元卡片右侧的「AI 辅助」，它就拿到那个单元的全部上下文。';
+    textEl.value = ''; textEl.disabled = true;
+    textEl.placeholder = '请在单元内选择话题…';
+    sendBtn.disabled = true; attachBtn.disabled = true;
+    renderThumb(); chipsEl.innerHTML = '';
+    msgsEl.innerHTML = '<div class="ai-empty"><p><strong>还没有话题，所以不能提问。</strong></p>' +
+      '<p>去左边 Knowledge Map 里点任意单元卡片右侧的「AI 辅助」——比如 <code>L3 四种命题与逆否等价</code>，' +
+      '面板就会拿到那个单元的本质、必会点、陷阱和自测题，然后这里就能问它了。</p></div>';
+  }
+
+  function collectUnit(node){
+    var panel = node.closest('.tabpanel');
+    var label = panel ? (panel.getAttribute('data-label') || '') : '';
+    var parts = label.split(' ');
+    var qs = [];
+    [].forEach.call(node.querySelectorAll('.quiz'), function(q){
+      var qq = q.querySelector('.qq'), ans = q.querySelector('.answerline'), why = q.querySelector('.whyline');
+      if (!qq || !ans) return;
+      qs.push({ q: qq.textContent.trim(), a: ans.textContent.replace(/^答案：/, '').trim(), why: why ? why.textContent.trim() : '' });
+    });
+    return {
+      unit_id: node.getAttribute('data-id'),
+      unit_title: (node.querySelector('.node-title h3') || {}).textContent || '',
+      domain: parts.slice(1).join(' ') || label,
+      essence: (node.querySelector('.essence') || {}).textContent || '',
+      musts: [].map.call(node.querySelectorAll('.musts li'), function(li){ return li.textContent.trim(); }),
+      traps: [].map.call(node.querySelectorAll('.traps li'), function(li){ return li.textContent.trim(); }),
+      quizzes: qs
+    };
+  }
+
+  function openTopic(node){
+    cur = collectUnit(node);
+    drawer.classList.remove('no-topic');
+    document.getElementById('ai-unit-id').textContent = cur.unit_id + ' · ' + cur.domain;
+    document.getElementById('ai-unit-title').textContent = cur.unit_title;
+    document.getElementById('ai-unit-domain').textContent = cur.essence;
+    document.getElementById('ai-ctx-body').innerHTML =
+      '<p><strong>必会</strong><br>' + cur.musts.map(esc).join('<br>') + '</p>' +
+      '<p><strong>陷阱</strong><br>' + (cur.traps.length ? cur.traps.map(esc).join('<br>') : '—') + '</p>' +
+      '<p><strong>自测题</strong><br>' + (cur.quizzes.length ? cur.quizzes.map(function(z){return esc(z.q);}).join('<br>') : '—') + '</p>';
+    document.getElementById('ai-ctx-summary').textContent = '已附带该单元上下文（' + cur.unit_id + '）';
+    history = loadHist(cur.unit_id);
+    pending = null; renderThumb();
+    textEl.disabled = false; sendBtn.disabled = false; attachBtn.disabled = false;
+    textEl.placeholder = '就「' + cur.unit_title + '」直接提问…（Enter 发送 / Shift+Enter 换行）';
+    renderHist();
+    updateMeter();
+    refreshSuggestions();
+    textEl.focus();
+  }
+
+  function renderHist(){
+    msgsEl.innerHTML = '';
+    if (!history.length){
+      msgsEl.innerHTML = '<div class="ai-empty"><p><strong>这个话题你还没问过。</strong></p>' +
+        '<p>它已经拿到本单元的本质、必会点、陷阱和自测题（含答案），直接问就行；下面的建议问题也是按这个话题现生成的。</p></div>';
+      return;
+    }
+    history.forEach(function(m){
+      if (m.role === 'summary'){ summaryBlock(m.content); return; }
+      bubble(m.role, m.content, m.image);
+    });
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+
+  function summaryBlock(text){
+    var d = document.createElement('details');
+    d.className = 'ai-summary';
+    d.innerHTML = '<summary>已压缩的更早对话（前情摘要 · ' + (text || '').length + ' 字）</summary><div>' + fmt(text || '') + '</div>';
+    msgsEl.appendChild(d);
+  }
+
+  function bubble(role, text, image){
+    var d = document.createElement('div');
+    d.className = 'ai-msg ' + role;
+    d.innerHTML = '<p class="ai-who">' + (role === 'user' ? '我' : 'AI 老师') + '</p><div class="ai-bubble">' + fmt(text || '') +
+                  (image ? '<img src="' + image + '" alt="附图">' : '') + '</div>';
+    msgsEl.appendChild(d);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    return d.querySelector('.ai-bubble');
+  }
+
+  // ---------- 建议问题：由 AI 按话题生成，随对话变化 ----------
+  function renderChips(qs){
+    chipsEl.innerHTML = '';
+    (qs || []).forEach(function(q){
+      var b = document.createElement('button');
+      b.className = 'chip'; b.type = 'button'; b.textContent = q;
+      b.addEventListener('click', function(){ if (!busy) ask(q); });
+      chipsEl.appendChild(b);
+    });
+    chipsLabel.hidden = !(qs && qs.length);
+  }
+  function refreshSuggestions(){
+    if (!cur) return;
+    var unitId = cur.unit_id, hist = history.slice(-6);
+    fetch(SUGGEST, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unit: cur, history: hist })
+    }).then(function(r){ return r.json(); })
+      .then(function(d){ if (cur && cur.unit_id === unitId) renderChips(d.questions || []); })
+      .catch(function(){ if (cur && cur.unit_id === unitId) renderChips([]); });
+  }
+
+  // ---------- 超过 500K：把更早的对话压成摘要 ----------
+  async function ensureBudget(){
+    if (!cur) return;
+    if (ctxTokens() <= CTX_LIMIT) return;
+    if (history.length <= KEEP_RECENT + 1) return;
+    var older = history.slice(0, history.length - KEEP_RECENT)
+                       .filter(function(m){ return m.role === 'user' || m.role === 'assistant'; });
+    if (!older.length) return;
+
+    busy = true; sendBtn.disabled = true; attachBtn.disabled = true;
+    updateMeter(' · 正在压缩更早的对话…');
+    var note = document.createElement('div');
+    note.className = 'ai-compressing';
+    note.textContent = '上下文超过 ' + fmtK(CTX_LIMIT) + '，正在把更早的 ' + older.length + ' 条对话压成摘要（可能 1-2 分钟）…';
+    msgsEl.appendChild(note); msgsEl.scrollTop = msgsEl.scrollHeight;
+
+    try {
+      var r = await fetch(COMPRESS, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unit: cur, messages: older })
+      });
+      var d = await r.json();
+      if (d && d.summary){
+        history = [{ role: 'summary', content: d.summary }].concat(history.slice(-KEEP_RECENT));
+        saveHist(cur.unit_id, history);
+        renderHist();
+        updateMeter(' · 已压缩 ' + older.length + ' 条');
+      } else {
+        updateMeter(' · 压缩未成功');
+      }
+    } catch(e){
+      updateMeter(' · 压缩失败：' + e.message);
+    }
+    note.remove();
+    busy = false;
+    if (cur){ sendBtn.disabled = false; attachBtn.disabled = false; }
+  }
+
+  // ---------- 图片：先压缩再上传 ----------
+  function renderThumb(){
+    thumbEl.innerHTML = '';
+    if (!pending) return;
+    var d = document.createElement('div');
+    d.className = 'thumb-wrap';
+    d.innerHTML = '<img src="' + pending.dataUrl + '" alt="待发送图片"><span class="thumb-meta">' +
+      fmtSize(pending.origBytes) + ' → ' + fmtSize(pending.bytes) + '<br>' + pending.w + '×' + pending.h + ' · JPG 90%</span>';
+    var x = document.createElement('button');
+    x.className = 'thumb-x'; x.type = 'button'; x.textContent = '✕';
+    x.addEventListener('click', function(){ pending = null; renderThumb(); });
+    d.appendChild(x);
+    thumbEl.appendChild(d);
+  }
+
+  function drawScaled(img, maxSide, q){
+    var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    var scale = Math.min(1, maxSide / Math.max(w, h));
+    var tw = Math.max(1, Math.round(w * scale)), th = Math.max(1, Math.round(h * scale));
+    var c = document.createElement('canvas'); c.width = tw; c.height = th;
+    var ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, tw, th);   // 透明底转白，避免 PNG 变黑
+    ctx.drawImage(img, 0, 0, tw, th);
+    return { url: c.toDataURL('image/jpeg', q), w: tw, h: th };
+  }
+
+  function compressImage(file){
+    return new Promise(function(resolve, reject){
+      if (!/^image\//.test(file.type || '')) { reject(new Error('只能传图片文件')); return; }
+      if (file.size > MAX_IMG_BYTES) { reject(new Error('图片 ' + fmtSize(file.size) + ' 超过 10MB 上限')); return; }
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function(){
+        var big = drawScaled(img, MAX_SIDE, JPEG_Q);      // 发给模型：JPG 90% / ≤4K
+        var small = drawScaled(img, 240, 0.62);           // 存历史：小缩略图
+        URL.revokeObjectURL(url);
+        resolve({
+          dataUrl: big.url, thumb: small.url, w: big.w, h: big.h, name: file.name || 'paste.jpg',
+          origBytes: file.size,
+          bytes: Math.round((big.url.length - big.url.indexOf(',') - 1) * 3 / 4)
+        });
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error('无法读取这张图片')); };
+      img.src = url;
+    });
+  }
+
+  function attachFile(file){
+    if (!cur) return;
+    compressImage(file).then(function(info){
+      pending = info; renderThumb();
+    }).catch(function(e){
+      alert('图片处理失败：' + e.message);
+    });
+  }
+
+  // ---------- 提问 ----------
+  async function ask(question){
+    if (busy || !cur) return;
+    var q = (question || '').trim();
+    if (!q && !pending) return;
+    if (!q && pending) q = '请看这张图片，它和本单元有什么关系？';
+
+    await ensureBudget();          // 先看上下文是否超 500K，超了先压缩
+    if (!cur) return;
+
+    var img = pending ? pending.dataUrl : null;
+    var thumb = pending ? pending.thumb : null;
+
+    busy = true; sendBtn.disabled = true; attachBtn.disabled = true;
+    [].forEach.call(chipsEl.querySelectorAll('.chip'), function(c){ c.disabled = true; });
+    if (!history.length) msgsEl.innerHTML = '';
+
+    history.push({ role: 'user', content: q, image: img, thumb: thumb });
+    saveHist(cur.unit_id, history);
+    bubble('user', q, img);
+    textEl.value = ''; pending = null; renderThumb();
+    updateMeter();
+
+    var target = bubble('assistant', '');
+    target.innerHTML = '<span class="ai-typing">思考中…</span>';
+    var acc = '';
+    try {
+      var res = await fetch(ASK, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unit: cur, question: q, image: img, history: history.slice(0, -1) })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var reader = res.body.getReader(), dec = new TextDecoder(), buf = '';
+      while (true){
+        var r = await reader.read();
+        if (r.done) break;
+        buf += dec.decode(r.value, { stream: true });
+        var lines = buf.split('\n'); buf = lines.pop();
+        for (var i = 0; i < lines.length; i++){
+          var line = lines[i].trim();
+          if (line.indexOf('data:') !== 0) continue;
+          var payload = line.slice(5).trim();
+          if (!payload) continue;
+          var obj; try { obj = JSON.parse(payload); } catch(e){ continue; }
+          if (obj.error) acc += '\n[出错] ' + obj.error;
+          if (obj.delta){ acc += obj.delta; target.innerHTML = fmt(acc); msgsEl.scrollTop = msgsEl.scrollHeight; }
+        }
+      }
+      if (!acc) acc = '（没有返回内容，可能是上游超时，再试一次。）';
+    } catch (e){
+      acc = acc || ('请求失败：' + e.message + '\n（可检查服务：' + HOST + '/health）');
+    }
+    target.innerHTML = fmt(acc);
+    history.push({ role: 'assistant', content: acc });
+    saveHist(cur.unit_id, history);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    busy = false;
+    if (cur){ sendBtn.disabled = false; attachBtn.disabled = false; }
+    updateMeter();
+    refreshSuggestions();     // 建议问题随对话变化
+  }
+
+  // ---------- 绑定 ----------
+  [].forEach.call(document.querySelectorAll('.node'), function(node){
+    var b = node.querySelector('.ai-open');
+    if (b) b.addEventListener('click', function(){ openTopic(node); });
+  });
+  document.getElementById('ai-close').addEventListener('click', setTopicOff);
+
+  attachBtn.addEventListener('click', function(){ fileEl.click(); });
+  fileEl.addEventListener('change', function(){
+    if (fileEl.files && fileEl.files[0]) attachFile(fileEl.files[0]);
+    fileEl.value = '';
+  });
+  textEl.addEventListener('paste', function(e){
+    var items = (e.clipboardData || {}).items || [];
+    for (var i = 0; i < items.length; i++){
+      if (items[i].type && items[i].type.indexOf('image') === 0){
+        e.preventDefault();
+        var f = items[i].getAsFile();
+        if (f) attachFile(f);
+        return;
+      }
+    }
+  });
+  drawer.addEventListener('dragover', function(e){ e.preventDefault(); });
+  drawer.addEventListener('drop', function(e){
+    var files = (e.dataTransfer || {}).files || [];
+    for (var i = 0; i < files.length; i++){
+      if (/^image\//.test(files[i].type)){ e.preventDefault(); attachFile(files[i]); return; }
+    }
+  });
+
+  document.getElementById('ai-form').addEventListener('submit', function(e){
+    e.preventDefault(); ask(textEl.value);
+  });
+  textEl.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); ask(textEl.value); }
+  });
+
+  setTopicOff();
+})();
+</script>
+</body>
+</html>

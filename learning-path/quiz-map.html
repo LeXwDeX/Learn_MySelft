@@ -103,6 +103,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
 
   var API = location.protocol + '//' + location.hostname + ':8101';
   var TIMEOUT = 180000;
+  var USER_PATH = 'u0/';              // 多用户口子——固定用户路径，将来替换为每用户 id
   var QUIZ_PREFIX = 'quiz-map-v1-';
   var MAP_PREFIX = 'learn-path-v1-';
   var LAST_KEY = 'learn-path-v1-last';
@@ -115,6 +116,16 @@ pre.md-code code.hljs{background:transparent;padding:0}
   }
   function param(k) {
     try { return new URLSearchParams(location.search).get(k); } catch (e) { return null; }
+  }
+  // 服务端状态键统一带固定用户前缀；扫描/匹配前先剥掉它再按原业务键逻辑
+  function stripUser(k) {
+    return (typeof k === 'string' && k.indexOf(USER_PATH) === 0) ? k.slice(USER_PATH.length) : k;
+  }
+  // 读状态：优先固定前缀键，兼容无前缀旧键
+  function entryVal(entries, bizKey) {
+    if (typeof entries[USER_PATH + bizKey] === 'string') return entries[USER_PATH + bizKey];
+    if (typeof entries[bizKey] === 'string') return entries[bizKey];
+    return undefined;
   }
   function renderMathIn(el) {
     if (!el || typeof window.renderMathInElement !== 'function') return;
@@ -192,6 +203,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
   // ============================ 查看/作答模式 ============================
   var choiceAns = {};
   var currentQs = null;
+  var currentSlug = null, currentD = null, currentRes = null, currentEntries = null;
   function quizQHtml(q, i, cur) {
     var head = '<div class="quiz-box"><p class="q">T' + (i + 1) + ' · ' +
       (q.points ? '<span class="q-points">（' + q.points + ' 分）</span> ' : '') +
@@ -231,7 +243,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
     var main = $('main');
     main.innerHTML = '<p class="tip">加载测验地图…</p>';
     fetchEntries().then(function (entries) {
-      var raw = entries[QUIZ_PREFIX + slug];
+      var raw = entryVal(entries, QUIZ_PREFIX + slug);
       if (typeof raw !== 'string') {
         main.innerHTML = '<div class="lerr">找不到这张测验地图（' + esc(slug) + '）。<br><a href="quiz-map.html">返回测验地图列表</a></div>';
         return;
@@ -256,6 +268,8 @@ pre.md-code code.hljs{background:transparent;padding:0}
 
       var qs = d.questions;
       currentQs = qs;
+      currentSlug = slug; currentD = d; currentEntries = entries;
+      currentRes = (d.lastResult && typeof d.lastResult.score === 'number') ? d.lastResult : null;
       main.innerHTML =
         '<div class="card"><p class="eyebrow">测验地图</p><h2>' + esc(d.title || '测验') + '</h2>' +
         '<p class="muted">来自《' + esc(sourceTitle) + '》 · 共 ' + qs.length + ' 题 · 满分 100 分' +
@@ -267,6 +281,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
       renderMathIn($('q-area'));
       highlightIn($('q-area'));
       $('submit').addEventListener('click', function () { submitQuiz(slug, d, qs); });
+      if (currentRes) showResult(currentRes);   // 重看历史 lastResult：直接展示结果页与飞轮按钮
     }).catch(function () {
       main.innerHTML = '<div class="lerr">无法连接服务端（' + esc(API) + '）——请稍后刷新重试。</div>';
     });
@@ -293,7 +308,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
       answers: answers
     }).then(function (res) {
       showResult(res);
-      writeBack(slug, d, res);
+      writeBack(slug, d, res, answers);
     }).catch(function (e) {
       btn.disabled = false; btn.textContent = '提交测验';
       var box = $('result-area');
@@ -313,13 +328,21 @@ pre.md-code code.hljs{background:transparent;padding:0}
         '<div class="result ' + (p.ok ? 'ok' : 'bad') + '"><strong>' + (p.ok ? '✓ 正确' : '✗ 有缺漏') + '</strong> ' +
         mdRender(p.comment || '') + '</div></div>';
     }).join('');
+    currentRes = res;
     $('result-area').innerHTML =
       '<div class="card"><p class="eyebrow">测验结果</p>' +
       '<div class="result ' + cls + '"><span class="score ' + cls + '">' + esc(res.score) + '</span> 分 — ' +
       (res.pass ? '通过 ✅' : '未通过 ❌') + '</div>' +
       (res.feedback ? '<p style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">' + mdRender(res.feedback) + '</p>' : '') +
       '<div style="height:10px"></div>' + detail +
-      '<div class="foot"><button class="btn" id="again" type="button">再做一次</button></div></div>';
+      '<div class="foot">' +
+        '<button class="btn" id="again" type="button">再做一次</button>' +
+        '<button class="btn" id="gaps-btn" type="button">AI 诊断缺漏</button>' +
+        '<button class="btn" id="refine-btn" type="button">按薄弱点细化学习地图</button>' +
+      '</div>' +
+      '<div id="gaps-area"></div>' +
+      '<div id="refine-area"></div>' +
+      '</div>';
     renderMathIn($('result-area'));
     highlightIn($('result-area'));
     var b = $('submit'); if (b) { b.disabled = true; b.textContent = '已提交'; }
@@ -331,9 +354,22 @@ pre.md-code code.hljs{background:transparent;padding:0}
       if (b) { b.disabled = false; b.textContent = '提交测验'; }
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
+    var gb = $('gaps-btn');
+    if (gb) gb.addEventListener('click', function () { runGaps(); });
+    var rb = $('refine-btn');
+    if (rb) rb.addEventListener('click', function () { runRefine(); });
+    if (currentD && currentD.gaps) renderGaps(currentD.gaps);   // 已有诊断：直接回显
   }
 
-  function writeBack(slug, d, res) {
+  function persistQuiz(slug, d) {
+    var entries = {};
+    entries[USER_PATH + QUIZ_PREFIX + slug] = JSON.stringify(d);
+    return fetch(API + '/state/put', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: entries }), keepalive: true
+    }).catch(function () { /* 回写失败不阻断作答 */ });
+  }
+  function writeBack(slug, d, res, answers) {
     var list = (d.attempts || []).slice();
     list.push({ ts: Math.floor(Date.now() / 1000), score: res.score, pass: res.pass,
                 per_question: res.per_question || [] });
@@ -341,12 +377,149 @@ pre.md-code code.hljs{background:transparent;padding:0}
     d.attempts = list;
     d.lastResult = { score: res.score, pass: res.pass, feedback: res.feedback || '',
                      per_question: res.per_question || [] };
-    var entries = {};
-    entries[QUIZ_PREFIX + slug] = JSON.stringify(d);
-    fetch(API + '/state/put', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries: entries }), keepalive: true
-    }).catch(function () { /* 回写失败不阻断作答 */ });
+    if (answers) d.lastAnswers = answers.map(function (a) { return String(a == null ? '' : a).slice(0, 600); }).slice(0, 16);
+    persistQuiz(slug, d);
+  }
+
+  // ============================ 飞轮：诊断缺漏 → 细化学习地图 ============================
+  // 本卷失分题：ok=false，或简答题未写出「思路」
+  function collectGapItems() {
+    var qs = currentQs || [];
+    var res = currentRes || (currentD && currentD.lastResult) || null;
+    var per = (res && res.per_question) || [];
+    var ans = (currentD && currentD.lastAnswers) || [];
+    var out = [];
+    qs.forEach(function (q, i) {
+      var p = per[i] || {};
+      var mine = ans[i] == null ? '' : String(ans[i]);
+      var lost = (p.ok === false);
+      if (!lost && q.type === 'short' && !/思路/.test(mine)) lost = true;
+      if (!lost) return;
+      out.push({ unit: q.point || '', q: q.q || '', mine: mine,
+                 correct: q.answer || '', explain: p.comment || '', ok: false });
+    });
+    return out;
+  }
+  function renderGaps(resp) {
+    var box = $('gaps-area');
+    if (!box) return;
+    if (!resp || !resp.gaps || !resp.gaps.length) { box.innerHTML = '<p class="tip">诊断未返回缺漏点。</p>'; return; }
+    var h = '<div style="margin-top:14px"><h4 style="margin:0 0 8px">AI 诊断缺漏</h4>';
+    if (resp.summary) h += '<p style="font-size:13.5px;white-space:pre-wrap">' + mdRender(resp.summary) + '</p>';
+    resp.gaps.forEach(function (g) {
+      h += '<div class="quiz-box"><p class="q">' + esc(g.unit || '综合') + '</p>';
+      if (g.points && g.points.length) {
+        h += '<ul style="margin:4px 0 0;padding-left:18px;font-size:13.5px">' +
+             g.points.map(function (p) { return '<li>' + mdRender(p) + '</li>'; }).join('') + '</ul>';
+      }
+      if (g.advice) h += '<div class="result">' + mdRender(g.advice) + '</div>';
+      h += '</div>';
+    });
+    h += '</div>';
+    box.innerHTML = h;
+    renderMathIn(box);
+    highlightIn(box);
+  }
+  function runGaps(onDone) {
+    var items = collectGapItems();
+    if (!items.length) {
+      alert('本卷没有失分题，无需诊断。');
+      if (onDone) onDone(null);
+      return;
+    }
+    var btn = $('gaps-btn'), old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '诊断中…'; }
+    var res = currentRes || (currentD && currentD.lastResult) || {};
+    post('/path/gaps', { items: items, score: res.score != null ? res.score : '' }).then(function (resp) {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+      currentD.gaps = resp;
+      currentD.gapsAt = Date.now();
+      persistQuiz(currentSlug, currentD);
+      renderGaps(resp);
+      if (onDone) onDone(resp);
+    }).catch(function (e) {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+      var box = $('gaps-area');
+      if (box) box.innerHTML = '<div class="lerr">诊断失败：' + esc(e.message) + '</div>';
+      if (onDone) onDone(null);
+    });
+  }
+  // 题目 point（「L<k> 标题」）→ plan.nodes[k-1].id；失败再按标题兜底
+  function pointToNid(point, plan) {
+    if (!plan || !plan.nodes) return null;
+    var s = String(point == null ? '' : point).trim();
+    var m = s.match(/^L(\d+)/);
+    if (m) {
+      var k = parseInt(m[1], 10);
+      if (k >= 1 && k <= plan.nodes.length) return plan.nodes[k - 1].id;
+    }
+    for (var i = 0; i < plan.nodes.length; i++) {
+      var t = String(plan.nodes[i].title || '');
+      if (t && s.indexOf(t) >= 0) return plan.nodes[i].id;
+    }
+    return null;
+  }
+  function buildWeaknesses(items, gaps, plan) {
+    var byNid = {}, titleOf = {};
+    plan.nodes.forEach(function (n) { titleOf[n.id] = n.title || ''; });
+    function slot(nid) {
+      if (!byNid[nid]) byNid[nid] = { nid: nid, title: titleOf[nid] || '', reasons: [], points: [] };
+      return byNid[nid];
+    }
+    // 诊断点按 unit（同样「L<k>」）归到对应节点
+    ((gaps && gaps.gaps) || []).forEach(function (g) {
+      var nid = pointToNid(g.unit, plan);
+      if (!nid) return;
+      var s = slot(nid);
+      (g.points || []).forEach(function (p) { if (s.points.indexOf(p) < 0) s.points.push(p); });
+    });
+    // 失分题按 point 归到对应节点，拼错题摘要
+    items.forEach(function (it) {
+      var nid = pointToNid(it.unit, plan);
+      if (!nid) return;   // 映射失败跳过该单元
+      var s = slot(nid);
+      s.reasons.push(it.q + (it.explain ? ' → ' + it.explain : ''));
+    });
+    return Object.keys(byNid).map(function (nid) {
+      var s = byNid[nid];
+      var reason = s.reasons.join('；').slice(0, 500) || ('本卷在该单元失分（' + (titleOf[nid] || nid) + '）');
+      return { nid: nid, title: s.title, reason: reason, points: s.points };
+    });
+  }
+  function runRefine() {
+    var btn = $('refine-btn');
+    if (!currentD) return;
+    var srcSlug = currentD.sourceSlug;
+    if (!srcSlug) { alert('这张测验地图没有关联的学习地图，无法细化。'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = '细化中…'; }
+    var restore = function () { if (btn) { btn.disabled = false; btn.textContent = '按薄弱点细化学习地图'; } };
+    var fail = function (msg) {
+      restore();
+      var box = $('refine-area');
+      if (box) box.innerHTML = '<div class="lerr">细化失败：' + esc(msg) + '</div>';
+    };
+    var go = function () {
+      var entries = currentEntries;
+      var mraw = entryVal(entries || {}, MAP_PREFIX + srcSlug);
+      var m = null;
+      try { m = JSON.parse(mraw); } catch (e) { m = null; }
+      if (!m || !m.plan || !m.plan.nodes || !m.plan.nodes.length) { fail('找不到对应学习地图的路径'); return; }
+      var weaknesses = buildWeaknesses(collectGapItems(), currentD.gaps, m.plan);
+      if (!weaknesses.length) { fail('失分题无法映射到学习地图单元'); return; }
+      post('/path/refine', {
+        key: USER_PATH + MAP_PREFIX + srcSlug,
+        spec: m.spec || {}, plan: m.plan, weaknesses: weaknesses
+      }).then(function (r) {
+        restore();
+        var box = $('refine-area');
+        if (box) box.innerHTML =
+          '<div class="result ok">已在学习地图追加 ' + ((r && r.added) || 0) + ' 个细化单元</div>' +
+          '<div class="foot"><a class="btn" href="learning-path.html?t=' + encodeURIComponent(srcSlug) + '">去学习地图 →</a></div>';
+      }).catch(function (e) { fail(e.message); });
+    };
+    if (currentD.gaps) { go(); return; }
+    // 没有诊断数据：先自动跑一次诊断，成功后再细化
+    runGaps(function (resp) { if (resp) go(); else restore(); });
   }
 
   // ============================ 选择模式 ============================
@@ -356,11 +529,12 @@ pre.md-code code.hljs{background:transparent;padding:0}
     fetchEntries().then(function (entries) {
       var maps = [], quizzes = [];
       Object.keys(entries).forEach(function (k) {
+        var biz = stripUser(k);   // 先剥用户前缀
         var v = entries[k];
         if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
-        if (k.indexOf(MAP_PREFIX) === 0 && k !== LAST_KEY) {
+        if (biz.indexOf(MAP_PREFIX) === 0 && biz !== LAST_KEY) {
           var d = null; try { d = JSON.parse(v); } catch (e) { d = null; }
-          var it = { slug: k.slice(MAP_PREFIX.length), topic: '', total: 0, done: 0 };
+          var it = { slug: biz.slice(MAP_PREFIX.length), topic: '', total: 0, done: 0 };
           if (d && typeof d === 'object') {
             if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;
             it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
@@ -369,11 +543,11 @@ pre.md-code code.hljs{background:transparent;padding:0}
             for (var nid in ns) { if (ns[nid] && ns[nid].completed) it.done++; }
           } else { it.topic = it.slug; }
           maps.push(it);
-        } else if (k.indexOf(QUIZ_PREFIX) === 0) {
+        } else if (biz.indexOf(QUIZ_PREFIX) === 0) {
           var qd = null; try { qd = JSON.parse(v); } catch (e) { qd = null; }
           if (!qd || typeof qd !== 'object') return;
           var at = qd.attempts || [];
-          quizzes.push({ slug: k.slice(QUIZ_PREFIX.length), title: qd.title || k.slice(QUIZ_PREFIX.length),
+          quizzes.push({ slug: biz.slice(QUIZ_PREFIX.length), title: qd.title || biz.slice(QUIZ_PREFIX.length),
                          count: (qd.questions || []).length,
                          last: (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number')
                                ? at[at.length - 1].score : null });
@@ -391,7 +565,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
         maps.forEach(function (m) {
           h += '<div class="lrow"><span class="lt"><span class="t">' + esc(m.topic) + '</span>' +
                '<span class="m">' + m.total + ' 节点 · 已完成 ' + m.done + '</span></span>' +
-               '<button class="btn" type="button" data-gen="' + esc(MAP_PREFIX + m.slug) + '">生成测验</button></div>';
+               '<button class="btn" type="button" data-gen="' + esc(USER_PATH + MAP_PREFIX + m.slug) + '">生成测验</button></div>';
         });
       }
       h += '</div>';

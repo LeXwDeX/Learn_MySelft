@@ -132,6 +132,19 @@ def _state_read_key(key):
     return d.get("v") if isinstance(d, dict) else None
 
 
+def _split_ukey(key):
+    """拆分「user path + 业务键」：'u0/learn-path-v1-x' → ('u0/', 'learn-path-v1-x')。
+
+    固定 user path 为 'u0/'（给多用户留口子）；无 '/' 段的旧键视为无 user（返回空段）。
+    """
+    k = (key or "").strip()
+    if "/" in k:
+        u, rest = k.split("/", 1)
+        if u and len(u) <= 32 and " " not in u:
+            return u + "/", rest
+    return "", k
+
+
 def _state_material(key):
     v = _state_read_key(key)
     if not isinstance(v, str):
@@ -319,6 +332,27 @@ func main() {
 9. 这是给**同一学员**的**专属**测验：**优先针对「最近自测」中判错的题所在的考点/误区出新题**（同一误区换角度再考）；其次选未测且已解锁的节点。
 10. 参考「作答摘录」反映的水平与思路（如简答题的思路是否完整）调整考察深度：答得浅的考点加深检验；高分且无错题的考点只少量抽查。
 11. 保持现有 JSON 结构与出题规模不变（8~16 题、合计 100 分、每题标分值、题型结构与分组规则照旧）。""",
+    "gaps": """你是老师，正在批改完学生的一次测验后做失分归因，要给学生一份「缺漏清单」。
+
+你会收到学生本次测验的失分题目（题干、学生作答、参考答案、解析）。请分析学生的知识缺漏，输出一个 JSON 对象字面量（不要解释、不要代码围栏）：
+{"summary":"两三句话总评（第二人称，指出主要问题在哪）","gaps":[{"unit":"单元或主题名称","points":["具体缺漏点1","具体缺漏点2"],"advice":"一句针对性的改进建议"}]}
+
+规则：
+1. 只分析真正失分的题目；每道失分题至少归入一个缺漏点。
+2. 缺漏点要具体：指出是哪个概念、哪一步错了，不要空话套话。
+3. 同一单元/主题的失分题合并为一个 gaps 项（每项 2~6 个缺漏点）。
+4. 面向学生本人说话（用「你」），语气像老师课后复盘：直接、具体、可执行。""",
+    "refine": """你是老师。学生在地图上有几个知识点掌握不牢（附失分或错误原因）。请把这些薄弱知识点拆解成更小、更基础的学习单元，补充进学习地图，供学生重新学习。
+
+只输出一个 JSON 对象字面量（不要解释、不要代码围栏）：
+{"units":[{"for":"<薄弱点原节点 id，原样返回>","title":"细化单元标题","essence":"一句话本质","objectives":["学完能做到…","…"]}]}
+
+规则：
+1. 每个薄弱知识点拆 2~4 个更细的单元；全部单元合计不超过 12 个。
+2. 单元要足够小、可独立学习：标题具体（直接写清内容），不要空泛。
+3. 同一个薄弱点的单元按由浅入深排序。
+4. objectives 每条一句话，面向学生可自测（「能说出…」「能区分…」「能算出…」）。
+5. 不要与已有单元重复；只针对给出的薄弱点。""",
 }
 
 
@@ -865,6 +899,51 @@ def _norm_quiz_result(obj, n):
             "feedback": clip(obj.get("feedback"), 1000), "per_question": per}
 
 
+def _norm_gaps(obj):
+    """归一缺漏诊断结果：{"summary", "gaps":[{"unit","points","advice"}]}。"""
+    if not isinstance(obj, dict):
+        return None
+    gaps = []
+    for g in (obj.get("gaps") if isinstance(obj.get("gaps"), list) else [])[:10]:
+        if not isinstance(g, dict):
+            continue
+        pts = [clip(str(p), 200) for p in (g.get("points") if isinstance(g.get("points"), list) else [])
+               if str(p).strip()][:6]
+        unit = clip(g.get("unit"), 160)
+        if not (unit or pts):
+            continue
+        gaps.append({"unit": unit, "points": pts, "advice": clip(g.get("advice"), 300)})
+    if not gaps:
+        return None
+    return {"summary": clip(obj.get("summary"), 600), "gaps": gaps}
+
+
+def _norm_refine_units(obj, plan):
+    """归一细化单元；for 必须指向 plan 里已有节点 id，否则置空。"""
+    if not isinstance(obj, dict):
+        return None
+    cur = set()
+    for n in ((plan or {}).get("nodes") or []):
+        if isinstance(n, dict) and n.get("id") is not None:
+            cur.add(str(n.get("id")))
+    out = []
+    for u in (obj.get("units") if isinstance(obj.get("units"), list) else []):
+        if not isinstance(u, dict):
+            continue
+        title = clip(u.get("title"), 120)
+        if not title:
+            continue
+        for_id = str(u.get("for") or "").strip()
+        if for_id not in cur:
+            for_id = ""
+        out.append({"for": for_id, "title": title,
+                    "essence": clip(u.get("essence"), 200),
+                    "objectives": _str_list(u.get("objectives"), 4, 160)})
+        if len(out) >= 12:
+            break
+    return out or None
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "study-assistant/1.1"
@@ -939,7 +1018,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/state/all"):
             self._json(200, {"ok": True, "entries": self._state_all()})
         elif self.path.startswith("/health"):
-            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/path/quizmap", "/state/all", "/state/put", "/state/del", "/state/delete"]})
+            self._json(200, {"status": "ok", "model": LLM_MODEL, "base": LLM_BASE, "reasoning_effort": REASONING_EFFORT or "(unset)", "endpoints": ["/ask", "/suggest", "/compress", "/path/intake", "/path/research", "/path/plan", "/path/node", "/path/quiz", "/path/requiz", "/path/quizmap", "/path/gaps", "/path/refine", "/state/all", "/state/put", "/state/del", "/state/delete"]})
         else:
             self._json(404, {"error": "not found"})
 
@@ -1269,7 +1348,8 @@ class Handler(BaseHTTPRequestHandler):
         # -- 测验地图：按学习地图 + 学习情况出一整套测验 --
         if path.startswith("/path/quizmap"):
             key = clip(str(body.get("key") or ""), 200)
-            if not (key.startswith("learn-path-v1-") and not key.endswith("-last")):
+            _u, _rest = _split_ukey(key)
+            if not (_rest.startswith("learn-path-v1-") and not _rest.endswith("-last")):
                 self._json(400, {"error": "key must be a learn-path-v1 material key"})
                 return
             gate_key = "quizmap:" + key
@@ -1387,23 +1467,148 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(502, {"error": "quizmap generation failed"})
                 return
             try:
-                src_slug = key[len("learn-path-v1-"):]
+                _u, _rest = _split_ukey(key)
+                src_slug = _rest[len("learn-path-v1-"):]
                 base_slug = src_slug + "-测验"
                 slug = base_slug
                 i = 1
-                while _state_read_key("quiz-map-v1-" + slug) is not None and i < 50:
+                while _state_read_key(_u + "quiz-map-v1-" + slug) is not None and i < 50:
                     i += 1
                     slug = base_slug + str(i)
                 store = {"kind": "quiz-map", "sourceKey": key, "sourceSlug": src_slug,
                          "title": qm["title"], "created": int(time.time()),
                          "questions": qm["questions"], "attempts": []}
-                self._state_put({"quiz-map-v1-" + slug: json.dumps(store, ensure_ascii=False)})
+                self._state_put({_u + "quiz-map-v1-" + slug: json.dumps(store, ensure_ascii=False)})
             except Exception:
                 _gen_gate_finish(gate_key, _gate, err="quizmap save failed")
                 raise
             out = {"ok": True, "slug": slug, "title": qm["title"], "count": len(qm["questions"])}
             _gen_cache_put(gate_key, out)
             _gen_gate_finish(gate_key, _gate, out=out)
+            self._json(200, out)
+            return
+
+        # -- 测验缺漏诊断（飞轮：测验结果 → 缺漏清单）--
+        if path.startswith("/path/gaps"):
+            items = []
+            for it in (body.get("items") if isinstance(body.get("items"), list) else [])[:24]:
+                if not isinstance(it, dict):
+                    continue
+                q = clip(it.get("q"), 800)
+                if not q:
+                    continue
+                items.append({"单元": clip(it.get("unit"), 160), "题目": q,
+                              "学生作答": clip(str(it.get("mine") or ""), 800),
+                              "参考答案": clip(str(it.get("correct") or ""), 800),
+                              "解析": clip(it.get("explain"), 600)})
+            if not items:
+                self._json(400, {"error": "items required"})
+                return
+            payload = {"得分": clip(str(body.get("score")), 20), "失分题": items}
+            try:
+                obj = _json_block(_upstream_nonempty([
+                    {"role": "system", "content": _path_system("gaps")},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False) + "\n请输出缺漏清单 JSON。"},
+                ], max_tokens=PATH_MAX_TOKENS, temperature=0.4))
+            except Exception as e:
+                self._json(502, {"error": "%s: %s" % (type(e).__name__, e)})
+                return
+            res = _norm_gaps(obj)
+            if res is None:
+                self._json(502, {"error": "gap analysis failed"})
+                return
+            self._json(200, res)
+            return
+
+        # -- 细化学习地图（飞轮：薄弱点 → 更细单元，写穿进该学习地图）--
+        if path.startswith("/path/refine"):
+            key = clip(body.get("key"), 200)
+            spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
+            plan = body.get("plan") if isinstance(body.get("plan"), dict) else {}
+            weak = []
+            for w in (body.get("weaknesses") if isinstance(body.get("weaknesses"), list) else [])[:8]:
+                if not isinstance(w, dict):
+                    continue
+                wid = clip(w.get("nid"), 20)
+                if not wid:
+                    continue
+                weak.append({"节点": (wid + " " + clip(w.get("title"), 120)).strip(),
+                             "原因": clip(w.get("reason"), 500),
+                             "要点": _str_list(w.get("points"), 6, 200)})
+            if not weak:
+                self._json(400, {"error": "weaknesses required"})
+                return
+            mkey = key or None
+            gate_key = (mkey + "#refine") if mkey else None
+            _gate = None
+            if gate_key:
+                _gate, _owner = _gen_gate_join(gate_key)
+                if not _owner:
+                    _gate["ev"].wait(GEN_WAIT_MAX)
+                    hit = _gate["out"] or _gen_cache_get(gate_key)
+                    if hit:
+                        self._json(200, hit)
+                    else:
+                        self._json(502, {"error": _gate["err"] or "细化生成仍在进行中，请稍后重试"})
+                    return
+            try:
+                payload = {"学习主题": clip((spec or {}).get("topic") or (plan or {}).get("title"), 160),
+                           "现有单元": [{"id": clip(n.get("id"), 20), "标题": clip(n.get("title"), 120)}
+                                        for n in ((plan.get("nodes") or [])[:48]) if isinstance(n, dict)],
+                           "薄弱点": weak}
+                obj = _json_block(_upstream_nonempty([
+                    {"role": "system", "content": _path_system("refine")},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False) + "\n请输出细化单元 JSON。"},
+                ], max_tokens=PATH_MAX_TOKENS, temperature=0.5))
+            except Exception:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="refine generation failed")
+                raise
+            units = _norm_refine_units(obj, plan)
+            if not units:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err="refine generation failed")
+                self._json(502, {"error": "refine generation failed"})
+                return
+            # 追加进 plan：续号 id + 依赖父节点（同一父的多个单元链式相接），写穿状态
+            nodes = [n for n in (plan.get("nodes") or []) if isinstance(n, dict)]
+            maxn = 0
+            for n in nodes:
+                m = re.match(r"n(\d+)$", str(n.get("id") or ""))
+                if m:
+                    maxn = max(maxn, int(m.group(1)))
+            edges = [list(e) for e in (plan.get("edges") or [])
+                     if isinstance(e, list) and len(e) == 2]
+            last_by_parent = {}
+            added = []
+            for u in units:
+                maxn += 1
+                nid = "n%d" % maxn
+                parent = u.get("for") or ""
+                prev = last_by_parent.get(parent)
+                deps = [prev] if prev else ([parent] if parent else [])
+                node = {"id": nid, "title": u.get("title"), "essence": u.get("essence"),
+                        "deps": deps, "objectives": u.get("objectives") or []}
+                nodes.append(node)
+                added.append(node)
+                for d in deps:
+                    edges.append([d, nid])
+                if parent:
+                    last_by_parent[parent] = nid
+            new_plan = dict(plan)
+            new_plan["nodes"] = nodes
+            new_plan["edges"] = edges
+            if mkey:
+                try:
+                    _state_merge_put(mkey, {"plan": new_plan})
+                except Exception as _e:
+                    print("[warn] refine state merge failed: %s" % _e, file=sys.stderr)
+            out = {"ok": True, "added": len(added),
+                   "units": [{"for": u.get("for"), "title": u.get("title")} for u in units],
+                   "plan": new_plan}
+            if gate_key:
+                _gen_cache_put(gate_key, out)
+                _gen_gate_finish(gate_key, _gate, out=out)
             self._json(200, out)
             return
 

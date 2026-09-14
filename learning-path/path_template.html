@@ -105,6 +105,7 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .status.unlocked{color:var(--accent);border-color:rgba(235,108,54,.4);background:var(--accent-tint)}
 .status.done{color:var(--ok);border-color:rgba(47,125,93,.4);background:rgba(47,125,93,.08)}
 .status.failed{color:#b23a48;border-color:rgba(178,58,72,.4);background:rgba(178,58,72,.07)}
+.status.generating{color:var(--accent);border-color:rgba(235,108,54,.4);background:var(--accent-tint)}
 .legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--muted);margin:14px 0 0}
 .legend i{width:10px;height:4px;border-radius:2px;display:inline-block;margin-right:6px}
 .empty-note{color:var(--soft);font-size:13.5px}
@@ -278,6 +279,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       <span class="ptext" id="progress-text">已完成 0/0</span>
     </div>
     <button class="btn" id="quizmap-btn" type="button" hidden>生成测验</button>
+    <button class="btn" id="gen-all-btn" type="button" hidden>一键生成全部节点</button>
     <button class="btn" id="review-filter-btn" type="button" hidden>只看需复习 (0)</button>
     <div class="lib-wrap" id="lib-wrap">
       <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>

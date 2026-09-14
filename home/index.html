@@ -22,6 +22,7 @@ h1{font-family:var(--serif);font-weight:400;font-size:38px;margin:0 0 10px;lette
 .sub{color:var(--muted);margin:0 0 30px;max-width:76ch}
 .rule{height:1px;background:var(--rule);border:0;margin:0 0 30px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:stretch}
+a.tool.wide{grid-column:1/-1}
 a.tool{display:flex;flex-direction:column;background:var(--paper2);border:1px solid var(--rule);border-top:3px solid var(--rule);border-radius:8px;padding:24px 26px;text-decoration:none;color:inherit}
 a.tool:hover{border-color:var(--soft);border-top-color:var(--accent)}
 .tool .no{font-family:var(--mono);font-size:11px;color:var(--soft);letter-spacing:.14em;text-transform:uppercase}
@@ -89,6 +90,18 @@ footer .fixed{color:var(--ink)}
       <span class="go">打开测验地图 →</span>
     </a>
 
+    <a class="tool wide" href="/diagram-design/learning-path/junior-math-linalg.html">
+      <span class="no">03 · Knowledge Map · 知识地图</span>
+      <h2>数学知识地图</h2>
+      <p class="desc">32 个知识点（初中数学到线性代数 7 天冲刺），含四态标记与单元级 AI 辅助。</p>
+      <ul>
+        <li>每个知识点只做三件事：<b>看懂本质、避开陷阱、通过自测</b></li>
+        <li>四态标记（未学 / 学习中 / 已掌握 / 需复习）+ 单元级 AI 问答，进度同步服务端</li>
+      </ul>
+      <p class="path">/diagram-design/learning-path/junior-math-linalg.html</p>
+      <span class="go">打开知识地图 →</span>
+    </a>
+
   </div>
 
   <section class="libsec">
@@ -96,6 +109,13 @@ footer .fixed{color:var(--ink)}
       <h2>学习资料库</h2>
       <span class="hint">动态扫描 · 服务端数据</span>
       <span class="libn" id="lib-n"></span>
+    </div>
+    <div class="librows" style="margin-bottom:16px">
+      <p class="hint" style="margin:0 0 8px">常驻资料</p>
+      <a class="lrow" href="/diagram-design/learning-path/junior-math-linalg.html">
+        <span class="lt"><span class="t">数学知识地图</span><span class="m">初中数学 → 线性代数 · 32 知识点 · 常驻</span></span>
+        <span class="go">打开 →</span>
+      </a>
     </div>
     <div class="librows" id="lib-list"></div>
   </section>
@@ -114,8 +134,12 @@ footer .fixed{color:var(--ink)}
 (function () {
   'use strict';
   var API = location.protocol + '//' + location.hostname + ':8101';
+  var USER_PATH = 'u0/';   // 多用户口子——固定用户路径；扫描前先剥掉
   var PREFIX = 'learn-path-v1-', LAST = 'learn-path-v1-last';
   var QUIZ_PREFIX = 'quiz-map-v1-';
+  function stripUser(k) {
+    return (typeof k === 'string' && k.indexOf(USER_PATH) === 0) ? k.slice(USER_PATH.length) : k;
+  }
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -159,12 +183,13 @@ footer .fixed{color:var(--ink)}
   fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
     var entries = (j && j.entries) || {}, maps = [], quizzes = [], mapTopics = {};
     Object.keys(entries).forEach(function (k) {
-      if (k.indexOf(PREFIX) !== 0 || k === LAST) return;
+      var biz = stripUser(k);   // 先剥用户前缀，再按原业务键逻辑
+      if (biz.indexOf(PREFIX) !== 0 || biz === LAST) return;
       var v = entries[k];
       if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
       var d = null;
       try { d = JSON.parse(v); } catch (e) { d = null; }
-      var it = { slug: k.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
+      var it = { slug: biz.slice(PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
       if (d && typeof d === 'object') {
         if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;   // 跳过历史空壳
         it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
@@ -177,7 +202,8 @@ footer .fixed{color:var(--ink)}
       maps.push(it);
     });
     Object.keys(entries).forEach(function (k) {
-      if (k.indexOf(QUIZ_PREFIX) !== 0) return;
+      var biz = stripUser(k);   // 先剥用户前缀
+      if (biz.indexOf(QUIZ_PREFIX) !== 0) return;
       var v = entries[k];
       if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
       var d = null;
@@ -185,7 +211,7 @@ footer .fixed{color:var(--ink)}
       if (!d || typeof d !== 'object') return;
       var at = d.attempts || [];
       var last = (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number') ? at[at.length - 1].score : null;
-      quizzes.push({ slug: k.slice(QUIZ_PREFIX.length), title: d.title || k.slice(QUIZ_PREFIX.length),
+      quizzes.push({ slug: biz.slice(QUIZ_PREFIX.length), title: d.title || biz.slice(QUIZ_PREFIX.length),
                      count: (d.questions || []).length, last: last,
                      source: mapTopics[d.sourceKey] || d.sourceSlug || '' });
     });

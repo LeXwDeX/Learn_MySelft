@@ -105,6 +105,7 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .status.unlocked{color:var(--accent);border-color:rgba(235,108,54,.4);background:var(--accent-tint)}
 .status.done{color:var(--ok);border-color:rgba(47,125,93,.4);background:rgba(47,125,93,.08)}
 .status.failed{color:#b23a48;border-color:rgba(178,58,72,.4);background:rgba(178,58,72,.07)}
+.status.generating{color:var(--accent);border-color:rgba(235,108,54,.4);background:var(--accent-tint)}
 .legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--muted);margin:14px 0 0}
 .legend i{width:10px;height:4px;border-radius:2px;display:inline-block;margin-right:6px}
 .empty-note{color:var(--soft);font-size:13.5px}
@@ -278,6 +279,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       <span class="ptext" id="progress-text">已完成 0/0</span>
     </div>
     <button class="btn" id="quizmap-btn" type="button" hidden>生成测验</button>
+    <button class="btn" id="gen-all-btn" type="button" hidden>一键生成全部节点</button>
     <button class="btn" id="review-filter-btn" type="button" hidden>只看需复习 (0)</button>
     <div class="lib-wrap" id="lib-wrap">
       <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>
@@ -376,8 +378,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 
   var API = location.protocol + '//' + location.hostname + ':8101';
   var TIMEOUT = 180000;               // 单次调用最长 180s（后端推理可能 30~90s）
+  var USER_PATH = 'u0/';              // 多用户口子——固定用户路径，将来替换为每用户 id
   var STORE_PREFIX = 'learn-path-v1-';
-  var LAST_KEY = 'learn-path-v1-last'; // 指向最近一次会话的 slug
+  var LAST_KEY = USER_PATH + 'learn-path-v1-last'; // 指向最近一次会话的 slug（带用户前缀）
 
   var state = {
     stage: 'intake',                  // intake | research | learning
@@ -413,6 +416,16 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   function slug(s) {
     return String(s || 'untitled').toLowerCase()
       .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'untitled';
+  }
+  // 服务端状态键统一带固定用户前缀；做前缀匹配/列表扫描前先剥掉它再按原业务键逻辑处理
+  function stripUser(k) {
+    return (typeof k === 'string' && k.indexOf(USER_PATH) === 0) ? k.slice(USER_PATH.length) : k;
+  }
+  // 读状态：优先固定前缀键，兼容无前缀旧键（迁移未覆盖时的兜底）
+  function entryVal(entries, bizKey) {
+    if (typeof entries[USER_PATH + bizKey] === 'string') return entries[USER_PATH + bizKey];
+    if (typeof entries[bizKey] === 'string') return entries[bizKey];
+    return undefined;
   }
   // KaTeX：把 $...$ / $$...$$ 渲染成公式（失败不影响正文）
   function renderMathIn(el) {
@@ -464,8 +477,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     out += mdText(src.slice(last));
     return out;
   }
-  function storeKey() { return STORE_PREFIX + slug(state.topic); }
-  function aiKey() { return 'learn-ai-v1-' + slug(state.topic); }
+  function storeKey() { return USER_PATH + STORE_PREFIX + slug(state.topic); }
+  function aiKey() { return USER_PATH + 'learn-ai-v1-' + slug(state.topic); }
   // 答案框自动扩展：随输入增高（以 CSS min-height 为下限）
   function bindAutoGrow(el) {
     if (!el || el.__ag) return;
@@ -569,9 +582,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       // 支持 ?t=<slug> 深链（从「学习资料库」直接打开某份资料）；无参则从零开始新生成
       var s = null;
       try { s = new URLSearchParams(location.search).get('t'); } catch (e2) { s = null; }
-      if (s && typeof entries[STORE_PREFIX + s] !== 'string') s = null;   // 指定的资料不存在则回退
+      if (s && typeof entryVal(entries, STORE_PREFIX + s) !== 'string') s = null;   // 指定的资料不存在则回退
       if (!s) return false;   // 无参数 = 全新开始；已有资料请从「学习资料库」进入
-      var raw = entries[STORE_PREFIX + s];
+      var raw = entryVal(entries, STORE_PREFIX + s);
       if (typeof raw !== 'string') return false;
       var d; try { d = JSON.parse(raw); } catch (e3) { return false; }
       if (!d || typeof d !== 'object') return false;
@@ -589,7 +602,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       state.nodeState = d.nodeState || {};
       state.pending = (d.pending && typeof d.pending === 'object') ? d.pending : null;
       state.aiHist = {};
-      var aiRaw = entries['learn-ai-v1-' + s];
+      var aiRaw = entryVal(entries, 'learn-ai-v1-' + s);
       if (typeof aiRaw === 'string') {
         var aiD = null; try { aiD = JSON.parse(aiRaw); } catch (e4) { aiD = null; }
         if (aiD && typeof aiD === 'object') state.aiHist = aiD;
@@ -600,11 +613,11 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       // 历史「untitled」空壳键修复：主题可读后迁移到正确键名（旧键删除）
       var fixSlug = slug(state.topic);
       if (s === 'untitled' && fixSlug && fixSlug !== 'untitled') {
-        delState([STORE_PREFIX + 'untitled']);
+        delState([USER_PATH + STORE_PREFIX + 'untitled', STORE_PREFIX + 'untitled']);
         save();
         s = fixSlug;
       }
-      if (entries[LAST_KEY] !== s) {
+      if (entryVal(entries, 'learn-path-v1-last') !== s) {
         var o = {}; o[LAST_KEY] = s; putState(o);
       }
       return true;
@@ -668,6 +681,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     $('stage-learning').hidden = s !== 'learning';
     var qb = $('quizmap-btn');
     if (qb) qb.hidden = !(s === 'learning' && state.plan);
+    var ga = $('gen-all-btn');
+    if (ga) ga.hidden = !(s === 'learning' && state.plan);
     var rf = $('review-filter-btn');
     if (rf) rf.hidden = !(s === 'learning' && state.plan);
     if (rf) updateReviewFilterBtn();
@@ -927,6 +942,14 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var p = state.pending;
     if (!p || !p.kind) return false;
     if (!pendingAlive(p, Date.now())) { state.pending = null; save(); return false; }
+    if (p.kind === 'nodes') {   // 批量生成中断：剔除已完成的，继续生成剩余
+      var rem = (p.remaining || []).filter(function (id) { return id && !state.nodeDetail[id]; });
+      state.pending = null; save();
+      if (!rem.length) { hideResumeBar(); return false; }
+      showResumeBar('上次批量生成未完成，继续生成剩余 ' + rem.length + ' 个节点…');
+      genAllStart(rem);
+      return true;
+    }
     if (pendingHasResult(p, state)) {
       var wasNode = (p.kind === 'node' && p.nid && state.nodeDetail[p.nid]);
       state.pending = null; resumeAttempts = 0; save();
@@ -1169,22 +1192,20 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     if (!scope) return;
     activeScope = scope;
     if (state.nodeDetail[id]) { renderNodeDetail(id); return; }
+    if (genAllRunning) {   // 批量进行中：忽略单节点生成并轻提示
+      scope.innerHTML = '<p class="tip">批量生成进行中，请稍候…</p>';
+      return;
+    }
     if (generatingNode === id) {   // 已在生成：重建后仍显示卡内 loading，不重复请求
       scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
       return;
     }
     if (!isUnlocked(id) && !isDone(id)) return;
-    var n = nodeById(id);
     scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
     requestAnimationFrame(drawEdges);
     generatingNode = id;
     setPending('node', id);
-    post('/path/node', {
-      spec: state.spec,
-      node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
-      dep_titles: depTitles(id),
-      key: storeKey()
-    }).then(function (detail) {
+    requestNodeDetail(id).then(function (detail) {
       generatingNode = null;
       state.nodeDetail[id] = detail;
       state.pending = null; resumeAttempts = 0; hideResumeBar();
@@ -1258,6 +1279,131 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   }
   var aiBusy = false;
   var AI_SUGGEST = ['讲讲本单元的重点', '出个小题目考我', '我哪里最容易出错？'];
+
+  // ---------- Part H：一键生成全部节点（含未解锁节点） ----------
+  var genAllRunning = false;      // 批量生成进行中
+  var genAllPaused = false;       // 用户请求暂停（当前节点完成后停）
+  var genAllQueue = [];           // 本轮待处理队列（失败会移出队列、留在 remaining）
+  var genAllRemaining = [];       // 尚未成功生成的节点 id（含失败）
+  var genAllTotal = 0;            // 本轮起始缺失总数
+  var genAllIdx = 0;              // 已开始处理的序号
+  var genAllTimer = null;         // 按钮短暂文案计时器
+
+  // 缺失节点：state.plan.nodes 中 nodeDetail 为空的（含未解锁）
+  function missingNodeIds() {
+    var nodes = (state.plan && state.plan.nodes) || [];
+    return nodes.filter(function (n) { return !state.nodeDetail[n.id]; }).map(function (n) { return n.id; });
+  }
+  function genAllBtnSet(text) { var b = $('gen-all-btn'); if (b) b.textContent = text; }
+  function genAllBtnIdleLater(ms, text) {
+    genAllBtnSet(text);
+    if (genAllTimer) clearTimeout(genAllTimer);
+    genAllTimer = setTimeout(function () {
+      genAllTimer = null;
+      if (!genAllRunning) genAllBtnSet('一键生成全部节点');
+    }, ms);
+  }
+  function genAllSyncPending() {
+    if (!genAllRemaining.length) { state.pending = null; }
+    else { state.pending = { kind: 'nodes', nid: null, at: Date.now(), remaining: genAllRemaining.slice() }; }
+    save();
+  }
+  // 卡片头部「生成中…」态（逐卡切换）
+  function setCardGenState(id, on) {
+    var card = $('node-' + id);
+    if (!card) return;
+    var st = card.querySelector('.status');
+    if (!st) return;
+    if (on) {
+      st.dataset.prevCls = st.className;
+      st.dataset.prevHtml = st.innerHTML;
+      st.className = 'status generating';
+      st.innerHTML = '<span class="spinner"></span>生成中…';
+    } else if (st.dataset.prevHtml != null) {
+      st.className = st.dataset.prevCls || 'status';
+      st.innerHTML = st.dataset.prevHtml;
+      delete st.dataset.prevHtml;
+      delete st.dataset.prevCls;
+    }
+  }
+  // 纯请求：生成某节点的学习材料（不含 UI，供单卡与批量复用）
+  function requestNodeDetail(id) {
+    var n = nodeById(id);
+    return post('/path/node', {
+      spec: state.spec,
+      node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
+      dep_titles: depTitles(id),
+      key: storeKey()
+    });
+  }
+  function genAllStart(ids) {
+    if (!ids || !ids.length) return;
+    genAllRunning = true; genAllPaused = false;
+    genAllQueue = ids.slice();
+    genAllRemaining = ids.slice();
+    genAllTotal = ids.length;
+    genAllIdx = 0;
+    if (genAllTimer) { clearTimeout(genAllTimer); genAllTimer = null; }
+    showResumeBar('正在批量生成学习材料（' + ids.length + ' 个节点）…');
+    genAllSyncPending();
+    genAllStep();
+  }
+  function genAllStep() {
+    if (genAllPaused) { genAllFinish('paused'); return; }
+    while (genAllQueue.length && state.nodeDetail[genAllQueue[0]]) {   // 跳过已生成的
+      var doneId = genAllQueue.shift();
+      var ri = genAllRemaining.indexOf(doneId);
+      if (ri >= 0) genAllRemaining.splice(ri, 1);
+    }
+    if (!genAllQueue.length) { genAllFinish('done'); return; }
+    var id = genAllQueue[0];
+    genAllIdx++;
+    genAllBtnSet('生成中 ' + genAllIdx + '/' + genAllTotal + '（点击暂停）');
+    setCardGenState(id, true);
+    requestNodeDetail(id).then(function (detail) {
+      setCardGenState(id, false);
+      state.nodeDetail[id] = detail;
+      var i0 = genAllRemaining.indexOf(id); if (i0 >= 0) genAllRemaining.splice(i0, 1);
+      genAllQueue.shift();
+      genAllSyncPending();
+      if (expandedId === id) renderNodeDetail(id);
+      genAllStep();
+    }).catch(function () {
+      setCardGenState(id, false);
+      genAllQueue.shift();   // 失败：留在 genAllRemaining，继续下一个
+      genAllStep();
+    });
+  }
+  function genAllFinish(reason) {
+    genAllRunning = false;
+    if (reason === 'paused') {
+      genAllPaused = false;
+      state.pending = null; save();
+      hideResumeBar();
+      genAllBtnSet('一键生成全部节点');
+      return;
+    }
+    if (genAllRemaining.length) {   // 结束但有失败：保留 pending，按钮短暂提示，再点=重试剩余
+      genAllSyncPending();
+      hideResumeBar();
+      genAllBtnIdleLater(4000, '生成完成（' + genAllRemaining.length + ' 个失败，可重试）');
+    } else {
+      state.pending = null; save();
+      hideResumeBar();
+      genAllBtnIdleLater(2000, '已全部生成 ✓');
+    }
+  }
+  function onGenAllClick() {
+    if (!(state.stage === 'learning' && state.plan)) return;
+    if (genAllRunning) {   // 运行中再点 = 暂停（当前节点完成后停）
+      genAllPaused = true;
+      genAllBtnSet('暂停中…（等待当前节点完成）');
+      return;
+    }
+    var ids = missingNodeIds();
+    if (!ids.length) { genAllBtnIdleLater(2000, '已全部生成 ✓'); return; }
+    genAllStart(ids);
+  }
   function aiClip(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) : s; }
   // 纯函数：取最近 n 条用于请求（不含本次问）
   function aiHistTail(arr, n) {
@@ -1522,6 +1668,10 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       if (qs.length && !isDone(id) && typeof prev.score === 'number') actions += '<button class="btn" id="redo-quiz" type="button">换新题，再试一次</button>';
       if (isDone(id)) actions += '<span class="tip">✅ 已完成</span>';
     }
+    // 自测未过（<60）：按薄弱点细化学习地图
+    var lowScore = (typeof prev.score === 'number' && prev.score < 60) ||
+      !!(prev.lastResult && typeof prev.lastResult.score === 'number' && prev.lastResult.score < 60);
+    if (qs.length && lowScore) actions += '<button class="btn" id="refine-node" type="button" style="font-size:12px">按薄弱点细化</button>';
     var matPane =
       '<div class="panel-sec"><h4>学习正文</h4><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
       listSection('要点', d.key_points) +
@@ -1574,6 +1724,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     if (bRedo) bRedo.addEventListener('click', function () { redoQuiz(id); });
     var bComp = scope.querySelector('#complete-node');
     if (bComp) bComp.addEventListener('click', function () { completeNode(id); });
+    var bRefine = scope.querySelector('#refine-node');
+    if (bRefine) bRefine.addEventListener('click', function () { refineNode(id); });
     requestAnimationFrame(drawEdges);
   }
 
@@ -1727,6 +1879,44 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     renderPlan();   // 重建后会自动恢复展开并重渲染卡内内容（状态→已完成）
   }
 
+  // 卡内「按薄弱点细化」：把本节点自测的薄弱点提交给 /path/refine（key 必须为学习地图键）
+  function perQuestionSummary(per) {
+    if (!per || !per.length) return '';
+    var parts = [];
+    per.forEach(function (p, i) {
+      if (p && p.ok === false) parts.push('第 ' + (i + 1) + ' 题：' + (p.comment || '有缺漏'));
+    });
+    return parts.length ? '；错题：' + parts.join('；') : '';
+  }
+  function refineNode(id) {
+    var n = nodeById(id);
+    var st = state.nodeState[id] || {};
+    var lr = st.lastResult || {};
+    var scope = cardContentEl(id);
+    var btn = scope ? scope.querySelector('#refine-node') : null;
+    var reason = ((lr.feedback || '') + perQuestionSummary(lr.per_question)).slice(0, 500);
+    if (!reason) reason = '本单元自测未通过（' + (typeof st.score === 'number' ? st.score : '') + ' 分）';
+    if (btn) { btn.disabled = true; btn.textContent = '细化中…'; }
+    post('/path/refine', {
+      key: storeKey(),
+      spec: state.spec,
+      plan: state.plan,
+      weaknesses: [{ nid: id, title: n ? n.title : '', reason: reason, points: [] }]
+    }).then(function (r) {
+      if (btn) { btn.disabled = false; btn.textContent = '按薄弱点细化'; }
+      if (r && r.plan) {
+        normalizePlan(r.plan);
+        state.plan = r.plan;
+        save();
+        renderPlan();
+        alert('已追加 ' + ((r.added) || 0) + ' 个细化单元（在列表末尾）');
+      }
+    }).catch(function (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '按薄弱点细化'; }
+      showError('细化失败：' + e.message, function () { refineNode(id); });
+    });
+  }
+
   // ---------- 生成测验地图（按学习地图 + 学习情况） ----------
   function genQuizMap() {
     if (!(state.stage === 'learning' && state.plan)) return;
@@ -1753,6 +1943,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     selectedId = null; busy = false;
     expandedId = null; activeScope = null; generatingNode = null;
     reviewFilter = false; aiBusy = false; resumeAttempts = 0;
+    genAllRunning = false; genAllPaused = false; genAllQueue = []; genAllRemaining = [];
+    if (genAllTimer) { clearTimeout(genAllTimer); genAllTimer = null; }
     matTab = 'material'; matTabOwner = null; lastQuizShown = null;
     hideResumeBar();
     hideError();
@@ -1773,12 +1965,13 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       var entries = (j && j.entries) || {}, out = [];
       Object.keys(entries).forEach(function (k) {
-        if (k.indexOf(STORE_PREFIX) !== 0 || k === LAST_KEY) return;
+        var biz = stripUser(k);   // 先剥用户前缀，再按原业务键逻辑处理
+        if (biz.indexOf(STORE_PREFIX) !== 0 || biz === 'learn-path-v1-last') return;
         var v = entries[k];
         if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
         var d = null;
         try { d = JSON.parse(v); } catch (e) { d = null; }
-        var it = { slug: k.slice(STORE_PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
+        var it = { key: k, slug: biz.slice(STORE_PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
         if (d && typeof d === 'object') {
           if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;   // 跳过历史空壳
           it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
@@ -1801,13 +1994,14 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     return fetch(API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
       var entries = (j && j.entries) || {}, out = [];
       Object.keys(entries).forEach(function (k) {
-        if (k.indexOf(QUIZ_PREFIX) !== 0) return;
+        var biz = stripUser(k);   // 先剥用户前缀
+        if (biz.indexOf(QUIZ_PREFIX) !== 0) return;
         var v = entries[k];
         if (typeof v !== 'string') return;   // 跳过已删除（墓碑）键
         var d = null;
         try { d = JSON.parse(v); } catch (e) { d = null; }
         if (!d || typeof d !== 'object') return;
-        var it = { slug: k.slice(QUIZ_PREFIX.length), title: d.title || k.slice(QUIZ_PREFIX.length),
+        var it = { key: k, slug: biz.slice(QUIZ_PREFIX.length), title: d.title || biz.slice(QUIZ_PREFIX.length),
                    count: (d.questions || []).length, last: null };
         var at = d.attempts || [];
         if (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number') {
@@ -1838,7 +2032,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
           h += '<div class="lib-row">' +
                '<a class="lib-item" href="learning-path.html?t=' + encodeURIComponent(it.slug) + '">' +
                '<span class="t">' + esc(it.topic) + '</span><span class="m">' + esc(meta) + '</span></a>' +
-               '<button class="lib-del" type="button" data-slug="' + esc(it.slug) + '" data-topic="' + esc(it.topic) + '" title="删除这份资料">🗑</button>' +
+               '<button class="lib-del" type="button" data-slug="' + esc(it.slug) + '" data-topic="' + esc(it.topic) + '" data-key="' + esc(it.key) + '" title="删除这份资料">🗑</button>' +
                '</div>';
         }
       }
@@ -1852,7 +2046,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
           h += '<div class="lib-row">' +
                '<a class="lib-item" href="quiz-map.html?t=' + encodeURIComponent(q.slug) + '">' +
                '<span class="t">' + esc(q.title) + '</span><span class="m">' + esc(qmeta) + '</span></a>' +
-               '<button class="lib-del" type="button" data-slug="' + esc(q.slug) + '" data-topic="' + esc(q.title) + '" data-key="' + esc(QUIZ_PREFIX + q.slug) + '" title="删除这份资料">🗑</button>' +
+               '<button class="lib-del" type="button" data-slug="' + esc(q.slug) + '" data-topic="' + esc(q.title) + '" data-key="' + esc(q.key) + '" title="删除这份资料">🗑</button>' +
                '</div>';
         }
       }
@@ -1903,7 +2097,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   function submitDel() {
     if (!delSlug) return;
     var target = delSlug;
-    var key = delKey || (STORE_PREFIX + target);
+    var key = delKey || (USER_PATH + STORE_PREFIX + target);
     var pass = ($('dm-pass') || {}).value || '';
     fetch(API + '/state/delete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1952,6 +2146,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       if (e.key === 'Escape' && !$('del-modal').hidden) closeDelModal();
     });
     $('quizmap-btn').addEventListener('click', genQuizMap);
+    var gab = $('gen-all-btn');
+    if (gab) gab.addEventListener('click', onGenAllClick);
     var rfb = $('review-filter-btn');
     if (rfb) rfb.addEventListener('click', function () {
       reviewFilter = !reviewFilter;
