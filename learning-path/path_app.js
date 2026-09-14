@@ -7,7 +7,7 @@
   'use strict';
 
   var API = location.protocol + '//' + location.hostname + ':8101';
-  var TIMEOUT = 180000;               // 单次调用最长 180s（后端推理可能 30~90s）
+  var TIMEOUT = 360000;               // 单次调用最长 180s（后端推理可能 30~90s）
   var USER_PATH = 'u0/';              // 多用户口子——固定用户路径，将来替换为每用户 id
   var STORE_PREFIX = 'learn-path-v1-';
   var LAST_KEY = USER_PATH + 'learn-path-v1-last'; // 指向最近一次会话的 slug（带用户前缀）
@@ -125,31 +125,49 @@
 
   // ---------- 服务端读写（页面不做任何本地保存；所有数据只在服务端） ----------
   var pendingEntries = null, saveTimer = null;
+  var stateWrites = [], blockedStateKeys = {};
   function putState(entries) {
-    try {
-      fetch(API + '/state/put', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries: entries }), keepalive: true
-      }).catch(function () {
-        var retry = entries;
-        setTimeout(function () {
-          try {
-            fetch(API + '/state/put', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ entries: retry })
-            }).catch(function () {});
-          } catch (e) {}
-        }, 1500);
+    function send(keepalive) {
+      var allowed = {};
+      Object.keys(entries).forEach(function (key) {
+        if (!blockedStateKeys[key]) allowed[key] = entries[key];
       });
-    } catch (e) {}
-  }
-  function delState(keys) {
-    try {
-      fetch(API + '/state/del', {
+      if (!Object.keys(allowed).length) return Promise.resolve();
+      var body = JSON.stringify({ entries: allowed });
+      return fetch(API + '/state/put', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keys: keys }), keepalive: true
-      }).catch(function () {});
-    } catch (e) {}
+        body: body, keepalive: !!keepalive && new Blob([body]).size <= 60000
+      }).then(function (r) {
+        if (!r.ok) throw new Error('保存失败（' + r.status + '）');
+      });
+    }
+    var write = send(true).catch(function () {
+      return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return send(false); });
+    }).catch(function (error) { console.warn('save failed', error); });
+    stateWrites.push(write);
+    write.then(function () { stateWrites = stateWrites.filter(function (item) { return item !== write; }); });
+    return write;
+  }
+  function deleteState(keys, password) {
+    keys.forEach(function (key) {
+      blockedStateKeys[key] = true;
+      if (pendingEntries) delete pendingEntries[key];
+    });
+    if (pendingEntries && !Object.keys(pendingEntries).length) pendingEntries = null;
+    // Drain earlier saves before the tombstone; subsequent callbacks cannot resurrect it.
+    return Promise.all(stateWrites.slice()).then(function () {
+      return fetch(API + '/state/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: keys, password: password })
+      });
+    }).then(function (r) { return r.json(); }).then(function (result) {
+      if (!result.ok) throw new Error(result.error || '删除失败');
+      return result;
+    }).catch(function (error) {
+      keys.forEach(function (key) { delete blockedStateKeys[key]; });
+      if (keys.indexOf(storeKey()) >= 0) save();
+      throw error;
+    });
   }
   function flushSave() {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
@@ -179,7 +197,7 @@
   function save() {
     try {
       // 没有主题就不写：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
-      if (!state.topic) return;
+      if (!state.topic || blockedStateKeys[storeKey()]) return;
       var payload = {
         stage: state.stage, topic: state.topic, history: state.history,
         spec: state.spec, queries: state.queries, sources: state.sources,
@@ -192,9 +210,6 @@
       pendingEntries[LAST_KEY] = slug(state.topic);
       if (!saveTimer) saveTimer = setTimeout(flushSave, 350);
     } catch (e) { console.warn('save failed', e); }
-  }
-  function clearSave() {
-    delState([storeKey(), LAST_KEY, aiKey()]);
   }
   // AI 辅助对话单独一个 key（learn-ai-v1-<slug>），与材料 save() 互不干扰
   function saveAi() {
@@ -240,10 +255,9 @@
       // 状态自洽性：learning 必须有 plan
       if (state.stage === 'learning' && !state.plan) state.stage = 'research';
       if (state.stage === 'research' && !state.spec) state.stage = 'intake';
-      // 历史「untitled」空壳键修复：主题可读后迁移到正确键名（旧键删除）
+      // 历史键修复：先保存正确键；旧副本保留，用户可通过密码删除。
       var fixSlug = slug(state.topic);
       if (s === 'untitled' && fixSlug && fixSlug !== 'untitled') {
-        delState([USER_PATH + STORE_PREFIX + 'untitled', STORE_PREFIX + 'untitled']);
         save();
         s = fixSlug;
       }
@@ -343,13 +357,6 @@
   // ---------- 图状态 ----------
   // 显示层编号：学习单元 n1 → L1（内部 id / 数据键 / DOM id 一律不动）
   function dispId(id) { return String(id).replace(/^n(\d+)$/, 'L$1'); }
-  // 老题目没有 points 时的均分值：100/n 向下取整，余数从最后一题向前每题 +1（与服务端 _fix_points 一致）
-  function evenPts(n) {
-    var out = [], base = Math.floor(100 / n), rem = 100 % n;
-    for (var i = 0; i < n; i++) out.push(base);
-    for (var j = 0; j < rem; j++) out[n - 1 - j] += 1;
-    return out;
-  }
   function nodeById(id) {
     if (!state.plan) return null;
     for (var i = 0; i < state.plan.nodes.length; i++) if (state.plan.nodes[i].id === id) return state.plan.nodes[i];
@@ -1210,58 +1217,9 @@
   }
 
   // ---------- 自测题渲染（选择题点选 / 填空·简答文本作答） ----------
-  var choiceAns = {};   // { 题号: 字母 } —— 选择题当前选择
   var matTab = 'material';     // 单元内选项卡：material | quiz（仅前端内存）
   var matTabOwner = null;      // 当前选项卡归属的节点
   var lastQuizShown = null;    // {id, res} 最近一次提交结果（展示在「测验」tab 内）
-  function answerLine(q) {
-    if (q.options && q.options.length) {
-      return '<b>正确答案：</b>' + esc(String(q.answer == null ? '' : q.answer).toUpperCase().trim());
-    }
-    return '<b>参考答案：</b>' + mdRender(q.answer || '（暂无）');
-  }
-  function quizQHtml(q, i, radioPrefix, areaPrefix, cur, ptsArr, withAns) {
-    var pts = (q.points != null) ? q.points : (ptsArr ? ptsArr[i] : null);
-    var head = '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' +
-      (pts != null ? '<span class="q-points">（' + pts + ' 分）</span> ' : '') + mdRender(q.q) + '</p>';
-    var ansHtml = withAns ? '<div class="q-answer" hidden>' + answerLine(q) + '</div>' : '';
-    if (q.options && q.options.length) {
-      var opts = q.options.map(function (o, j) {
-        var letter = String.fromCharCode(65 + j);
-        var checked = choiceAns[i] === letter ? ' checked' : '';
-        return '<label class="qopt"><input type="radio" name="' + radioPrefix + i + '" value="' + letter + '"' + checked + '>' +
-          '<span>' + letter + '. ' + mdRender(o) + '</span></label>';
-      }).join('');
-      return head + '<div class="qopts">' + opts + '</div>' + ansHtml + '</div>';
-    }
-    return head + '<textarea id="' + areaPrefix + i + '" placeholder="' + (q.type === 'short' ? '写下你的思路和答案…' : '写下你的答案…') + '">' + (cur != null ? esc(cur) : '') + '</textarea>' + ansHtml + '</div>';
-  }
-  // 查看答案 / 收起答案（作用域内所有 .q-answer）
-  function toggleAnswers(scope, btn) {
-    var on = btn.getAttribute('data-on') === '1';
-    on = !on;
-    btn.setAttribute('data-on', on ? '1' : '0');
-    btn.textContent = on ? '收起答案' : '查看答案';
-    var els = scope.querySelectorAll('.q-answer');
-    for (var i = 0; i < els.length; i++) els[i].hidden = !on;
-    renderMathIn(scope);
-    highlightIn(scope);
-  }
-  function choiceChange(e) {
-    var t = e.target;
-    if (!t || t.type !== 'radio') return;
-    var m = (t.name || '').match(/^(opt|qmo)-(\d+)$/);
-    if (m) choiceAns[+m[2]] = t.value;
-  }
-  function syncChoiceRadios(scope) {
-    if (!scope) return;
-    var ins = scope.querySelectorAll('input[type=radio]');
-    for (var i = 0; i < ins.length; i++) {
-      var m = (ins[i].name || '').match(/^opt-(\d+)$/);
-      if (m && choiceAns[+m[1]] != null) ins[i].checked = (ins[i].value === choiceAns[+m[1]]);
-    }
-  }
-
   // 卡内渲染：所有查询都从卡片内容元素向下查（作用域隔离，避免串卡）
   function renderNodeDetail(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
@@ -1270,38 +1228,14 @@
     activeScope = scope;
     if (matTabOwner !== id) { matTab = 'material'; lastQuizShown = null; matTabOwner = id; }
     var shown = (lastQuizShown && lastQuizShown.id === id) ? lastQuizShown.res : null;
+    var persisted = (state.nodeState[id] || {}).lastResult;
+    if (!shown && persisted && persisted.round_id === (d.quiz || {}).round_id) shown = persisted;
     if (shown) matTab = 'quiz';
     var qs = ((d.quiz && d.quiz.questions) || []);
-    choiceAns = {};
-    var ptsArr = evenPts(qs.length);
-    var quizHtml = qs.map(function (q, i) {
-      return quizQHtml(q, i, 'opt-', 'ans-', null, ptsArr, true);
-    }).join('');
     var prev = state.nodeState[id] || {};
-    var prevResult = '';
-    var prevOk = prev.completed || !!(prev.lastResult && prev.lastResult.pass);
-    if (typeof prev.score === 'number') {
-      prevResult = '<div class="result ' + (prevOk ? 'ok' : 'bad') + '">' +
-        '<span class="score ' + (prevOk ? 'ok' : 'bad') + '">' + prev.score + '</span> 分' +
-        (prev.completed ? ' · 已通过' : (prevOk ? ' · 已通过（待完成）' : ' · 上次未通过')) + '</div>';
-    }
-    var actions = '';
-    if (shown) {
-      if (shown.pass && !isDone(id)) actions += '<button class="btn primary" id="complete-node" type="button">完成本节点并解锁下一节点</button>';
-      else if (shown.pass && isDone(id)) actions += '<span class="tip">✅ 已完成</span>';
-      else actions += '<button class="btn primary" id="redo-quiz" type="button">换新题，再试一次</button>';
-    } else {
-      if (qs.length && !isDone(id)) {
-        actions += '<button class="btn primary" id="submit-quiz" type="button">提交自测</button>';
-        actions += '<button class="btn" id="zoom-quiz" type="button">⤢ 放大答题</button>';
-      }
-      if (qs.length && !isDone(id) && typeof prev.score === 'number') actions += '<button class="btn" id="redo-quiz" type="button">换新题，再试一次</button>';
-      if (isDone(id)) actions += '<span class="tip">✅ 已完成</span>';
-    }
     // 自测未过（<60）：按薄弱点细化学习地图
     var lowScore = (typeof prev.score === 'number' && prev.score < 60) ||
       !!(prev.lastResult && typeof prev.lastResult.score === 'number' && prev.lastResult.score < 60);
-    if (qs.length && lowScore) actions += '<button class="btn" id="refine-node" type="button" style="font-size:12px">按薄弱点细化</button>';
     var matPane =
       '<div class="panel-sec"><h4>学习正文</h4><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
       listSection('要点', d.key_points) +
@@ -1309,13 +1243,20 @@
       listSection('易错点', d.misconceptions);
     var quizPane;
     if (qs.length) {
-      quizPane = '<div class="panel-sec"><div class="quiz-head">' +
-        '<span class="quiz-title">自测（' + qs.length + ' 题 · 满分 100 分）</span>' +
-        '<button class="btn quiet quiz-answers" type="button" data-on="0">查看答案</button></div>' +
-        '<div class="quiz-body" id="quiz-body">' + quizHtml + '</div>' +
-        prevResult +
-        (shown ? resultDetailHtml(id, shown) : '') +
-        '<div class="quiz-actions" id="quiz-actions">' + actions + '</div></div>';
+      var rounds = (d.quiz || {}).rounds || [];
+      var latest = (state.nodeState[id] || {}).lastResult;
+      if (latest && latest.round_id && latest.round_id !== d.quiz.round_id) latest = null;
+      quizPane = '<div class="panel-sec"><h4>单元测验</h4>' +
+        '<p class="tip">' + qs.length + '题 · 满分100分 · ' + (rounds.length || 1) + '套题已保存。完整题目、作答与批改在测验窗口查看。</p>' +
+        (latest ? '<p>最近成绩：<b>' + esc(latest.score) + '/100</b></p>' : '') +
+        '<div class="quiz-actions"><select id="quiz-round-select" aria-label="选择题集">' +
+          (rounds.length ? rounds.map(function (r, index) {
+            return '<option value="' + esc(r.id) + '"' + (r.id === d.quiz.round_id ? ' selected' : '') + '>第' + (index + 1) + '套' + (r.id === d.quiz.round_id ? ' · 最新' : '') + '</option>';
+          }).join('') : '<option value="">第1套</option>') + '</select>' +
+        '<button class="btn primary" id="open-quiz-workspace">打开测验</button>' +
+        '<button class="btn" id="redo-quiz">出一套新题</button>' +
+        (latest && latest.pass && !isDone(id) ? '<button class="btn" id="complete-node">完成本节点并解锁下一节点</button>' : '') +
+        (lowScore ? '<button class="btn" id="refine-node">按薄弱点细化</button>' : '') + '</div></div>';
     } else {
       quizPane = '<p class="tip">本单元暂无自测题。</p>';
     }
@@ -1341,15 +1282,9 @@
         if (qp) qp.hidden = matTab !== 'quiz';
       });
     }
-    var ansBtn = scope.querySelector('.quiz-answers');
-    if (ansBtn) ansBtn.addEventListener('click', function () {
-      toggleAnswers(scope, this);
-    });
     setFoot('');
-    var bSubmit = scope.querySelector('#submit-quiz');
-    if (bSubmit) bSubmit.addEventListener('click', function () { submitQuiz(id); });
-    var bZoom = scope.querySelector('#zoom-quiz');
-    if (bZoom) bZoom.addEventListener('click', function () { openQuizModal(id); });
+    var openQuiz = scope.querySelector('#open-quiz-workspace');
+    if (openQuiz) openQuiz.addEventListener('click', function () { openQuizModal(id, scope.querySelector('#quiz-round-select').value); });
     var bRedo = scope.querySelector('#redo-quiz');
     if (bRedo) bRedo.addEventListener('click', function () { redoQuiz(id); });
     var bComp = scope.querySelector('#complete-node');
@@ -1359,123 +1294,32 @@
     requestAnimationFrame(drawEdges);
   }
 
-  // 提交后的逐题结果（渲染在「测验」tab 内；答案块由标题行「查看答案」统一控制）
-  function resultDetailHtml(id, res) {
-    var d = state.nodeDetail[id];
-    var qs = ((d.quiz && d.quiz.questions) || []);
-    var per = res.per_question || [];
-    var pts = evenPts(qs.length);
-    var detail = qs.map(function (q, i) {
-      var p = per[i] || {};
-      var pv = (q.points != null) ? q.points : pts[i];
-      return '<div class="quiz-box"><p class="q">' + (i + 1) + '. ' +
-        (pv != null ? '<span class="q-points">（' + pv + ' 分）</span> ' : '') + mdRender(q.q) + '</p>' +
-        '<div class="result ' + (p.ok ? 'ok' : 'bad') + '">' +
-        '<strong>' + (p.ok ? '✓ 正确' : '✗ 有缺漏') + '</strong> ' + mdRender(p.comment || '') + '</div>' +
-        '<div class="q-answer" hidden>' + answerLine(q) + '</div></div>';
-    }).join('');
-    var cls = res.pass ? 'ok' : 'bad';
-    return '<div class="panel-sec"><h4>自测结果</h4>' +
-      '<div class="result ' + cls + '"><span class="score ' + cls + '">' + esc(res.score) + '</span> 分 — ' +
-      (res.pass ? '通过 ✅' : '未通过 ❌') + '</div>' +
-      (res.feedback ? '<p style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">' + mdRender(res.feedback) + '</p>' : '') +
-      '<div style="height:10px"></div>' + detail + '</div>';
-  }
-
-  // ---------- 放大答题（模态框） ----------
-  var modalNodeId = null;
-  function openQuizModal(id) {
+  // 所有题目、作答和历史批改均由共享弹窗呈现。
+  function openQuizModal(id, roundId) {
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
-    modalNodeId = id;
-    $('qm-title').textContent = 'NODE ' + dispId(id) + ' · ' + n.title + ' — 自测答题';
-    var qs = (d.quiz && d.quiz.questions) || [];
-    var ptsArr = evenPts(qs.length);
-    var scope = cardContentEl(id);
-    var h = qs.map(function (q, i) {
-      var el = scope ? scope.querySelector('#ans-' + i) : null;
-      var cur = el ? (el.value || '') : '';
-      return quizQHtml(q, i, 'qmo-', 'qma-', cur, ptsArr);
-    }).join('');
-    $('qm-body').innerHTML = h;
-    renderMathIn($('qm-body'));
-    highlightIn($('qm-body'));
-    qs.forEach(function (q, i) { bindAutoGrow($('qma-' + i)); });
-    $('quiz-modal').hidden = false;
-  }
-  function closeQuizModal(saveBack) {
-    if (saveBack && modalNodeId != null) {
-      var qs = (((state.nodeDetail[modalNodeId] || {}).quiz) || {}).questions || [];
-      var scope = cardContentEl(modalNodeId);
-      qs.forEach(function (q, i) {
-        var src = $('qma-' + i), dst = scope ? scope.querySelector('#ans-' + i) : null;
-        if (src && dst) dst.value = src.value;
-      });
-      syncChoiceRadios(scope);
-    }
-    $('quiz-modal').hidden = true;
-    modalNodeId = null;
-  }
-  function submitQuizFromModal() {
-    var id = modalNodeId;
-    closeQuizModal(true);
-    if (id != null) submitQuiz(id);
-  }
-
-  function submitQuiz(id) {
-    var n = nodeById(id), d = state.nodeDetail[id];
-    var scope = cardContentEl(id);
-    var qs = ((d.quiz && d.quiz.questions) || []);
-    var answers = qs.map(function (q, i) {
-      if (q.options && q.options.length) return choiceAns[i] || '';
-      var el = scope ? scope.querySelector('#ans-' + i) : null;
-      return el ? (el.value || '').trim() : '';
-    });
-    if (answers.every(function (a) { return !a; })) { alert('请至少回答一题再提交。'); return; }
-    var btn = scope ? scope.querySelector('#submit-quiz') : null;
-    if (btn) { btn.disabled = true; btn.textContent = '判分中…'; }
-    hideError();
-    post('/path/quiz', {
-      node: { title: n.title, essence: n.essence, objectives: n.objectives || [] },
-      questions: qs.map(function (q) {
-        var o = { q: q.q, answer: q.answer };
-        if (q.type) o.type = q.type;
-        if (q.options && q.options.length) o.options = q.options;
-        if (q.points) o.points = q.points;
-        return o;
-      }),
-      answers: answers
-    }).then(function (res) {
-      var st = state.nodeState[id] || {};
-      st.score = res.score;
-      st.lastResult = { score: res.score, pass: res.pass, feedback: res.feedback || '',
-                        per_question: res.per_question || [] };
-      st.lastAnswers = answers.map(function (a) { return String(a == null ? '' : a).slice(0, 600); }).slice(0, 16);
-      // pass=true 不自动完成，等用户点「完成本节点并解锁下一节点」
-      state.nodeState[id] = st;
-      save();
-      showQuizResult(id, res);
-    }).catch(function (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '提交自测'; }
-      showError('判分失败：' + e.message, function () { submitQuiz(id); });
+    return window.QuizDialog.open({
+      api: API, key: storeKey(), nodeId: id, roundId: roundId, title: n.title + ' · 单元测验',
+      render: mdRender, decorate: function (el) { renderMathIn(el); highlightIn(el); },
+      onLoad: function (quiz) { d.quiz = quiz; },
+      onResult: function (res) {
+        d.quiz = res.quiz;
+        if (res.round_id === d.quiz.round_id) {
+          var st = state.nodeState[id] || {};
+          st.score = res.score;
+          st.lastResult = {score: res.score, pass: res.pass, feedback: res.feedback,
+                           per_question: res.per_question, round_id: res.round_id};
+          state.nodeState[id] = st;
+        }
+        save(); renderPlan();
+      }
     });
   }
-
-  // 提交后：结果渲染在卡内「测验」tab 并自动切过去（重建卡片后恢复展开）
-  function showQuizResult(id, res) {
-    lastQuizShown = { id: id, res: res };
-    matTab = 'quiz';
-    renderPlan();
-  }
-
-  // 换新题重测：调用 /path/requiz 生成全新变式题，替换当前题集后重新渲染
+  // 换新题重测：服务端追加新轮次，保留原题与作答。
   function redoQuiz(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
     if (!n || !d) return;
     var quiz = d.quiz || {};
-    var used = ((quiz.used) || []).concat((quiz.questions || []).map(function (q) {
-      return { q: q.q, answer: q.answer };
-    }));
     var st = state.nodeState[id] || {};
     var scope = cardContentEl(id);
     var btn = scope ? scope.querySelector('#redo-quiz') : null;
@@ -1484,13 +1328,13 @@
     post('/path/requiz', {
       node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
       spec: state.spec,
-      used: used.slice(-12),
+      round_id: quiz.round_id,
       feedback: st.lastResult || null,
       key: storeKey()
     }).then(function (r) {
       var qs = (r && r.questions) || [];
       if (!qs.length) throw new Error('未获得新题');
-      d.quiz = { questions: qs, used: used.slice(-30) };
+      d.quiz = r;
       lastQuizShown = null;
       matTab = 'quiz';
       save();
@@ -1564,30 +1408,8 @@
 
   // ---------- 重新开始 ----------
   function restart() {
-    if (!confirm('确定要清空当前学习路径并重新开始吗？')) return;
-    clearSave();
-    state = {
-      stage: 'intake', topic: '', history: [], spec: null, queries: [], sources: [],
-      brief: '', plan: null, nodeDetail: {}, nodeState: {}, aiHist: {}, pending: null
-    };
-    selectedId = null; busy = false;
-    expandedId = null; activeScope = null; generatingNode = null;
-    reviewFilter = false; aiBusy = false; resumeAttempts = 0;
-    genAllRunning = false; genAllPaused = false; genAllQueue = []; genAllRemaining = [];
-    if (genAllTimer) { clearTimeout(genAllTimer); genAllTimer = null; }
-    matTab = 'material'; matTabOwner = null; lastQuizShown = null;
-    hideResumeBar();
-    hideError();
-    $('chat-log').innerHTML = '';
-    $('spec-card').hidden = true;
-    $('research-card').hidden = true;
-    panelHead('AGENT', 'AI 学习助手', '点击左侧卡片展开学习，或点卡片上的「AI 辅助」与 AI 交互式学习。');
-    $('panel-body').innerHTML = '<p class="tip">选一个单元，AI 会带你交互式学习：讲解、追问、出小题检验你，不直接给答案。</p>';
-    setFoot('');
-    setStage('intake');
-    renderChat();
-    renderProgress();
-    setChatDisabled(false);
+    if (!state.topic) { location.href = location.pathname; return; }
+    openDelModal(slug(state.topic), state.topic, storeKey());
   }
 
   // ---------- 学习资料库（服务端数据动态扫描） ----------
@@ -1729,12 +1551,10 @@
     var target = delSlug;
     var key = delKey || (USER_PATH + STORE_PREFIX + target);
     var pass = ($('dm-pass') || {}).value || '';
-    fetch(API + '/state/delete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keys: [key], password: pass })
-    }).then(function (r) { return r.json(); }).then(function (j) {
+    var wasCurrent = key === storeKey();
+    var keys = wasCurrent ? [key, LAST_KEY, aiKey()] : [key];
+    deleteState(keys, pass).then(function (j) {
       if (j && j.ok) {
-        var wasCurrent = slug(state.topic || '') === target;
         closeDelModal();
         if (wasCurrent) { location.href = location.pathname + '?new=1'; return; }
         libRender();
@@ -1743,9 +1563,9 @@
         var err = $('dm-err');
         if (err) { err.textContent = (j && j.error) || '删除失败'; err.hidden = false; }
       }
-    }).catch(function () {
+    }).catch(function (error) {
       var err = $('dm-err');
-      if (err) { err.textContent = '网络错误，请重试'; err.hidden = false; }
+      if (err) { err.textContent = error.message || '网络错误，请重试'; err.hidden = false; }
     });
   }
 
@@ -1760,14 +1580,6 @@
     $('errretry').addEventListener('click', function () { var f = retryFn; hideError(); if (f) f(); });
     window.addEventListener('resize', function () { if (state.plan) drawEdges(); });
     $('backend-label').textContent = API;
-    $('qm-x').addEventListener('click', function () { closeQuizModal(true); });
-    $('qm-cancel').addEventListener('click', function () { closeQuizModal(true); });
-    $('qm-submit').addEventListener('click', submitQuizFromModal);
-    document.addEventListener('change', choiceChange);   // 选择题点选（卡内/模态均适用）
-    $('quiz-modal').addEventListener('click', function (e) { if (e.target === this) closeQuizModal(true); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !$('quiz-modal').hidden) closeQuizModal(true);
-    });
     $('dm-cancel').addEventListener('click', closeDelModal);
     $('dm-ok').addEventListener('click', submitDel);
     $('dm-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitDel(); });
