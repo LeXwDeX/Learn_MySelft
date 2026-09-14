@@ -614,10 +614,11 @@
     }).join('');
     var prev = state.nodeState[id] || {};
     var prevResult = '';
+    var prevOk = prev.completed || !!(prev.lastResult && prev.lastResult.pass);
     if (typeof prev.score === 'number') {
-      prevResult = '<div class="result ' + (prev.completed ? 'ok' : 'bad') + '">' +
-        '<span class="score ' + (prev.completed ? 'ok' : 'bad') + '">' + prev.score + '</span> 分' +
-        (prev.completed ? ' · 已通过' : ' · 上次未通过') + '</div>';
+      prevResult = '<div class="result ' + (prevOk ? 'ok' : 'bad') + '">' +
+        '<span class="score ' + (prevOk ? 'ok' : 'bad') + '">' + prev.score + '</span> 分' +
+        (prev.completed ? ' · 已通过' : (prevOk ? ' · 已通过（待完成）' : ' · 上次未通过')) + '</div>';
     }
     $('panel-body').innerHTML =
       '<div class="panel-sec"><h4>学习正文</h4><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
