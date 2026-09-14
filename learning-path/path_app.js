@@ -53,6 +53,23 @@
       });
     } catch (e) { /* 渲染失败保留原始文本 */ }
   }
+  // 语法高亮：对迷你 Markdown 输出的代码块执行 highlight.js（库缺失时静默跳过）
+  function highlightIn(el) {
+    if (typeof hljs === 'undefined' || !el) return;
+    var codes = el.querySelectorAll('pre.md-code code');
+    for (var i = 0; i < codes.length; i++) {
+      var c = codes[i];
+      try {
+        if (/\blanguage-/.test(c.className)) {
+          hljs.highlightElement(c);
+        } else {
+          var r = hljs.highlightAuto(c.textContent);
+          c.innerHTML = r.value;
+          c.className = 'hljs';
+        }
+      } catch (e) { /* 高亮失败不影响正文 */ }
+    }
+  }
   // 迷你 Markdown：``` 围栏代码块 + 行内 `code`；文本换行由容器 pre-wrap 保留
   function mdText(t) {
     return esc(t)
@@ -65,7 +82,7 @@
     var re = /```([a-zA-Z0-9+#-]*)\r?\n?([\s\S]*?)```/g;
     while ((m = re.exec(src))) {
       out += mdText(src.slice(last, m.index));
-      out += '<pre class="md-code"><code>' + esc(m[2].replace(/\r/g, '').replace(/\n+$/, '')) + '</code></pre>';
+      out += '<pre class="md-code"><code' + (m[1] ? ' class="language-' + m[1] + '"' : '') + '>' + esc(m[2].replace(/\r/g, '').replace(/\n+$/, '')) + '</code></pre>';
       last = m.index + m[0].length;
     }
     out += mdText(src.slice(last));
@@ -582,10 +599,12 @@
     var out = [], fence = null;
     lines.forEach(function (ln) {
       var m = ln.match(/^\s*```([a-zA-Z0-9+#-]*)\s*$/);
-      if (fence === null && m) { fence = []; return; }
+      if (fence === null && m) { fence = { lang: m[1] || '', lines: [] }; return; }
       if (fence !== null) {
-        if (m) { out.push('<pre class="md-code"><code>' + esc(fence.join('\n')) + '</code></pre>'); fence = null; }
-        else fence.push(ln);
+        if (m) {
+          out.push('<pre class="md-code"><code' + (fence.lang ? ' class="language-' + fence.lang + '"' : '') + '>' + esc(fence.lines.join('\n')) + '</code></pre>');
+          fence = null;
+        } else fence.lines.push(ln);
         return;
       }
       var t = ln.trim();
@@ -594,7 +613,7 @@
       else if (t === '') out.push('<div style="height:8px"></div>');
       else out.push('<div>' + mdText(ln) + '</div>');
     });
-    if (fence !== null) out.push('<pre class="md-code"><code>' + esc(fence.join('\n')) + '</code></pre>');
+    if (fence !== null) out.push('<pre class="md-code"><code' + (fence.lang ? ' class="language-' + fence.lang + '"' : '') + '>' + esc(fence.lines.join('\n')) + '</code></pre>');
     return out.join('');
   }
   function listSection(title, arr) {
@@ -628,6 +647,7 @@
       (qs.length ? '<div class="panel-sec"><h4>自测（' + qs.length + ' 题）</h4>' + quizHtml + '</div>' : '') +
       prevResult;
     renderMathIn($('panel-body'));
+    highlightIn($('panel-body'));
     qs.forEach(function (q, i) { bindAutoGrow($('ans-' + i)); });
 
     var foot = '';
@@ -656,6 +676,7 @@
     }).join('');
     $('qm-body').innerHTML = h;
     renderMathIn($('qm-body'));
+    highlightIn($('qm-body'));
     qs.forEach(function (q, i) { bindAutoGrow($('qma-' + i)); });
     $('quiz-modal').hidden = false;
   }
@@ -725,6 +746,7 @@
       (res.feedback ? '<p style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">' + mdRender(res.feedback) + '</p>' : '') +
       '<div style="height:10px"></div>' + detail + '</div>';
     renderMathIn($('panel-body'));
+    highlightIn($('panel-body'));
     var foot = '';
     if (res.pass && !isDone(id)) {
       foot += '<button class="btn primary" id="complete-node" type="button">完成本节点并解锁下一节点</button>';

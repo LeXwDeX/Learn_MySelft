@@ -148,6 +148,7 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .md-code code{font-family:inherit}
 code.md-inline{font-family:var(--mono);font-size:.92em;background:#f4f4f5;border:1px solid var(--rule);border-radius:4px;padding:0 4px;font-weight:400}
 .panel-sec ul.mdlist li{white-space:pre-wrap}
+pre.md-code code.hljs{background:transparent;padding:0}
 .score{font-family:var(--mono);font-size:22px;font-weight:700}
 .score.ok{color:var(--ok)} .score.bad{color:#b23a48}
 .panel-foot{flex:none;border-top:1px solid var(--rule);padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff}
@@ -173,6 +174,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 .lib-sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:10px 2px 4px}
 </style>
 <link rel="stylesheet" href="./katex/katex.min.css">
+<link rel="stylesheet" href="./highlight/github.min.css">
 </head>
 <body>
 <header class="toolbar">
@@ -275,6 +277,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 
 <script src="./katex/katex.min.js"></script>
 <script src="./katex/contrib/auto-render.min.js"></script>
+<script src="./highlight/highlight.min.js"></script>
 <script>
 /* 页面内联脚本（由生成器注入） */
 __APP_JS__
