@@ -40,6 +40,7 @@ body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);f
 .btn.primary{border-color:var(--accent);background:var(--accent);color:#fff;font-weight:600}
 .btn.primary:hover{filter:brightness(1.05)}
 .btn[disabled]{opacity:.5;cursor:not-allowed}
+a.home-link{text-decoration:none;display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap}
 .wrap{padding:26px 0 90px}
 .content-row{display:flex;align-items:flex-start;max-width:var(--max-w);margin:0 auto}
 .main{flex:1 1 auto;min-width:0;padding:0 32px}
@@ -171,6 +172,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 <body>
 <header class="toolbar">
   <div class="toolbar-inner">
+    <a class="btn home-link" href="/learn/" title="返回首页">← 首页</a>
     <div class="brand">
       <h1>学习路径</h1>
       <p class="sub">对话采集 → 主动研究 → 路径图 + 解锁门控</p>
