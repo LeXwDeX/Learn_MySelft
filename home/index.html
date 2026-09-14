@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学习工具 · 固定入口</title>
+<style>
+:root{
+  --paper:#f5f5f5; --paper2:#ffffff; --ink:#2d3142; --muted:#4f5d75;
+  --soft:#7a8399; --rule:rgba(45,49,66,.12); --accent:#eb6c36;
+  --accent-tint:rgba(235,108,54,.08); --ok:#2f7d5d;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --serif:Georgia,"Songti SC","SimSun",serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
+  --min-page-w:1360px; --max-w:1616px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.65;min-width:var(--min-page-w)}
+.wrap{max-width:var(--max-w);margin:0 auto;padding:56px 32px 72px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin:0 0 10px}
+h1{font-family:var(--serif);font-weight:400;font-size:38px;margin:0 0 10px;letter-spacing:.01em}
+.sub{color:var(--muted);margin:0 0 30px;max-width:76ch}
+.rule{height:1px;background:var(--rule);border:0;margin:0 0 30px}
+.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:stretch}
+a.tool{display:flex;flex-direction:column;background:var(--paper2);border:1px solid var(--rule);border-top:3px solid var(--rule);border-radius:8px;padding:24px 26px;text-decoration:none;color:inherit}
+a.tool:hover{border-color:var(--soft);border-top-color:var(--accent)}
+.tool .no{font-family:var(--mono);font-size:11px;color:var(--soft);letter-spacing:.14em;text-transform:uppercase}
+.tool h2{font-family:var(--serif);font-weight:400;font-size:24px;margin:10px 0 8px}
+.tool .desc{color:var(--muted);font-size:14px;margin:0 0 14px}
+.tool ul{margin:0 0 18px;padding-left:18px}
+.tool li{font-size:13.5px;margin:3px 0}
+.tool li::marker{color:var(--accent)}
+.tool .path{font-family:var(--mono);font-size:11px;color:var(--soft);margin-bottom:14px;word-break:break-all}
+.tool .go{margin-top:auto;font-family:var(--mono);font-size:12.5px;color:var(--accent)}
+a.tool:hover .go{text-decoration:underline}
+.note{margin:18px 0 0;background:var(--paper2);border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:6px;padding:14px 18px;color:var(--muted);font-size:13.5px}
+.note b{color:var(--ink)}
+.note .k{font-family:var(--mono);font-size:12px;color:var(--ink);border:1px solid var(--rule);border-radius:4px;padding:1px 6px;background:#fff}
+footer{margin-top:44px;border-top:1px solid var(--rule);padding-top:14px;font-family:var(--mono);font-size:11px;color:var(--soft);display:flex;flex-wrap:wrap;gap:6px 22px}
+footer .fixed{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Learn Tools · 固定入口</p>
+  <h1>学习工具主页</h1>
+  <p class="sub">初中数学到线性代数 · 学习资料生成 · AI 引导式问答。全部学习入口都在这一页，<b>本地址为固定入口，可直接收藏</b>。</p>
+  <hr class="rule">
+
+  <div class="grid">
+    <a class="tool" href="/diagram-design/learning-path/junior-math-linalg.html">
+      <span class="no">01 · Knowledge Map · 知识地图</span>
+      <h2>初中数学到线性代数</h2>
+      <p class="desc">32 个知识点，按「命题与逻辑 → 数与式 → 方程 → 函数 → 几何 → 统计」的依赖顺序排列；每个知识点只做三件事：看本质、避陷阱、过自测。</p>
+      <ul>
+        <li>内含命题定理：充分/必要条件、逆否等价、证明方法、数学归纳法</li>
+        <li>每单元一个独立对话，右侧常驻 AI 辅助（引导思考，不直接给答案）</li>
+        <li>四态进度标记：未学 / 学习中 / 已掌握 / 需复习</li>
+      </ul>
+      <p class="path">/diagram-design/learning-path/junior-math-linalg.html</p>
+      <span class="go">打开知识地图 →</span>
+    </a>
+
+    <a class="tool" href="/diagram-design/learning-path/learning-path.html">
+      <span class="no">02 · Learning Path · 学习路径</span>
+      <h2>学习资料生成器</h2>
+      <p class="desc">输入一个主题 → 对话采集需求 → 主动研究检索 → 生成带依赖门控的学习路径图；每个节点配讲义、要点、易错与自测。</p>
+      <ul>
+        <li>已生成的学习资料（如 golang）在页面右上角「学习资料库 ▾」里直接打开</li>
+        <li>每份资料独立对话与进度，保存在浏览器本机</li>
+      </ul>
+      <p class="path">/diagram-design/learning-path/learning-path.html</p>
+      <span class="go">打开学习路径 →</span>
+    </a>
+  </div>
+
+  <p class="note"><b>学习资料库 ▾</b> —— 两个页面右上角都能打开：<b>常驻资料</b>（知识地图）＋ <b>学习路径</b>（动态扫描你生成过的资料）。数据保存在浏览器本机，换设备不共享；打开页面后如看不到最新版，按 <span class="k">Ctrl+F5</span> 强刷。</p>
+
+  <footer>
+    <span class="fixed">固定入口：http://192.168.33.146:8091/learn/</span>
+    <span>静态站 33.146:8091</span>
+    <span>AI 后端 study-assistant · 33.146:8096</span>
+    <span>源码仓库 Learn_MySelft</span>
+  </footer>
+</div>
+</body>
+</html>

@@ -10,6 +10,7 @@
 | `knowledge-map/` | 知识地图 | 《初中数学+几何 知识体系 & 线性代数一周冲刺》交互式知识页。每个知识点卡片带「AI 辅助」按钮，点选后右侧常驻面板进入该单元的独立对话（每单元 = 每对话） |
 | `learning-path/` | 学习路径 | 输入主题 → 对话式采集需求 → 主动研究 → 生成依赖路径图。节点按依赖解锁（前置全部完成才可学），自测通过（≥60 分）标记完成 |
 | `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask`、`/suggest`、`/compress`、`/health`、`/path/intake`、`/path/research`、`/path/plan`、`/path/node`、`/path/quiz` |
+| `home/` | 固定首页 | 学习工具固定入口（部署为 `<站点>/learn/`）。收藏这一页即可，两个工具的链接都在上面 |
 | `deploy/` | 部署 | systemd 单元文件 |
 
 ## 部署
