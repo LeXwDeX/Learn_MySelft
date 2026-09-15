@@ -847,6 +847,7 @@
   function openAiView(id) {
     selectUnit(id);
     expandCard(id);
+    showAgent();
   }
 
   // 卡内内容：未生成→卡内 loading 并请求 /path/node；已生成→渲染选项卡正文
@@ -939,14 +940,75 @@
       panelHead('AGENT', 'AI 学习助手', '点击左侧卡片展开学习，或点卡片上的「AI 辅助」与 AI 交互式学习。');
       $('panel-body').innerHTML = '<p class="tip">选一个单元，AI 会带你交互式学习：讲解、追问、出小题检验你，不直接给答案。</p>';
       setFoot('');
+      refreshAgentLayout();
       return;
     }
     var n = nodeById(selectedId);
     $('plan-current-unit').textContent = dispId(selectedId) + ' · ' + n.title;
-    panelHead('AGENT', dispId(selectedId) + ' · ' + n.title, n.essence || '');
+    panelHead('正在辅导', dispId(selectedId) + ' · ' + n.title, n.essence || '');
     renderAiPanel(selectedId);
+    refreshAgentLayout();
   }
+  var aiViews = new Map();
+  var aiViewKey = null;
+  var activeAiView = null;
   var aiBusy = false;
+  var refreshAgentLayout = function () {};
+
+  function bindAgentLayout() {
+    var dialog = $('agent-dialog'), panel = $('node-panel');
+    var workspace = panel.parentElement;
+    var oldOverflow = '', readingY = 0;
+    function updateLayout() {
+      var mobile = window.matchMedia('(max-width:800px)').matches;
+      if (!mobile && dialog.open) dialog.close();
+      var toolbar = document.querySelector('.toolbar');
+      var top = toolbar.offsetHeight + 16;
+      document.documentElement.style.setProperty('--agent-top', top + 'px');
+      if (!mobile && panel.parentElement === workspace) {
+        var visibleTop = Math.max(top, panel.getBoundingClientRect().top);
+        panel.style.setProperty('--agent-height', Math.max(240, window.innerHeight - visibleTop - 16) + 'px');
+      }
+    }
+    refreshAgentLayout = updateLayout;
+    $('agent-launch').addEventListener('click', showAgent);
+    $('agent-close').addEventListener('click', function () { dialog.close(); });
+    dialog.addEventListener('close', function () {
+      workspace.appendChild(panel);
+      if (activeAiView) {
+        activeAiView.box.scrollTop = activeAiView.scrollTop;
+        if (activeAiView.follow) aiScroll(activeAiView, true);
+      }
+      document.body.style.overflow = oldOverflow;
+      window.scrollTo(0, readingY);
+      updateLayout();
+    });
+    dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });
+    dialog.openAgent = function () {
+      if (dialog.open) return;
+      readingY = window.scrollY;
+      oldOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      dialog.appendChild(panel);
+      dialog.showModal();
+      if (activeAiView) {
+        activeAiView.box.scrollTop = activeAiView.scrollTop;
+        if (activeAiView.follow) aiScroll(activeAiView, true);
+      }
+    };
+    window.addEventListener('resize', updateLayout);
+    var layoutFrame = null;
+    window.addEventListener('scroll', function () {
+      if (layoutFrame !== null) return;
+      layoutFrame = requestAnimationFrame(function () { layoutFrame = null; updateLayout(); });
+    }, { passive: true });
+    if (window.ResizeObserver) new ResizeObserver(updateLayout).observe(document.querySelector('.toolbar'));
+    updateLayout();
+  }
+  function showAgent() {
+    if (window.matchMedia('(max-width:800px)').matches) $('agent-dialog').openAgent();
+    else if ($('ai-input')) $('ai-input').focus({ preventScroll: true });
+  }
   var AI_SUGGEST = ['讲讲本单元的重点', '出个小题目考我', '我哪里最容易出错？'];
 
   // ---------- Part H：一键生成全部节点（含未解锁节点） ----------
@@ -1102,7 +1164,23 @@
       notes: d.study_notes ? String(d.study_notes).slice(0, 6000) : ''
     };
   }  // (aiUnit end)
-  function aiScroll() { var el = $('ai-msgs'); if (el) el.scrollTop = el.scrollHeight; }
+  function aiScroll(view, force) {
+    view = view || activeAiView;
+    if (!view) return;
+    if (force) view.follow = true;
+    if (view.follow && view.root.isConnected && view.box.clientHeight) {
+      view.box.scrollTop = view.box.scrollHeight;
+      view.scrollTop = view.box.scrollTop;
+      view.more.hidden = true;
+    } else if (!force) view.more.hidden = false;
+  }
+  function syncAiBusy() {
+    aiViews.forEach(function (view) {
+      view.send.disabled = aiBusy;
+      view.send.textContent = aiBusy ? '回复中…' : '发送';
+      view.send.title = aiBusy ? 'AI 正在回复，可以继续编辑下一条问题' : '';
+    });
+  }
   function aiRenderInto(el, text) {
     if (!el) return;
     el.innerHTML = mdRender(text);
@@ -1123,12 +1201,31 @@
   function renderAiPanel(id) {
     var n = nodeById(id);
     if (!n) return;
-    $('panel-body').innerHTML =
+    if (aiViewKey !== aiKey()) {
+      aiViews.clear();
+      activeAiView = null;
+      aiViewKey = aiKey();
+    }
+    if (activeAiView && activeAiView.box.clientHeight) activeAiView.scrollTop = activeAiView.box.scrollTop;
+    var cached = aiViews.get(id);
+    if (cached) {
+      $('panel-body').replaceChildren(cached.root);
+      activeAiView = cached;
+      cached.box.scrollTop = cached.scrollTop;
+      if (cached.follow) aiScroll(cached, true);
+      syncAiBusy();
+      return;
+    }
+    var root = document.createElement('div');
+    root.className = 'agent-view';
+    root.innerHTML =
       '<p class="ai-intro">AI 辅助 · 交互式学习 —— 会讲解、追问、出小题检验你；不会直接给答案。</p>' +
       '<div class="ai-msgs" id="ai-msgs"></div>' +
+      '<button class="btn quiet ai-new-reply" type="button" hidden>有新回复 ↓</button>' +
       '<div class="ai-compose"><textarea id="ai-input" placeholder="就本单元提问，Enter 发送 / Shift+Enter 换行"></textarea>' +
       '<button class="btn primary" id="ai-send" type="button">发送</button></div>' +
       '<p class="ai-note">AI 知道本单元内容，会引导你思考、不会直接给答案。</p>';
+    $('panel-body').replaceChildren(root);
     setFoot('');
     var msgs = state.aiHist[id] || [];
     var box = $('ai-msgs');
@@ -1147,13 +1244,23 @@
     var input = $('ai-input');
     bindAutoGrow(input);
     var send = $('ai-send');
+    var view = { root: root, box: box, input: input, send: send, more: root.querySelector('.ai-new-reply'), follow: true, scrollTop: 0 };
+    aiViews.set(id, view);
+    activeAiView = view;
+    box.addEventListener('scroll', function () {
+      if (!box.clientHeight) return;
+      view.scrollTop = box.scrollTop;
+      view.follow = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
+      if (view.follow) view.more.hidden = true;
+    });
+    view.more.addEventListener('click', function () { aiScroll(view, true); });
     function doSend() { sendAi(id, (input.value || '').trim()); }
     send.addEventListener('click', doSend);
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
     });
-    if (aiBusy) { send.disabled = true; input.disabled = true; }
-    aiScroll();
+    syncAiBusy();
+    aiScroll(view, true);
   }
 
   function sendAi(id, text) {
@@ -1166,18 +1273,19 @@
     aiHistTrim(msgs, 60);
     state.aiHist[id] = msgs;
     saveAi();
-    var input = $('ai-input');
+    var view = aiViews.get(id);
+    var input = view.input;
     if (input) { input.value = ''; input.style.height = ''; }
-    var box = $('ai-msgs');
+    var box = view.box;
     if (box) { var em = box.querySelector('.ai-empty'); if (em) em.remove(); box.appendChild(aiBubble('user', q)); }
-    aiScroll();
+    aiScroll(view, true);
     aiBusy = true;
-    var send = $('ai-send'); if (send) send.disabled = true;
+    syncAiBusy();
     var target = aiBubble('assistant', '');
     var body = target.querySelector('.ai-bubble');
     body.innerHTML = '<span class="spinner"></span>思考中…';
     if (box) box.appendChild(target);
-    aiScroll();
+    aiScroll(view, true);
     var acc = '';
     window.LearnUser.fetch(API + '/ask', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1197,7 +1305,7 @@
             var payload = line.slice(5).trim(); if (!payload) continue;
             var obj; try { obj = JSON.parse(payload); } catch (e2) { continue; }
             if (obj.error) acc += '\n[出错] ' + obj.error;
-            if (obj.delta) { acc += obj.delta; aiRenderInto(body, acc); aiScroll(); }
+            if (obj.delta) { acc += obj.delta; aiRenderInto(body, acc); aiScroll(view); }
           }
           return pump();
         });
@@ -1205,13 +1313,13 @@
       return pump();
     }).then(function () {
       if (!acc) acc = '（没有返回内容，请重试。）';
-      aiFinish(id, body, acc);
+      aiFinish(id, body, acc, view);
     }).catch(function (e) {
       if (!acc) acc = '请求失败：' + ((e && e.message) || e);
-      aiFinish(id, body, acc);
+      aiFinish(id, body, acc, view);
     });
   }
-  function aiFinish(id, body, acc) {
+  function aiFinish(id, body, acc, view) {
     aiRenderInto(body, acc);
     var msgs = state.aiHist[id] || (state.aiHist[id] = []);
     msgs.push({ role: 'assistant', content: aiClip(acc, 4000) });
@@ -1219,9 +1327,8 @@
     state.aiHist[id] = msgs;
     saveAi();
     aiBusy = false;
-    var send = $('ai-send'); if (send) send.disabled = false;
-    var input = $('ai-input'); if (input) input.disabled = false;
-    aiScroll();
+    syncAiBusy();
+    aiScroll(view);
   }
   // 简单 markdown：## 小标题 + 空行分段 + ``` 围栏代码块 + 行内 `code`；$...$ 交给 KaTeX
   function renderNotes(s) {
@@ -1612,6 +1719,7 @@
   // 页面不做任何本地保存；每次打开都从服务端远程加载
   function init() { window.LearnUser.ready.then(boot); }
   function boot() {
+    bindAgentLayout();
     $('chat-send').addEventListener('click', sendMessage);
     $('chat-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
     $('restart-btn').addEventListener('click', restart);
