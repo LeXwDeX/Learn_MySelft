@@ -1,6 +1,8 @@
 """Bounded, user-owned background work with persistent receipts and results."""
 import hashlib
 import json
+import logging
+import os
 import re
 import secrets
 import threading
@@ -10,6 +12,25 @@ OPERATIONS = frozenset({'/path/intake', '/path/research', '/path/plan', '/path/n
                         '/path/requiz', '/path/quizmap', '/path/refine', '/path/gaps', '/path/quiz'})
 TERMINAL = frozenset({'succeeded', 'failed', 'interrupted', 'cancelled'})
 REQUEST_ID = re.compile(r'^[A-Za-z0-9:_-]{8,120}$')
+LOGGER = logging.getLogger(__name__)
+
+
+def log_job_failure(job_id, operation, error, stage='execute'):
+    """Record locations only: exception text, source lines and locals may contain secrets."""
+    try:
+        frames = []
+        trace = error.__traceback__
+        while trace is not None:
+            code = trace.tb_frame.f_code
+            frames.append({'file': os.path.basename(code.co_filename),
+                           'function': code.co_name, 'line': trace.tb_lineno})
+            trace = trace.tb_next
+        record = {'job_id': job_id, 'operation': operation, 'stage': stage,
+                  'exception': type(error).__name__, 'frames': frames}
+        LOGGER.error('job_failure %s', json.dumps(record, ensure_ascii=True))
+    except Exception:
+        # Diagnostics must not alter the task outcome or prevent a retry.
+        pass
 
 
 class JobError(Exception):
@@ -160,6 +181,7 @@ class JobQueue:
                 else:
                     status, result = self.execute(row['user_id'], row['operation'], json.loads(row['body']))
             except Exception as error:
+                log_job_failure(row['id'], row['operation'], error)
                 status = getattr(error, 'status', 502)
                 result = {'error': str(error) if isinstance(error, JobError) else '生成暂时失败，输入已保留，请重试'}
             finally:
