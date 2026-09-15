@@ -1774,7 +1774,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   function bindAgentLayout() {
     var dialog = $('agent-dialog'), panel = $('node-panel');
     var workspace = panel.parentElement;
-    var oldOverflow = '', readingY = 0;
+    var oldOverflow = '', oldAnchor = '', readingX = 0, readingY = 0;
+    var readingFrame = null;
     function updateLayout() {
       var mobile = window.matchMedia('(max-width:800px)').matches;
       if (!mobile && dialog.open) dialog.close();
@@ -1796,13 +1797,29 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
         if (activeAiView.follow) aiScroll(activeAiView, true);
       }
       document.body.style.overflow = oldOverflow;
-      window.scrollTo(0, readingY);
       updateLayout();
+      window.scrollTo(readingX, readingY);
+      // Reparenting the panel changes layout. Keep browser scroll anchoring off
+      // until that layout has settled so it cannot undo the restored position.
+      readingFrame = requestAnimationFrame(function () {
+        readingFrame = null;
+        if (dialog.open) return;
+        window.scrollTo(readingX, readingY);
+        document.documentElement.style.overflowAnchor = oldAnchor;
+      });
     });
     dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });
     dialog.openAgent = function () {
       if (dialog.open) return;
+      if (readingFrame !== null) {
+        cancelAnimationFrame(readingFrame);
+        readingFrame = null;
+        document.documentElement.style.overflowAnchor = oldAnchor;
+      }
+      readingX = window.scrollX;
       readingY = window.scrollY;
+      oldAnchor = document.documentElement.style.overflowAnchor;
+      document.documentElement.style.overflowAnchor = 'none';
       oldOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
       dialog.appendChild(panel);

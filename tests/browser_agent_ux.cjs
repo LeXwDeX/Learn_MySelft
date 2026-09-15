@@ -88,6 +88,15 @@ const history = Object.fromEntries(['n1', 'n2'].map(id => [id, Array.from({lengt
     report.mobileFocus=[];for(let i=0;i<8;i++){const focus=await page.evaluate(()=>({id:document.activeElement.id,tag:document.activeElement.tagName,inDialog:!!document.activeElement.closest('#agent-dialog')}));report.mobileFocus.push(focus);await page.keyboard.press('Tab');}assert(report.mobileFocus.every(f=>f.inDialog||f.tag==='BODY'));
     await page.screenshot({path:output+'/agent-mobile.png'});await page.locator('#agent-close').click();
     assert(Math.abs(await page.evaluate(()=>scrollY)-before)<5);assert.equal(await page.evaluate(()=>document.activeElement.id),'agent-launch');
+    const originalAnchor = await page.evaluate(()=>document.documentElement.style.overflowAnchor);
+    for(let repeat=0;repeat<3;repeat++){
+      const readingY=await page.evaluate(()=>scrollY);
+      await page.locator('#agent-launch').click();await page.locator('#ai-input').fill('反复开关草稿 '+repeat);
+      if(repeat===2)await page.keyboard.press('Escape');else await page.locator('#agent-close').click();
+      await page.waitForFunction(({readingY,originalAnchor})=>!document.querySelector('#agent-dialog').open&&document.body.style.overflow!== 'hidden'&&document.documentElement.style.overflowAnchor===originalAnchor&&Math.abs(scrollY-readingY)<5,{readingY,originalAnchor});
+      await page.waitForTimeout(150);assert(Math.abs(await page.evaluate(()=>scrollY)-readingY)<5);
+    }
+    report.cases.push('repeated_close_escape_restores_scroll_anchor');
     await page.locator('#agent-launch').click();await page.locator('#ai-msgs').evaluate(e=>{e.scrollTop=120;});await page.waitForTimeout(50);await page.setViewportSize({width:1440,height:1000});await page.waitForTimeout(100);
     assert(!(await page.locator('#agent-dialog').evaluate(e=>e.open)));assert(await page.locator('#node-panel').evaluate(e=>e.parentElement.classList.contains('learning-workspace')));
     assert(Math.abs(await page.locator('#ai-msgs').evaluate(e=>e.scrollTop)-120)<5,'rotation restores conversation scroll');
