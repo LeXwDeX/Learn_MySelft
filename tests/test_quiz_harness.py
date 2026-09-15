@@ -10,7 +10,7 @@ KEY = state_tests.KEY
 
 
 def questions():
-    return [
+    result = [
         {'q': '哪个选项是整数加法的结果？', 'options': ['3', '4', '5', '6'], 'answer': 'A', 'type': 'choice', 'points': 10, 'explain': '验算'},
         {'q': '下列图形中哪一种只有三条边？', 'options': ['圆', '三角形', '矩形', '六边形'], 'answer': 'B', 'type': 'choice', 'points': 10, 'explain': '三条边'},
         {'q': '水在标准大气压下凝固时温度是多少？', 'options': ['10', '20', '0', '30'], 'answer': 'C', 'type': 'choice', 'points': 10, 'explain': '零摄氏度'},
@@ -19,6 +19,11 @@ def questions():
         {'q': '解释实验为何需要对照，并写出思路与结论。', 'answer': '思路：控制变量；结论：排除其他因素影响。', 'type': 'short', 'points': 40, 'explain': '控制变量',
          'rubric': [{'description': '解释控制变量的方法', 'points': 20}, {'description': '说明排除其他因素影响', 'points': 20}]},
     ]
+    for q in result:
+        q['scoring'] = {'mode': {'choice': 'single_choice', 'short': 'rubric', 'fill': 'per_blank'}[q['type']]}
+        if q['type'] == 'fill':
+            q['blanks'] = [{'id': 'b1', 'answer': '1', 'accepted_answers': ['1', '1.0'], 'points': 20}]
+    return result
 
 
 class HarnessTests(unittest.TestCase):

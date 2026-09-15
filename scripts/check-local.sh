@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 python3 -m unittest discover -s tests -v
 node tests/test_frontend_regressions.js
 node tests/test_reliability_frontend.js
+node tests/test_quiz_frontend.js
 node --check learning-path/path_app.js
 node --check learning-path/quiz_dialog.js
 node --check home/home.js

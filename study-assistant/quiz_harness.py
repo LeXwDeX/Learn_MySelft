@@ -13,7 +13,8 @@ import uuid
 from difflib import SequenceMatcher
 from fractions import Fraction
 
-VERSION = 1
+VERSION = 2
+MAX_BLANKS = 16
 
 
 class QuizContractError(ValueError):
@@ -42,7 +43,124 @@ def equivalent(left, right):
     return False
 
 
-def validate_questions(questions, previous=(), node=False):
+def blank_count(question):
+    """Legacy stems use underscores or empty parentheses; v2 uses ____ only."""
+    return max(1, len(re.findall(r'(?<![A-Za-z0-9_])_{3,}(?![A-Za-z0-9_])|＿{3,}|[（(][ \t　]*[)）]', question['q'])))
+
+
+def blank_equivalent(left, right):
+    """Ignore Unicode width/whitespace, preserve case, accept equal numeric literals."""
+    left, right = (re.sub(r'\s+', '', unicodedata.normalize('NFKC', value)) for value in (left, right))
+    if left == right:
+        return True
+    numeric = r'[-+]?\d+(?:\.\d+)?(?:/[-+]?\d+)?'
+    return bool(re.fullmatch(numeric, left) and re.fullmatch(numeric, right) and equivalent(left, right))
+
+
+def validate_scoring(q):
+    """Validate the immutable v2 rule, before independent model verification."""
+    expected = {'choice': ('single_choice',), 'fill': ('per_blank', 'all_or_nothing'),
+                'short': ('rubric',)}.get(q.get('type'), ())
+    scoring = q.get('scoring')
+    if not isinstance(scoring, dict) or set(scoring) != {'mode'} or scoring['mode'] not in expected:
+        raise QuizContractError('每题必须声明与题型一致的 scoring.mode')
+    if q['type'] != 'fill':
+        if 'blanks' in q:
+            raise QuizContractError('只有填空题可以声明 blanks')
+        return
+    blanks = q.get('blanks')
+    if not isinstance(blanks, list) or not 1 <= len(blanks) <= MAX_BLANKS:
+        raise QuizContractError('填空题必须声明1~16个空位')
+    if len(re.findall(r'(?<![A-Za-z0-9_])_{4,}(?![A-Za-z0-9_])', q['q'])) != len(blanks):
+        raise QuizContractError('题干空位数量必须与 blanks 一致，使用 ____ 标记')
+    for index, blank in enumerate(blanks):
+        if not isinstance(blank, dict) or blank.get('id') != 'b%d' % (index + 1):
+            raise QuizContractError('空位编号必须按顺序为 b1、b2…')
+        if set(blank) - {'id', 'answer', 'accepted_answers', 'points'}:
+            raise QuizContractError('空位包含未支持的规则字段')
+        reference = blank.get('answer')
+        accepted = blank.get('accepted_answers')
+        if not isinstance(reference, str) or not reference.strip() or len(reference) > 1500:
+            raise QuizContractError('每空必须有非空参考答案')
+        if not isinstance(accepted, list) or not 1 <= len(accepted) <= 32 or any(
+                not isinstance(a, str) or not a.strip() or len(a) > 1500 for a in accepted):
+            raise QuizContractError('每空必须声明1~32个非空可接受答案')
+        if not any(blank_equivalent(reference, a) for a in accepted):
+            raise QuizContractError('每空参考答案必须属于可接受答案')
+        if scoring['mode'] == 'per_blank':
+            if type(blank.get('points')) is not int or not 1 <= blank['points'] <= 100:
+                raise QuizContractError('按空计分必须给每空正整数分值')
+        elif 'points' in blank:
+            raise QuizContractError('整题计分不能同时声明每空分值')
+    if scoring['mode'] == 'per_blank' and sum(b['points'] for b in blanks) != q['points']:
+        raise QuizContractError('每空分值合计必须等于本题分值')
+    # The structured reference is authoritative, with a readable legacy summary.
+    q['answer'] = '；'.join(b['answer'] for b in blanks)
+
+
+def validate_answers(questions, answers):
+    if not isinstance(answers, list) or len(answers) != len(questions):
+        raise QuizContractError('作答数量必须与题目数量一致')
+    for q, answer in zip(questions, answers):
+        if isinstance(answer, list):
+            count = len(q['blanks']) if q.get('blanks') else blank_count(q)
+            if q['type'] != 'fill' or len(answer) != count or count > MAX_BLANKS:
+                raise QuizContractError('逐空作答数量必须与签发空位一致')
+            if any(not isinstance(a, str) for a in answer) or sum(map(len, answer)) > 20000:
+                raise QuizContractError('每空作答必须是文本，整题最多20000字符')
+        elif not isinstance(answer, str) or len(answer) > 20000:
+            raise QuizContractError('作答必须为文本或填空数组')
+
+
+def split_fill_answer(answer, count):
+    """Read old text without interpreting punctuation inside a structured answer."""
+    if isinstance(answer, list):
+        return answer
+    if not answer.strip():
+        return [''] * count
+    if count == 1:
+        return [answer]
+    for separator in (r'[;；]', r'\r?\n', r'[,，]'):
+        parts = re.split(separator, answer)
+        if len(parts) == count:
+            return parts
+    return [answer] + [''] * (count - 1)
+
+
+def legacy_fill_text(q, answers):
+    """Adapt new controls to old whole-answer rules without inventing blank rubrics."""
+    if not any(a.strip() for a in answers):
+        return ''
+    accepted = q.get('accepted_answers', [q['answer']])
+    candidates = [separator.join(answers) for separator in ('；', ';', '\n', ',', '，')]
+    for candidate in candidates:
+        if any(equivalent(candidate, reference) for reference in accepted):
+            return candidate
+    return candidates[0]
+
+
+def grade_blanks(q, answer):
+    values = split_fill_answer(answer, len(q['blanks']))
+    mode = q['scoring']['mode']
+    rows = []
+    for blank, value in zip(q['blanks'], values):
+        matched = bool(value.strip()) and any(blank_equivalent(value, a) for a in blank['accepted_answers'])
+        row = {'id': blank['id'], 'ok': matched, 'answer': value,
+               'comment': '符合可接受答案' if matched else '未作答' if not value.strip() else '答案不符'}
+        if mode == 'per_blank':
+            row.update(earned=blank['points'] if matched else 0, max_points=blank['points'])
+        rows.append(row)
+    correct = all(b['ok'] for b in rows)
+    earned = sum(b['earned'] for b in rows) if mode == 'per_blank' else q['points'] if correct else 0
+    summary = '按空计分，各空得分相加' if mode == 'per_blank' else '整题计分，全部空答对才得分'
+    details = '；'.join('第%d空：%s%s' % (i + 1, b['comment'],
+                       '（%d/%d分）' % (b['earned'], b['max_points']) if mode == 'per_blank' else '')
+                       for i, b in enumerate(rows))
+    return {'ok': correct, 'earned': earned, 'max_points': q['points'], 'mode': mode,
+            'blanks': rows, 'criteria': [], 'comment': summary + '。' + details}
+
+
+def validate_questions(questions, previous=(), node=False, legacy=False):
     if not isinstance(questions, list) or not (len(questions) == 6 if node else 1 <= len(questions) <= 16):
         raise QuizContractError('题目数量不符合契约')
     if node and [q.get('type') for q in questions] != ['choice'] * 4 + ['fill', 'short']:
@@ -55,6 +173,8 @@ def validate_questions(questions, previous=(), node=False):
     for q in questions:
         if not all(isinstance(q.get(k), str) and q[k].strip() for k in ('q', 'answer', 'explain')):
             raise QuizContractError('题目、答案和解析不得为空')
+        if not legacy or q.get('scoring'):
+            validate_scoring(q)
         text = normalized(q['q'])
         if any(text == old or SequenceMatcher(None, text, old, autojunk=False).ratio() >= 0.9 for old in seen):
             raise QuizContractError('题目与已出题目重复或过于相似')
@@ -122,6 +242,7 @@ def ensure_round(quiz):
         if q['type'] == 'fill':
             q['accepted_answers'] = [q['answer']] + re.split(r'[|｜]', q['answer'])
     round_data = new_round(questions, verified=False)
+    round_data['harness_version'] = 1
     # Legacy answers were not snapshotted with every attempt. Retain what exists,
     # explicitly label unknown historical answers rather than inventing them.
     for attempt in quiz.get('attempts') or []:
@@ -156,12 +277,17 @@ def attempt_id(round_id, answers):
 
 def grade(questions, answers, judge):
     """Objective answers are deterministic; subjective points require cited evidence."""
-    if not isinstance(answers, list) or len(answers) != len(questions) or not all(isinstance(a, str) for a in answers):
-        raise QuizContractError('作答数量必须与题目数量一致')
+    validate_answers(questions, answers)
     per, subjective = [], []
     for index, (q, answer) in enumerate(zip(questions, answers)):
+        if q['type'] == 'fill' and q.get('scoring'):
+            per.append(grade_blanks(q, answer))
+            continue
+        if isinstance(answer, list):
+            answer = legacy_fill_text(q, answer)
         maximum = q['points']
-        row = {'ok': False, 'earned': 0, 'max_points': maximum, 'comment': '', 'criteria': []}
+        mode = (q.get('scoring') or {}).get('mode') or {'choice': 'single_choice', 'fill': 'legacy_whole', 'short': 'rubric'}[q['type']]
+        row = {'ok': False, 'earned': 0, 'max_points': maximum, 'mode': mode, 'comment': '', 'criteria': []}
         if not answer.strip():
             row['comment'] = '未作答，得0分'
         elif equivalent(answer, q['answer']):
