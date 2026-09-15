@@ -11,7 +11,7 @@ def fixtures():
     qs = paper()
     qs[4]['q'] = '计算结果：1+1=____，2+1=____，2+2=____。'
     qs[4]['blanks'] = [
-        {'id': 'b' + str(i + 1), 'answer': str(value), 'accepted_answers': [str(value)], 'points': points}
+        {'id': 'b' + str(i + 1), 'answer': str(value), 'accepted_answers': [str(value)], 'match': 'numeric', 'points': points}
         for i, (value, points) in enumerate([(2, 6), (3, 7), (4, 7)])
     ]
     rounds.append(harness.new_round(harness.validate_questions(qs, node=True)))
@@ -25,7 +25,7 @@ def fixtures():
     rounds.append(old)
     qs = paper()
     qs[4]['q'] = '计算 1+1=____。'
-    qs[4]['blanks'] = [{'id': 'b1', 'answer': '2', 'accepted_answers': ['2'], 'points': 20}]
+    qs[4]['blanks'] = [{'id': 'b1', 'answer': '2', 'accepted_answers': ['2'], 'match': 'numeric', 'points': 20}]
     rounds.append(harness.new_round(harness.validate_questions(qs, node=True)))
     quiz = {'questions': rounds[0]['questions'], 'rounds': rounds, 'round_id': rounds[0]['id']}
     key = 'u0/learn-path-v1-quiz-v2-regression'

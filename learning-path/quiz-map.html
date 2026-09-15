@@ -294,6 +294,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
           html += '<div class="qd-blanks">' + fillBlanks(q).map(function (blank, j) {
             var id = 'qd-answer-' + i + '-blank-' + j;
             var label = '第 ' + (j + 1) + ' 空' + ((q.scoring || {}).mode === 'per_blank' ? ' · ' + blank.points + ' 分' : ' · 整题计分');
+            if (q.blanks) label += blank.match === 'text' ? ' · 按文字匹配' : ' · 允许数值等价';
             var blankGrade = grade && (grade.blanks || [])[j];
             return '<div class="qd-blank"><label class="qd-input-label" for="' + id + '">' + esc(label) + '</label>' +
               '<textarea class="qd-blank-input" id="' + id + '" maxlength="' + Math.floor(20000 / values.length) + '" rows="1"' + (view.readOnly || view.busy ? ' readonly' : '') + ' placeholder="填写第 ' + (j + 1) + ' 空">' + esc(values[j]) + '</textarea>' +
