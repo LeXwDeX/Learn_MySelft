@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """生成《学习路径》单页应用（采集 → 研究 → 路径图 + 解锁门控）。
 
-与 gen_math_map.py 同模式：读模板，用占位符替换内联 JS，避免 f-string 花括号转义问题。
+读模板，用占位符替换内联 JS，避免 f-string 花括号转义问题。
 """
 import os
 import datetime

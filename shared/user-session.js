@@ -205,7 +205,7 @@
       context.readOnly = result.read_only;
       context.userId = result.target.id;
       var oldPage = location.pathname.match(
-        /\/diagram-design\/learning-path\/(learning-path\.html|quiz-map\.html|junior-math-linalg\.html)$/,
+        /\/diagram-design\/learning-path\/(learning-path\.html|quiz-map\.html)$/,
       );
       if (oldPage) {
         location.replace(context.link(oldPage[1]) + location.search);
