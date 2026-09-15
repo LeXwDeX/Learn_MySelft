@@ -20,12 +20,12 @@
   --serif:Georgia,"Songti SC","SimSun",serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
   --min-page-w:0px;
-  --max-w:1616px;
+  --max-w:1744px;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.65;min-width:var(--min-page-w)}
 .toolbar{position:sticky;top:0;background:rgba(245,245,245,.96);border-bottom:1px solid var(--rule);z-index:6;backdrop-filter:blur(6px)}
-.toolbar-inner{max-width:var(--max-w);margin:0 auto;padding:16px 32px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.toolbar-inner{max-width:var(--max-w);margin:0 auto;padding:16px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .brand h1{font-family:var(--serif);font-weight:400;font-size:22px;margin:0;letter-spacing:.01em}
 .brand .sub{color:var(--soft);font-size:12px;margin:0;font-family:var(--mono)}
 .badge{font-family:var(--mono);font-size:11px;letter-spacing:.08em;border:1px solid var(--rule);border-radius:6px;padding:4px 9px;color:var(--muted);background:#fff}
@@ -52,7 +52,7 @@ body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);f
 a.home-link{text-decoration:none;display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap}
 .wrap{padding:26px 0 36px}
 .content-row{max-width:var(--max-w);margin:0 auto}
-.main{min-width:0;padding:0 32px}
+.main{min-width:0;padding:0 24px}
 .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--soft);margin:0 0 8px}
 h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .muted{color:var(--muted);font-size:13.5px}
@@ -100,7 +100,7 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .plan-heading .muted{margin:12px 0}
 .plan-context{display:flex;gap:8px;align-items:baseline;color:var(--soft);font-size:12px;overflow-wrap:anywhere}
 .plan-context span:last-child{color:var(--muted)}
-.learning-workspace{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:28px;align-items:start}
+.learning-workspace{display:grid;grid-template-columns:minmax(0,1fr) clamp(460px,34vw,600px);gap:28px;align-items:start}
 .unit-scroll{min-width:0;border:1px solid var(--rule);border-radius:8px;background:var(--paper2)}
 .unit-scroll .graph-wrap{min-height:100%;border:0;border-radius:0}
 
@@ -229,7 +229,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
 .panel-foot{flex:none;border-top:1px solid var(--rule);padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff}
 .tip{color:var(--soft);font-size:12.5px}
 
-footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule);padding:14px 32px 0;font-family:var(--mono);font-size:11px;color:var(--soft)}
+footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule);padding:14px 24px 0;font-family:var(--mono);font-size:11px;color:var(--soft)}
 
 /* ---- 学习资料库（动态扫描入口） ---- */
 .lib-wrap{position:relative;display:inline-block}
@@ -276,7 +276,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   .toolbar-actions .progress{flex:1;max-width:280px;margin-right:auto}
 }
 @media(max-width:1100px){
-  .learning-workspace{grid-template-columns:minmax(0,1fr) 360px;gap:20px}
+  .learning-workspace{grid-template-columns:minmax(0,1fr) 380px;gap:20px}
   .toolbar-inner{gap:10px}
   .progress{min-width:200px}
 }
