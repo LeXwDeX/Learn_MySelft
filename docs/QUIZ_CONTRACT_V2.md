@@ -17,7 +17,7 @@
 - 每题 `scoring` 只允许 `mode`，非法或遗漏模式不能签发。填空必须有 1~16 个有序 blanks，题干用 `____` 标记对应空位。
 - 每空 id 必须依次为 b1、b2……；必须有 answer 和 1~32 个 accepted_answers，且包含参考答案。禁止未知空位规则字段。
 - per_blank：每空 points 为正整数、总和必须等于本题 points。all_or_nothing：空位禁止声明 points，避免把“未单独计分”误表示成“每空 0 分”。
-- 单选和旧题沿用原标准化匹配；v2 填空忽略 Unicode 全半角和空白，**区分大小写**，有限小数/分数数值等价。`float64(X)` 不等于 `float64(x)`。同义词必须提前列入该空 accepted_answers，不在批改时让模型临时改规则。
+- 单选和旧题沿用原标准化匹配；v2 填空忽略 Unicode 全半角和空白，**区分大小写**，每空声明 `match: text`（文本匹配）或 `match: numeric`（允许有限小数/分数数值等价）。考查未约分、最简等形式时使用 text。`float64(X)` 不等于 `float64(x)`。同义词必须提前列入该空 accepted_answers，不在批改时让模型临时改规则。
 
 ## 定制例子：两空 8 + 12 分
 
@@ -28,8 +28,8 @@
   "points": 20,
   "scoring": {"mode": "per_blank"},
   "blanks": [
-    {"id": "b1", "answer": "float64(x)", "accepted_answers": ["float64(x)"], "points": 8},
-    {"id": "b2", "answer": "隐式", "accepted_answers": ["隐式", "隐式的"], "points": 12}
+    {"id": "b1", "answer": "float64(x)", "accepted_answers": ["float64(x)"], "match": "text", "points": 8},
+    {"id": "b2", "answer": "隐式", "accepted_answers": ["隐式", "隐式的"], "match": "text", "points": 12}
   ],
   "answer": "float64(x)；隐式",
   "explain": "Go 使用目标类型显式转换，不会自动转换这两个数值变量的类型。"
@@ -68,3 +68,5 @@ per_blank 的逐题结果提供 `mode`、`earned`、`max_points` 和 `blanks`。
 ## 验证入口
 
 `scripts/check-local.sh` 包含结构化契约与实际 HTTP 草稿/评分/回读回归。测试材料只能写入隔离状态目录，不得进入正式学习库。发布后还需通过两处测验的真实浏览器和模型出题回归。
+
+新签发每空必须明确 match。此前已签发 v2 题未提供 match 时保留原 numeric 规则，不追溯改写历史。修改匹配要求需签发新题。

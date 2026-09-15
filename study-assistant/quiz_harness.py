@@ -48,16 +48,18 @@ def blank_count(question):
     return max(1, len(re.findall(r'(?<![A-Za-z0-9_])_{3,}(?![A-Za-z0-9_])|＿{3,}|[（(][ \t　]*[)）]', question['q'])))
 
 
-def blank_equivalent(left, right):
+def blank_equivalent(left, right, match="numeric"):
     """Ignore Unicode width/whitespace, preserve case, accept equal numeric literals."""
     left, right = (re.sub(r'\s+', '', unicodedata.normalize('NFKC', value)) for value in (left, right))
     if left == right:
         return True
+    if match == "text":
+        return False
     numeric = r'[-+]?\d+(?:\.\d+)?(?:/[-+]?\d+)?'
     return bool(re.fullmatch(numeric, left) and re.fullmatch(numeric, right) and equivalent(left, right))
 
 
-def validate_scoring(q):
+def validate_scoring(q, legacy=False):
     """Validate the immutable v2 rule, before independent model verification."""
     expected = {'choice': ('single_choice',), 'fill': ('per_blank', 'all_or_nothing'),
                 'short': ('rubric',)}.get(q.get('type'), ())
@@ -76,8 +78,11 @@ def validate_scoring(q):
     for index, blank in enumerate(blanks):
         if not isinstance(blank, dict) or blank.get('id') != 'b%d' % (index + 1):
             raise QuizContractError('空位编号必须按顺序为 b1、b2…')
-        if set(blank) - {'id', 'answer', 'accepted_answers', 'points'}:
+        if set(blank) - {'id', 'answer', 'accepted_answers', 'points', 'match'}:
             raise QuizContractError('空位包含未支持的规则字段')
+        match = blank.get('match', 'numeric' if legacy else None)
+        if match not in ('text', 'numeric'):
+            raise QuizContractError('每空必须声明 match 为 text 或 numeric')
         reference = blank.get('answer')
         accepted = blank.get('accepted_answers')
         if not isinstance(reference, str) or not reference.strip() or len(reference) > 1500:
@@ -85,7 +90,7 @@ def validate_scoring(q):
         if not isinstance(accepted, list) or not 1 <= len(accepted) <= 32 or any(
                 not isinstance(a, str) or not a.strip() or len(a) > 1500 for a in accepted):
             raise QuizContractError('每空必须声明1~32个非空可接受答案')
-        if not any(blank_equivalent(reference, a) for a in accepted):
+        if not any(blank_equivalent(reference, a, match) for a in accepted):
             raise QuizContractError('每空参考答案必须属于可接受答案')
         if scoring['mode'] == 'per_blank':
             if type(blank.get('points')) is not int or not 1 <= blank['points'] <= 100:
@@ -144,7 +149,7 @@ def grade_blanks(q, answer):
     mode = q['scoring']['mode']
     rows = []
     for blank, value in zip(q['blanks'], values):
-        matched = bool(value.strip()) and any(blank_equivalent(value, a) for a in blank['accepted_answers'])
+        matched = bool(value.strip()) and any(blank_equivalent(value, a, blank.get('match', 'numeric')) for a in blank['accepted_answers'])
         row = {'id': blank['id'], 'ok': matched, 'answer': value,
                'comment': '符合可接受答案' if matched else '未作答' if not value.strip() else '答案不符'}
         if mode == 'per_blank':
@@ -174,7 +179,7 @@ def validate_questions(questions, previous=(), node=False, legacy=False):
         if not all(isinstance(q.get(k), str) and q[k].strip() for k in ('q', 'answer', 'explain')):
             raise QuizContractError('题目、答案和解析不得为空')
         if not legacy or q.get('scoring'):
-            validate_scoring(q)
+            validate_scoring(q, legacy=legacy)
         text = normalized(q['q'])
         if any(text == old or SequenceMatcher(None, text, old, autojunk=False).ratio() >= 0.9 for old in seen):
             raise QuizContractError('题目与已出题目重复或过于相似')

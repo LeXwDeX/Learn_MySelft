@@ -10,8 +10,8 @@ study = base.study
 
 def fill(mode='per_blank'):
     blanks = [
-        {'id': 'b1', 'answer': 'float64(x)', 'accepted_answers': ['float64(x)'], 'points': 8},
-        {'id': 'b2', 'answer': '隐式', 'accepted_answers': ['隐式', '隐式的'], 'points': 12},
+        {'id': 'b1', 'answer': 'float64(x)', 'accepted_answers': ['float64(x)'], 'match': 'text', 'points': 8},
+        {'id': 'b2', 'answer': '隐式', 'accepted_answers': ['隐式', '隐式的'], 'match': 'text', 'points': 12},
     ]
     if mode == 'all_or_nothing':
         for b in blanks:
@@ -90,6 +90,33 @@ class StructuredContractTests(unittest.TestCase):
         self.assertTrue(harness.blank_equivalent(' float64( x ) ', 'float64(x)'))
         self.assertFalse(harness.blank_equivalent('float64(X)', 'float64(x)'))
         self.assertFalse(harness.blank_equivalent('1/0', '0'))
+
+    def test_fraction_form_is_distinct_under_text_policy(self):
+        qs = paper()
+        qs[4]['q'] = '未约分结果 ____；最简分数 ____。'
+        for blank, answer in zip(qs[4]['blanks'], ['10/16', '5/8']):
+            blank.update(answer=answer, accepted_answers=[answer], match='text')
+        harness.validate_questions(qs, node=True)
+        answers = [''] * 6
+        answers[4] = ['5/8', '10/16']
+        self.assertEqual(harness.grade(qs, answers, lambda _: None)['score'], 0)
+        answers[4] = ['10/16', '5/8']
+        self.assertEqual(harness.grade(qs, answers, lambda _: None)['score'], 20)
+        for blank in qs[4]['blanks']:
+            blank['match'] = 'numeric'
+        answers[4] = ['5/8', '10/16']
+        self.assertEqual(harness.grade(qs, answers, lambda _: None)['score'], 20)
+
+    def test_missing_match_requires_legacy_validation(self):
+        qs = paper()
+        qs[4]['blanks'][0].pop('match')
+        with self.assertRaises(harness.QuizContractError):
+            harness.validate_questions(qs, node=True)
+        harness.validate_questions(qs, node=True, legacy=True)
+        self.assertNotIn('match', qs[4]['blanks'][0])
+        qs[4]['blanks'][0]['match'] = 'approximate'
+        with self.assertRaises(harness.QuizContractError):
+            harness.validate_questions(qs, node=True, legacy=True)
 
     def test_legacy_whole_answer_and_history_are_unchanged(self):
         qs = paper()

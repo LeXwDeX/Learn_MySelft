@@ -22,7 +22,7 @@ def questions():
     for q in result:
         q['scoring'] = {'mode': {'choice': 'single_choice', 'short': 'rubric', 'fill': 'per_blank'}[q['type']]}
         if q['type'] == 'fill':
-            q['blanks'] = [{'id': 'b1', 'answer': '1', 'accepted_answers': ['1', '1.0'], 'points': 20}]
+            q['blanks'] = [{'id': 'b1', 'answer': '1', 'accepted_answers': ['1', '1.0'], 'match': 'numeric', 'points': 20}]
     return result
 
 
