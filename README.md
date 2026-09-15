@@ -1,8 +1,8 @@
 # 自学社 — AI 学习工具（v1.0）
 
-自托管的 AI 辅助学习工具套件：**知识地图**（单元级 AI 对话）+ **学习路径**（对话采集 → 主动研究 → 依赖路径图 → 门控自测）+ **服务端学习数据同步**（换设备自动恢复）。
+自托管的 AI 辅助学习工具套件：**学习路径**（对话采集 → 主动研究 → 依赖路径图 → 门控自测）+ **服务端学习数据同步**（换设备自动恢复）。
 
-纯原生前端（无框架、无 CDN）+ 纯 Python 标准库后端（无第三方依赖）。入口管理页和测验弹窗支持手机布局，知识地图保留宽屏阅读布局。
+纯原生前端（无框架、无 CDN）+ 纯 Python 标准库后端（无第三方依赖）。入口管理页和测验弹窗支持手机布局。
 
 ---
 
@@ -12,7 +12,6 @@
 
 | 目录 | 组件 | 说明 |
 |------|------|------|
-| `knowledge-map/` | 知识地图 | 将结构化知识数据生成为交互式知识页：单元卡片 + 四态进度标记 + 每单元独立 AI 对话（每单元 = 每对话）。数据自备（未随仓库提供），由 `gen_math_map.py` 生成 |
 | `learning-path/` | 学习路径 | 输入主题 → 对话式采集需求 → 主动研究（SearXNG 检索）→ 生成依赖路径图。节点按依赖解锁（前置全部完成才可学），自测通过（≥60 分）标记完成 |
 | `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask` `/suggest` `/compress` `/health` `/path/intake` `/path/research` `/path/plan` `/path/node` `/path/quiz` `/path/requiz` `/state/all` `/state/put` `/state/del` |
 | `home/` | 固定首页 | 登录、账号管理与个人资料库（部署为 `<站点>/learn/`）；公共身份脚本位于 `shared/user-session.js` |
@@ -32,7 +31,7 @@
 浏览器                                 服务器
 ┌────────────────────┐   SSE / JSON  ┌─────────────────────┐         ┌──────────────────┐
 │ 静态页面（无框架）    │ ────────────▶ │ study-assistant     │ ──────▶ │ OpenAI 兼容 LLM   │
-│ 知识地图 / 路径 / 首页 │ ◀──────────── │ :8101（纯标准库）     │         │ 网关（模型 deepseek）│
+│ 学习路径 / 测验 / 首页 │ ◀──────────── │ :8101（纯标准库）     │         │ 网关（模型 deepseek）│
 └────────────────────┘               │                     │         └──────────────────┘
          │ localStorage              │ /state/*            │
          └─── 写入即推 / 加载即拉 ─────▶ │ SQLite 文档与任务表   │
@@ -67,10 +66,7 @@ mkdir -p $R/learn/assets $R/diagram-design/learning-path
 cp home/index.html                     $R/learn/index.html
 cp home/home.js                       $R/learn/assets/home.js
 cp shared/*.js shared/*.css           $R/learn/assets/
-# 知识地图页（可选）：先用「生成器」把自备数据生成为页面，再把产物放到：
-#   $R/diagram-design/learning-path/<你的页面名>.html
 cp learning-path/learning-path.html learning-path/quiz-map.html $R/diagram-design/learning-path/
-cp knowledge-map/math-knowledge-map.html $R/diagram-design/learning-path/junior-math-linalg.html
 sudo cp deploy/zixueshe-web.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart zixueshe-web
@@ -84,7 +80,6 @@ sudo systemctl restart zixueshe-web
 ### 3. 生成器（页面内容改动后重新生成）
 
 ```bash
-python3 knowledge-map/gen_math_map.py         # 自备数据（math_data.py）→ 页面 + 种子 JSON
 cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js → learning-path.html
 ```
 
@@ -121,7 +116,7 @@ Schema、事务边界、队列恢复、运行参数、UI 组件和回滚规则�
 
 ## 硬性约定
 
-- 首页、身份管理、任务状态和测验弹窗支持手机；知识地图保留宽屏阅读布局
+- 首页、身份管理、任务状态和测验弹窗支持手机
 - 生成页面内嵌业务代码，共用身份、保存和任务组件；无 CDN 依赖，公式走自托管 KaTeX
 - 每单元 = 每对话；数据实时同步到服务端，浏览器 localStorage 作为本机缓存
 - 学习路径门控：节点依赖全部完成后才解锁；自测 ≥60 分标记完成
@@ -130,10 +125,11 @@ Schema、事务边界、队列恢复、运行参数、UI 组件和回滚规则�
 ## 备注
 
 - 对话上下文由前端维护并随请求携带；每对话上限 500K token，超出自动压缩（页面有上下文计量）
-- 知识地图自测「看答案」为手动展开；学习路径自测走后端自动判分
 - `/path/requiz`（换新题重测）：输入节点 + 已出过的题目 + 上次批改要点，输出全新 2~3 题（含答案与解析），避免重测时重复出同一套题
 
 ## 版本
+
+- 2026-09-15：移除独立知识地图及预置数学教材；旧地址返回 404，已有学习记录保留。测验参考答案、解题思路和评分标准默认隐藏，确认后展开。
 
 - **v1.0**（2026-09-14）：首个发布版。知识地图 + 学习路径全流程（采集 / 研究 / 路径图 / 门控自测）+ `/state/*` 服务端数据同步。修复项：untitled 根因治理、卡片布局与间距、KaTeX 公式渲染、空回复重试、输出预算 384K。
 - 仓库整理：移除测试资料（示例知识地图数据与产物），仅保留工具与文档；模板与生成器去品牌化。

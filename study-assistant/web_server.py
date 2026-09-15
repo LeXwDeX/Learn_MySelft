@@ -5,12 +5,14 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import re
 import json
 import os
+import posixpath
 from urllib.parse import unquote, urlsplit
 
 SPACE_ROUTE = re.compile(r'^/learn/u/(u0|u[0-9a-f]{16})/(.*)$')
 PAGES = {'': '/learn/index.html', 'learning-path.html': '/diagram-design/learning-path/learning-path.html',
-         'quiz-map.html': '/diagram-design/learning-path/quiz-map.html',
-         'junior-math-linalg.html': '/diagram-design/learning-path/junior-math-linalg.html'}
+         'quiz-map.html': '/diagram-design/learning-path/quiz-map.html'}
+# Block retired artifacts even when an older deployment left a file on disk.
+RETIRED_PAGES = {'junior-math-linalg.html', 'math-knowledge-map.html', 'math-knowledge-map.json'}
 
 
 class LearningWebHandler(SimpleHTTPRequestHandler):
@@ -21,6 +23,9 @@ class LearningWebHandler(SimpleHTTPRequestHandler):
 
     def _route(self):
         path = unquote(urlsplit(self.path).path)
+        if posixpath.basename(posixpath.normpath(path)) in RETIRED_PAGES:
+            self.send_error(404)
+            return False
         if path == '/learn/config.js':
             body = ('window.LearnConfig = ' + json.dumps({'apiPort': self.api_port, 'apiBase': self.api_base}) + ';\n').encode()
             self.send_response(200)
