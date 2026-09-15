@@ -84,11 +84,10 @@ const history = Object.fromEntries(['n1', 'n2'].map(id => [id, Array.from({lengt
     await page.locator('.ai-new-reply').click();assert(await page.locator('#ai-msgs').evaluate(e => e.scrollHeight-e.scrollTop-e.clientHeight<32));
     report.cases.push('stream_isolation_history_and_new_reply');
     await page.setViewportSize({width: 390, height: 844});await page.evaluate(() => scrollTo(0, 1500));
-    const before=await page.evaluate(()=>scrollY);await page.locator('#agent-launch').click();await page.locator('#agent-dialog').waitFor({state:'visible'});
+    const originalAnchor = await page.evaluate(()=>document.documentElement.style.overflowAnchor);const before=await page.evaluate(()=>scrollY);await page.locator('#agent-launch').click();await page.locator('#agent-dialog').waitFor({state:'visible'});
     report.mobileFocus=[];for(let i=0;i<8;i++){const focus=await page.evaluate(()=>({id:document.activeElement.id,tag:document.activeElement.tagName,inDialog:!!document.activeElement.closest('#agent-dialog')}));report.mobileFocus.push(focus);await page.keyboard.press('Tab');}assert(report.mobileFocus.every(f=>f.inDialog||f.tag==='BODY'));
     await page.screenshot({path:output+'/agent-mobile.png'});await page.locator('#agent-close').click();
-    assert(Math.abs(await page.evaluate(()=>scrollY)-before)<5);assert.equal(await page.evaluate(()=>document.activeElement.id),'agent-launch');
-    const originalAnchor = await page.evaluate(()=>document.documentElement.style.overflowAnchor);
+    await page.waitForFunction(({before,originalAnchor})=>!document.querySelector('#agent-dialog').open&&document.body.style.overflow!=='hidden'&&document.documentElement.style.overflowAnchor===originalAnchor&&Math.abs(scrollY-before)<5,{before,originalAnchor});assert.equal(await page.evaluate(()=>document.activeElement.id),'agent-launch');
     for(let repeat=0;repeat<3;repeat++){
       const readingY=await page.evaluate(()=>scrollY);
       await page.locator('#agent-launch').click();await page.locator('#ai-input').fill('反复开关草稿 '+repeat);
