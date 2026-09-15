@@ -35,7 +35,10 @@ body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);f
 .stab:hover:not([disabled]){border-color:var(--soft)}
 .stab.on{border-color:var(--ink);color:var(--ink);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)}
 .stab[disabled]{opacity:.4;cursor:not-allowed}
-.spacer{flex:1 1 auto}
+.toolbar-actions{display:flex;align-items:center;gap:12px;margin-left:auto}
+.toolbar .btn,.toolbar .stab{height:32px;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;line-height:1;white-space:nowrap}
+.toolbar .btn[hidden]{display:none}
+.toolbar .progress{height:32px}
 .progress{display:flex;align-items:center;gap:10px;min-width:280px}
 .pbar{flex:1;height:9px;border-radius:6px;overflow:hidden;background:#fff;border:1px solid var(--rule)}
 .pfill{display:block;height:100%;width:0;background:var(--ok);transition:width .3s ease}
@@ -111,7 +114,10 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .node.unlocked{border-left-color:var(--accent)}
 .node.done{border-left-color:var(--ok)}
 .node.failed{border-left-color:#b23a48}
-.node-head{display:flex;align-items:center;gap:12px}
+.node-head{display:flex;align-items:flex-start;gap:12px}
+.node-head .node-no,.node-head .status,.node-head .ai-mini{height:26px;display:inline-flex;align-items:center;justify-content:center;padding-top:0;padding-bottom:0;line-height:1}
+.node-head .node-caret{line-height:26px}
+.node-head .node-title{line-height:26px}
 .node-no{font-family:var(--mono);font-size:11px;color:var(--soft);border:1px solid var(--rule);border-radius:4px;padding:2px 7px;flex:none}
 .node-title{flex:1;font-size:15.5px;font-weight:600;margin:0}
 .node-ess{margin:6px 0 0;color:var(--muted);font-size:13px;min-height:42px}
@@ -161,8 +167,8 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .ai-empty p{margin:0 0 8px}
 .ai-chip{display:block;width:100%;text-align:left;font-family:var(--sans);font-size:13px;border:1px solid var(--rule);background:#fff;border-radius:7px;padding:8px 11px;color:var(--muted);cursor:pointer;margin:0 0 7px}
 .ai-chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-tint)}
-.ai-compose{display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--rule);padding-top:12px}
-.ai-compose textarea{flex:1 1 auto;min-height:46px;max-height:220px;font-family:var(--sans);font-size:13.5px;padding:8px 11px;border:1px solid var(--rule);border-radius:7px;background:#fff;color:var(--ink);resize:vertical;outline:none}
+.ai-compose{display:grid;grid-template-columns:minmax(0,1fr) 64px;gap:8px;align-items:stretch;border-top:1px solid var(--rule);padding-top:12px}
+.ai-compose textarea{width:100%;min-height:48px;max-height:220px;font-family:var(--sans);font-size:13.5px;padding:8px 11px;border:1px solid var(--rule);border-radius:7px;background:#fff;color:var(--ink);resize:vertical;outline:none}
 .ai-compose textarea:focus{border-color:var(--accent)}
 .ai-note{color:var(--soft);font-size:11.5px;margin:8px 0 0}
 /* 自测折叠 / 查看答案 */
@@ -263,6 +269,12 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 .quiz-box .qopt > span{flex:1 1 auto;min-width:0;white-space:pre-wrap}
 .quiz-box .qopt pre.md-code{margin:4px 0 0}
 /* 窄屏保留可操作的对话高度，避免页面产生横向滚动。 */
+@media(max-width:1600px){
+  .toolbar-inner{column-gap:16px;row-gap:12px}
+  .stagenav{margin-left:auto}
+  .toolbar-actions{flex:1 0 100%;margin-left:0}
+  .toolbar-actions .progress{flex:1;max-width:280px;margin-right:auto}
+}
 @media(max-width:1100px){
   .learning-workspace{grid-template-columns:minmax(0,1fr) 360px;gap:20px}
   .toolbar-inner{gap:10px}
@@ -274,9 +286,11 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   .main{padding:0 16px}
   .wrap{padding-top:20px}
   .brand .sub{display:none}
-  .spacer{display:none}
-  .stagenav{flex-wrap:wrap}
-  .progress{flex:1 1 180px}
+  .stagenav{flex-wrap:wrap;margin-left:0}
+  .toolbar-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .toolbar-actions .progress{grid-column:1 / -1;max-width:none;min-width:0;margin-right:0;width:100%}
+  .toolbar-actions .btn{width:100%}
+  .toolbar-actions .lib-wrap{min-width:0}
   .learning-workspace{grid-template-columns:minmax(0,1fr);height:auto;gap:16px}
   .unit-scroll{max-height:70dvh;min-height:280px}
   .panel{height:clamp(520px,75dvh,720px)}
@@ -284,6 +298,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   .node{padding:14px}
   .node-head{flex-wrap:wrap;gap:8px}
   .node-title{flex-basis:calc(100% - 70px);min-width:0;overflow-wrap:anywhere}
+  .node-head .node-title{line-height:26px}
   .node-ess{overflow-wrap:anywhere}
   .panel-head,.panel-body{padding:14px 16px}
   .legend{gap:8px 14px}
@@ -309,19 +324,20 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       <button class="stab" data-stage="research" type="button">R · 主动研究</button>
       <button class="stab" data-stage="learning" type="button">L · 学习路径</button>
     </nav>
-    <div class="spacer"></div>
-    <div class="progress">
-      <div class="pbar"><span class="pfill" id="progress-fill"></span></div>
-      <span class="ptext" id="progress-text">已完成 0/0</span>
+    <div class="toolbar-actions">
+      <div class="progress">
+        <div class="pbar"><span class="pfill" id="progress-fill"></span></div>
+        <span class="ptext" id="progress-text">已完成 0/0</span>
+      </div>
+      <button class="btn" id="quizmap-btn" type="button" hidden>生成测验</button>
+      <button class="btn" id="gen-all-btn" type="button" hidden>一键生成全部节点</button>
+      <button class="btn" id="review-filter-btn" type="button" hidden>只看需复习 (0)</button>
+      <div class="lib-wrap" id="lib-wrap">
+        <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>
+        <div class="lib-pop" id="lib-pop" hidden></div>
+      </div>
+      <button class="btn" id="restart-btn" type="button">重新开始</button>
     </div>
-    <button class="btn" id="quizmap-btn" type="button" hidden>生成测验</button>
-    <button class="btn" id="gen-all-btn" type="button" hidden>一键生成全部节点</button>
-    <button class="btn" id="review-filter-btn" type="button" hidden>只看需复习 (0)</button>
-    <div class="lib-wrap" id="lib-wrap">
-      <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>
-      <div class="lib-pop" id="lib-pop" hidden></div>
-    </div>
-    <button class="btn" id="restart-btn" type="button">重新开始</button>
   </div>
 </header>
 
