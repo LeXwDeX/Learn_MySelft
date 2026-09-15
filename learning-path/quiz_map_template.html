@@ -324,7 +324,7 @@ __QUIZ_DIALOG_JS__
     var out = [];
     qs.forEach(function (q, i) {
       var p = per[i] || {};
-      var mine = ans[i] == null ? '' : String(ans[i]);
+      var mine = Array.isArray(ans[i]) ? ans[i].map(function (a, j) { return '第 ' + (j + 1) + ' 空：' + (a || '未作答'); }).join('；') : ans[i] == null ? '' : String(ans[i]);
       var lost = (p.earned != null && p.max_points != null) ? p.earned < p.max_points : p.ok === false;
       if (!lost) return;
       out.push({ unit: q.point || '', q: q.q || '', mine: mine,

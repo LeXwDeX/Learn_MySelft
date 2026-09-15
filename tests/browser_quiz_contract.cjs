@@ -1,0 +1,127 @@
+/* Run against the isolated test fixtures created for Quiz Harness v2. */
+'use strict';
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const base = process.env.QUIZ_TEST_SITE || 'http://192.168.33.146:8112';
+const api = process.env.QUIZ_TEST_API || 'http://192.168.33.146:8111';
+assert.equal(new URL(base).port, '8112', 'Only the isolated test site is permitted');
+assert.equal(new URL(api).port, '8111', 'Only the isolated test API is permitted');
+const output = process.env.QUIZ_TEST_OUTPUT || '/private/tmp/quiz-v2-browser';
+fs.mkdirSync(output, {recursive: true});
+(async () => {
+  const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
+  const page = await browser.newPage({viewport: {width:1440,height:1000}});
+  const errors = [], requests = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('response', async r => { if (r.status() >= 400 && r.url().startsWith(api)) console.error('API error',r.status(),r.url(),await r.text()); });
+  page.on('request', r => { if (new URL(r.url()).port === '8101') requests.push(r.url()); });
+  await page.route('**/*', route => new URL(route.request().url()).port === '8101' ? route.abort() : route.continue());
+  try {
+    await page.goto(base + '/learn/');
+    await page.locator('#login-username').fill('admin');
+    await page.locator('#login-password').fill(process.env.QUIZ_TEST_PASSWORD || 'review-only-password');
+    await page.locator('#login-submit').click();
+    await page.locator('#workspace').waitFor({state:'visible'});
+    for (const kind of ['learning-path', 'quiz-map']) {
+      await page.goto(base + '/learn/u/u0/' + kind + '.html?t=quiz-v2-regression');
+      if (kind === 'learning-path') {
+        await page.locator('#node-n1').click();
+        await page.locator('#node-n1 button[data-mat="quiz"]').click();
+      }
+      await page.getByRole('button', {name:/^(打开测验|查看作答与批改)$/}).click();
+      console.log('Opened',kind);
+      await page.locator('#qd-answer-4-blank-0').waitFor();
+      assert.equal(await page.locator('.qd-option input').count(), 16);
+      assert.equal(await page.locator('.qd-blank-input').count(), 2);
+      assert((await page.locator('.qd-scoring').nth(4).innerText()).includes('第 1 空 8 分'));
+      assert((await page.locator('.qd-scoring').nth(4).innerText()).includes('第 2 空 12 分'));
+      assert.equal(await page.locator('.qd-reference-content:visible').count(), 0);
+      await page.locator('#qd-submit').click();
+      assert((await page.locator('#qd-error').innerText()).includes('请至少回答'));
+      await page.locator('#qd-answer-4-blank-1').fill('隐式');
+      await page.locator('#qd-answer-5').fill('简答草稿保留');
+      await page.locator('[name="qd-answer-0"][value="A"]').check();
+      await page.locator('#qd-close').click();
+      await page.getByRole('button', {name:/^(打开测验|查看作答与批改)$/}).click();
+      await page.locator('#qd-answer-4-blank-1').waitFor();
+      assert.equal(await page.locator('#qd-answer-4-blank-0').inputValue(), '');
+      assert.equal(await page.locator('#qd-answer-4-blank-1').inputValue(), '隐式');
+      assert.equal(await page.locator('#qd-answer-5').inputValue(), '简答草稿保留');
+      assert(await page.locator('[name="qd-answer-0"][value="A"]').isChecked());
+      await page.locator('#qd-answer-5').fill('');
+      await page.locator('#qd-answer-4-blank-0').fill('float64(x)');
+      await page.locator('#qd-answer-4-blank-1').fill('错误');
+      await page.locator('#qd-submit').click();
+      await page.locator('.qd-result').waitFor({timeout:60000});
+      assert((await page.locator('.qd-result strong').innerText()).includes('18 / 100'));
+      assert((await page.locator('.qd-blank-grade').first().innerText()).includes('8 / 8'));
+      assert((await page.locator('.qd-blank-grade').nth(1).innerText()).includes('0 / 12'));
+      assert(await page.locator('#qd-answer-4-blank-0').evaluate(e => e.readOnly));
+      await page.locator('.qd-question').nth(4).scrollIntoViewIfNeeded();
+      await page.screenshot({path:output + '/' + kind + '-desktop.png'});
+      await page.setViewportSize({width:390,height:844});
+      await page.locator('.qd-question').nth(4).scrollIntoViewIfNeeded();
+      assert(await page.locator('#quiz-workspace').evaluate(e => e.scrollWidth <= e.clientWidth));
+      assert(await page.locator('#qd-body').evaluate(e => e.scrollWidth <= e.clientWidth));
+      assert.equal(await page.locator('.qd-blanks').evaluate(e => getComputedStyle(e).gridTemplateColumns.split(' ').length),1);
+      await page.screenshot({path:output + '/' + kind + '-mobile.png'});
+      await page.locator('#qd-retry').click();
+      assert.equal(await page.locator('#qd-answer-4-blank-0').inputValue(), '');
+      await page.locator('#qd-round').selectOption('1');
+      assert((await page.locator('.qd-scoring').nth(4).innerText()).includes('全部空答对得 20 分'));
+      await page.locator('#qd-answer-4-blank-0').fill('float64(x)');
+      await page.locator('#qd-answer-4-blank-1').fill('错误');
+      await page.locator('#qd-submit').click();
+      await page.locator('.qd-result').waitFor({timeout:60000});
+      assert((await page.locator('.qd-result strong').innerText()).includes('0 / 100'));
+      assert((await page.locator('.qd-blank-grade').first().innerText()).includes('整题计分'));
+      await page.locator('#qd-retry').click();
+      await page.locator('#qd-answer-4-blank-0').fill('float64(x)');
+      await page.locator('#qd-answer-4-blank-1').fill('隐式的');
+      await page.locator('#qd-submit').click();
+      await page.locator('.qd-result').waitFor({timeout:60000});
+      assert((await page.locator('.qd-result strong').innerText()).includes('20 / 100'));
+      await page.locator('#qd-round').selectOption('2');
+      assert.equal(await page.locator('.qd-blank-input').count(),3);
+      await page.locator('#qd-answer-4-blank-1').fill('3');
+      await page.locator('#qd-answer-4-blank-2').fill('4');
+      await page.locator('#qd-round').selectOption('3');
+      assert((await page.locator('.qd-scoring').nth(4).innerText()).includes('旧题整题计分'));
+      assert.equal(await page.locator('#qd-answer-4-blank-0').inputValue(),'float64(x)');
+      assert.equal(await page.locator('#qd-answer-4-blank-1').inputValue(),'隐式');
+      await page.locator('#qd-round').selectOption('4');
+      assert.equal(await page.locator('.qd-blank-input').count(),1);
+      await page.locator('#qd-round').selectOption('2');
+      assert.equal(await page.locator('#qd-answer-4-blank-0').inputValue(),'');
+      assert.equal(await page.locator('#qd-answer-4-blank-1').inputValue(),'3');
+      assert.equal(await page.locator('#qd-answer-4-blank-2').inputValue(),'4');
+      await page.locator('#qd-submit').click();
+      await page.locator('.qd-result').waitFor({timeout:60000});
+      assert((await page.locator('.qd-result strong').innerText()).includes('14 / 100'));
+      await page.locator('#qd-close').click();
+      await page.reload();
+      if(kind==='learning-path') {
+        await page.locator('#node-n1').click();
+        await page.locator('#node-n1 button[data-mat="quiz"]').click();
+      }
+      await page.getByRole('button', {name:/^(打开测验|查看作答与批改)$/}).click();
+      await page.locator('#qd-round').selectOption('2');
+      await page.locator('.qd-result').waitFor();
+      assert.equal(await page.locator('#qd-answer-4-blank-2').inputValue(),'4');
+      assert(await page.locator('#qd-answer-4-blank-2').evaluate(e=>e.readOnly));
+      await page.locator('#qd-close').click();
+      await page.setViewportSize({width:1440,height:1000});
+    }
+    assert.deepEqual(errors, []);
+    assert.deepEqual(requests, []);
+    const report = {passed:true,base,api,pages:2,viewports:[1440,390],cases:['one_two_three_blanks','weighted_partial_credit','whole_all_or_nothing','choice','short_draft','round_switch','close_reopen','reload_history','legacy_text','mobile_no_overflow'],errors,productionRequests:requests};
+    fs.writeFileSync(output + '/report.json',JSON.stringify(report,null,2));
+    console.log(JSON.stringify(report));
+  } catch (error) {
+    console.error('Page errors',errors);
+    console.error(await page.locator('#quiz-workspace').innerText().catch(()=>'No dialog'));
+    await page.screenshot({path:output + '/failure.png'});
+    throw error;
+  } finally { await browser.close(); }
+})().catch(error=>{console.error(error);process.exitCode=1;});
