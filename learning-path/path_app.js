@@ -935,12 +935,14 @@
   // ---------- 右侧面板：纯 Agent 区（只做 AI 对话；正文/测验在卡片里） ----------
   function renderAgentPanel() {
     if (!selectedId || !nodeById(selectedId)) {
+      $('plan-current-unit').textContent = '选择单元开始学习';
       panelHead('AGENT', 'AI 学习助手', '点击左侧卡片展开学习，或点卡片上的「AI 辅助」与 AI 交互式学习。');
       $('panel-body').innerHTML = '<p class="tip">选一个单元，AI 会带你交互式学习：讲解、追问、出小题检验你，不直接给答案。</p>';
       setFoot('');
       return;
     }
     var n = nodeById(selectedId);
+    $('plan-current-unit').textContent = dispId(selectedId) + ' · ' + n.title;
     panelHead('AGENT', dispId(selectedId) + ' · ' + n.title, n.essence || '');
     renderAiPanel(selectedId);
   }
