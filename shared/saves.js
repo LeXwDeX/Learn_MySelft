@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var context = window.LearnUser;
-  var pending = {}, queue = Promise.resolve(), storageKey, lastFailure = null, recovering = false, retrying = false;
+  var pending = {}, queue = Promise.resolve(), storageKey, lastFailure = null, recovering = false, retrying = false, outstanding = 0;
   function persist() {
     if (!storageKey) return;
     try {
@@ -41,7 +41,9 @@
     var backedUp = persist();
     notice(backedUp ? '正在保存…' : '正在保存；本机备份不可用，请保持页面打开');
     // Every save starts after earlier saves settle, including an earlier failure.
-    var request = queue.catch(function () {}).then(async function () {
+    var idle = outstanding === 0;
+    outstanding += 1;
+    async function dispatchRequest() {
       var controller = new AbortController();
       var timer = setTimeout(function () { controller.abort(); }, 25000);
       options.signal = controller.signal;
@@ -51,7 +53,11 @@
         await response.clone().json();
         return response;
       } finally { clearTimeout(timer); }
-    }).then(async function (response) {
+    }
+    // During pagehide, starting an idle keepalive request must happen before
+    // returning to the browser; a later promise continuation can be discarded.
+    var delivery = idle ? dispatchRequest() : queue.catch(function () {}).then(dispatchRequest);
+    var request = delivery.then(async function (response) {
       if (!response.ok) {
         var data = await response.clone().json().catch(function () { return {}; });
         lastFailure = data.error || '保存失败（' + response.status + '）';
@@ -69,7 +75,7 @@
       lastFailure = '网络中断，内容尚未保存到服务器';
       notice(lastFailure + '，请重试。', true);
       throw error;
-    });
+    }).finally(function () { outstanding -= 1; });
     queue = request;
     return request;
   }
