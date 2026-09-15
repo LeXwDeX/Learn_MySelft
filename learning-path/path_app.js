@@ -986,10 +986,16 @@
       // Reparenting the panel changes layout. Keep browser scroll anchoring off
       // until that layout has settled so it cannot undo the restored position.
       readingFrame = requestAnimationFrame(function () {
-        readingFrame = null;
-        if (dialog.open) return;
+        if (dialog.open) { readingFrame = null; return; }
         window.scrollTo(readingX, readingY);
-        document.documentElement.style.overflowAnchor = oldAnchor;
+        // The first callback still runs before layout. Restore anchoring only
+        // after a frame has painted the panel in its original container.
+        readingFrame = requestAnimationFrame(function () {
+          readingFrame = null;
+          if (dialog.open) return;
+          window.scrollTo(readingX, readingY);
+          document.documentElement.style.overflowAnchor = oldAnchor;
+        });
       });
     });
     dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });
