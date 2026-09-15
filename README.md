@@ -35,7 +35,7 @@
 │ 知识地图 / 路径 / 首页 │ ◀──────────── │ :8101（纯标准库）     │         │ 网关（模型 deepseek）│
 └────────────────────┘               │                     │         └──────────────────┘
          │ localStorage              │ /state/*            │
-         └─── 写入即推 / 加载即拉 ─────▶ │ 每键一个 JSON 文件    │
+         └─── 写入即推 / 加载即拉 ─────▶ │ SQLite 文档与任务表   │
 ```
 
 ## 部署
@@ -51,7 +51,7 @@
 
 ```bash
 sudo mkdir -p /opt/study-assistant
-sudo cp study-assistant/study_assistant.py study-assistant/quiz_harness.py study-assistant/user_accounts.py study-assistant/web_server.py /opt/study-assistant/
+sudo cp study-assistant/*.py /opt/study-assistant/
 # 编辑 deploy/study-assistant.service：把 LLM_KEY 改为实际密钥（按需调整 LLM_BASE 等，见下表）
 sudo cp deploy/study-assistant.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now study-assistant
@@ -66,7 +66,7 @@ R=/path/to/static-root
 mkdir -p $R/learn/assets $R/diagram-design/learning-path
 cp home/index.html                     $R/learn/index.html
 cp home/home.js                       $R/learn/assets/home.js
-cp shared/user-session.js             $R/learn/assets/user-session.js
+cp shared/*.js shared/*.css           $R/learn/assets/
 # 知识地图页（可选）：先用「生成器」把自备数据生成为页面，再把产物放到：
 #   $R/diagram-design/learning-path/<你的页面名>.html
 cp learning-path/learning-path.html learning-path/quiz-map.html $R/diagram-design/learning-path/
@@ -109,24 +109,20 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 | `STATE_DIR` | `<脚本目录>/state` | 学习数据存储目录；账号文件放在同级的 `state-accounts`（实际为 `STATE_DIR` 加 `-accounts`） |
 | `DELETE_PASSWORD` | （空） | 首次启动初始化 admin 的密码；账号文件存在后不会覆盖管理员密码 |
 
-### 前端地址约定（换部署地址时看这里）
+### 前端运行配置
 
-- `shared/user-session.js`：携带登录 Cookie 和当前用户标识，自动请求「当前页面主机名 `:8101`」——**静态站与后端同机部署时零配置**。
-- `learning-path/path_app.js`：顶部常量 `var API = 'http://192.168.33.146:8101'`——部署到其他地址时改这一处，然后重新执行 `gen_path_page.py` 生成页面。
-- `knowledge-map/ai_panel.js`：知识地图的 API 常量同理（改动后重新执行 `gen_math_map.py`）。
-- 后端内置 CORS 白名单：`localhost / 127.0.0.1 / 192.168.x.x / 10.x.x.x`——只允许这些来源，刻意如此。
+静态服务 `/learn/config.js` 提供公共地址，全部页面使用 `LearnUser.apiBase`。同机默认后端端口为 8101；隔离测试通过 `web_server.py --api-port 8111` 配置。`--api-base` 或 `API_PUBLIC_BASE` 支持完整地址及同源代理前缀，无需修改生成页面。
 
 ## 数据与备份
 
-- 学习数据存服务端 `STATE_DIR`（默认 `study-assistant/state/`），**每键一个 JSON 文件**：`{"key", "v", "ts"}`；`v=null` 表示已删除（墓碑，防止旧设备把已删数据推回来）。
-- 同步机制：浏览器写入即推（去抖 600ms、关页兜底）+ 打开页面即拉（服务端为准）→ 换浏览器 / 换设备自动恢复。
-- **备份**：直接复制 `STATE_DIR` 目录。**恢复**：复制回去并重启服务。
-- **重置**：停服 → 清空目录 → 起服（浏览器端数据会在下次打开页面时自动上传回来）。
+学习数据使用 `STATE_DIR/state.sqlite3`，首次运行自动事务导入旧 JSON 文件并保留其原始内容。迁移后的 SQLite 是权威数据源，旧 JSON 仅为升级快照。备份必须包含 WAL 已提交数据及配套账号；停服后使用 `study-assistant/backup_state.py`。
+
+Schema、事务边界、队列恢复、运行参数、UI 组件和回滚规则详见 [可靠性设计](docs/RELIABILITY.md)。
 
 ## 硬性约定
 
-- 仅适配桌面（整页最低宽度 1360px），无手机适配
-- 页面为单文件、无 CDN 依赖；公式走自托管 KaTeX
+- 首页、身份管理、任务状态和测验弹窗支持手机；知识地图保留宽屏阅读布局
+- 生成页面内嵌业务代码，共用身份、保存和任务组件；无 CDN 依赖，公式走自托管 KaTeX
 - 每单元 = 每对话；数据实时同步到服务端，浏览器 localStorage 作为本机缓存
 - 学习路径门控：节点依赖全部完成后才解锁；自测 ≥60 分标记完成
 - AI 纪律：引导式学习——不主动给答案，学习者提交后再评估；明确索要才给解答

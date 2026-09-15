@@ -3,6 +3,8 @@ import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import re
+import json
+import os
 from urllib.parse import unquote, urlsplit
 
 SPACE_ROUTE = re.compile(r'^/learn/u/(u0|u[0-9a-f]{16})/(.*)$')
@@ -12,8 +14,22 @@ PAGES = {'': '/learn/index.html', 'learning-path.html': '/diagram-design/learnin
 
 
 class LearningWebHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, api_port=8101, api_base=None, **kwargs):
+        self.api_port = api_port
+        self.api_base = api_base
+        super().__init__(*args, **kwargs)
+
     def _route(self):
         path = unquote(urlsplit(self.path).path)
+        if path == '/learn/config.js':
+            body = ('window.LearnConfig = ' + json.dumps({'apiPort': self.api_port, 'apiBase': self.api_base}) + ';\n').encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            if self.command != 'HEAD':
+                self.wfile.write(body)
+            return False
         # Redirect the user-space root to its slash form for relative links.
         if re.fullmatch(r'/learn/u/(u0|u[0-9a-f]{16})', path):
             self.send_response(302)
@@ -58,8 +74,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--directory', required=True)
     parser.add_argument('--port', type=int, default=8100)
+    parser.add_argument('--api-port', type=int, default=8101)
+    parser.add_argument('--api-base', default=os.environ.get('API_PUBLIC_BASE'))
     args = parser.parse_args()
-    server = ThreadingHTTPServer(('0.0.0.0', args.port), partial(LearningWebHandler, directory=args.directory))
+    if not 1 <= args.port <= 65535 or not 1 <= args.api_port <= 65535:
+        parser.error('ports must be between 1 and 65535')
+    if args.api_base:
+        parsed = urlsplit(args.api_base)
+        relative = args.api_base.startswith('/') and not args.api_base.startswith('//')
+        absolute = parsed.scheme in ('http', 'https') and parsed.hostname
+        if not (relative or absolute) or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            parser.error('--api-base must be a root-relative or HTTP(S) base URL')
+    server = ThreadingHTTPServer(('0.0.0.0', args.port), partial(LearningWebHandler,
+                                 directory=args.directory, api_port=args.api_port, api_base=args.api_base))
     server.daemon_threads = True
     server.serve_forever()
 

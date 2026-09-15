@@ -4,6 +4,7 @@ Passwords and session tokens are never stored in plaintext. The initial admin
 owns the existing u0 namespace; new users get immutable, server-generated IDs.
 """
 import hashlib
+import copy
 import hmac
 import json
 import os
@@ -57,6 +58,7 @@ class AccountStore:
         with self.lock:
             if self.path.exists():
                 self.data = json.loads(self.path.read_text(encoding='utf-8'))
+                self.committed = copy.deepcopy(self.data)
             else:
                 if not bootstrap_password:
                     raise AccountError(503, '请先在服务器配置管理员初始密码')
@@ -68,16 +70,32 @@ class AccountStore:
             self.dummy_password = self.data['users']['u0']['password']
 
     def _save(self):
-        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        descriptor, temporary = tempfile.mkstemp(prefix='.accounts-', dir=self.directory)
+        temporary = None
         try:
+            self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            descriptor, temporary = tempfile.mkstemp(prefix='.accounts-', dir=self.directory)
             with os.fdopen(descriptor, 'w', encoding='utf-8') as output:
                 json.dump(self.data, output, ensure_ascii=False)
                 output.flush()
                 os.fsync(output.fileno())
             os.replace(temporary, self.path)
+            directory_fd = os.open(self.directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            self.committed = copy.deepcopy(self.data)
+        except OSError:
+            # An unsuccessful mutation must not remain live only in memory. If
+            # replace succeeded but directory sync failed, reread what is on disk.
+            if self.path.exists():
+                self.data = json.loads(self.path.read_text(encoding='utf-8'))
+                self.committed = copy.deepcopy(self.data)
+            elif hasattr(self, 'committed'):
+                self.data = copy.deepcopy(self.committed)
+            raise
         finally:
-            if os.path.exists(temporary):
+            if temporary and os.path.exists(temporary):
                 os.unlink(temporary)
 
     def _user(self, user_id):
