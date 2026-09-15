@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from app_config import Settings
 from state_store import StateStore, StateConflict
 from state_schema import validate_value, SCHEMA_VERSION
-from background_jobs import JobQueue, JobError, OPERATIONS
+from background_jobs import JobQueue, JobError, OPERATIONS, log_job_failure
 
 import quiz_harness as harness
 from user_accounts import AccountStore, AccountError, COOKIE_NAME, SESSION_TTL, USER_ID
@@ -118,6 +118,15 @@ def _run_job(user_id, operation, body):
     if not responses:
         raise JobError(502, '任务未返回结果，请重试')
     return responses[-1]
+
+
+def _log_node_failure(error, stage):
+    """Preserve the original failure location before contract retries replace it."""
+    try:
+        job_id = getattr(_state_store().local, 'job_id', None)
+        log_job_failure(job_id, '/path/node', error, stage)
+    except Exception:
+        pass
 
 
 def _jobs():
@@ -1614,24 +1623,29 @@ class Handler(BaseHTTPRequestHandler):
                 ]
 
             detail = None
+            stage = 'generation'
             try:
                 last_error = ""
                 for attempt in range(3):
                     try:
+                        stage = 'generation'
                         candidate = _norm_node_detail(_json_block(_upstream_nonempty(
                             _mk_node(" 上次验题失败：" + last_error if last_error else ""),
                             max_tokens=PATH_MAX_TOKENS, temperature=0.5)))
                         if not candidate:
                             raise harness.QuizContractError("材料不完整")
+                        stage = 'verification'
                         qs = _checked_questions(candidate["quiz"]["questions"], node=True)
                         candidate["quiz"] = _issued_quiz(qs)
                         detail = candidate
                         break
                     except harness.QuizContractError as error:
+                        _log_node_failure(error, stage)
                         last_error = str(error)
                 if detail is None:
                     raise harness.QuizContractError("出题校验失败：" + last_error)
-            except Exception:
+            except Exception as error:
+                _log_node_failure(error, stage)
                 if gate_key:
                     _gen_gate_finish(gate_key, _gate, err="node verification failed")
                 raise
