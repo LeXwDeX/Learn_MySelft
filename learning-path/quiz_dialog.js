@@ -40,6 +40,16 @@
     if (mode === 'all_or_nothing') return '填空题 · 整题计分：全部空答对得 ' + q.points + ' 分，否则 0 分；各空不单独计分';
     return '填空题 · 旧题整题计分：符合预设整题答案得 ' + q.points + ' 分，否则 0 分；未设置每空分值';
   }
+  function roundLabel(rounds, index, currentId) {
+    var round = rounds[index];
+    var editionSource = round && round.migration && round.migration.source_round_id;
+    var suffix = '';
+    if (typeof editionSource === 'string' && editionSource) suffix = ' · 修订版';
+    else if (rounds.some(function (r) {
+      return r && r.migration && r.migration.source_round_id === round.id;
+    })) suffix = ' · 原版';
+    return '第 ' + (index + 1) + ' 套' + suffix + (round.id === currentId ? ' · 最新' : '');
+  }
   function referenceHtml(q, md) {
     if (q.type !== 'fill' || !q.blanks) return md(q.answer || '');
     return q.blanks.map(function (blank, i) {
@@ -166,7 +176,7 @@
     var result = view.attempt && (view.attempt.result || view.attempt);
     byId('qd-title').textContent = config.title || '测验';
     byId('qd-round').innerHTML = view.quiz.rounds.map(function (r, index) {
-      return '<option value="' + index + '"' + (index === view.index ? ' selected' : '') + '>第 ' + (index + 1) + ' 套' + (r.id === view.quiz.round_id ? ' · 最新' : '') + '</option>';
+      return '<option value="' + index + '"' + (index === view.index ? ' selected' : '') + '>' + roundLabel(view.quiz.rounds, index, view.quiz.round_id) + '</option>';
     }).join('');
     byId('qd-prev').disabled = view.index === 0 || view.busy;
     byId('qd-next').disabled = view.index === view.quiz.rounds.length - 1 || view.busy;

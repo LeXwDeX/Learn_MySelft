@@ -70,6 +70,21 @@ class QuizMigrationTest(unittest.TestCase):
                 migration.migrate(self.store.path, plan, self.root / ('backup-' + level))
             self.assertEqual(before, self.store.records())
 
+    def test_remigrating_migrated_source_is_rejected(self):
+        self.assertEqual(migration.migrate(self.store.path, self.plan, self.root / 'backup-once')['editions'], 1)
+        before = self.store.records()
+        second = copy.deepcopy(self.plan)
+        second['id'] = 'migration-2'
+        second['documents'][0]['source_sha256'] = migration.digest(
+            json.loads(self.store.record('u1/quiz')['value']))
+        with self.assertRaises(ValueError):
+            migration.migrate(self.store.path, second)
+        with self.assertRaises(ValueError):
+            migration.migrate(self.store.path, second, self.root / 'backup-twice')
+        self.assertEqual(before, self.store.records())
+        self.assertFalse((self.root / 'backup-twice').exists())
+        self.assertEqual(migration.migrate(self.store.path, self.plan)['editions'], 0)
+
     def test_invalid_contract_leaves_database_unchanged(self):
         self.plan['documents'][0]['editions'][0]['questions'][0]['blanks'][0]['points'] = 1
         before = self.store.records()
