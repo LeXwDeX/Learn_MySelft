@@ -47,6 +47,10 @@ def convert_document(document, entries, migration_id):
             raise ValueError('Source round changed; review a fresh plan')
         if source.get('harness_version', 1) >= 2:
             raise ValueError('Only legacy rounds can be migrated')
+        if any(isinstance(r.get('migration'), dict) and
+               r['migration'].get('source_round_id') == entry['source_round_id']
+               for r in quiz['rounds']):
+            raise ValueError('Source round already has a migrated edition')
         questions = copy.deepcopy(entry['questions'])
         harness.validate_questions(questions, node=bool(entry['path']))
         if questions != entry['questions']:

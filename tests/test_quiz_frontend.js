@@ -6,8 +6,8 @@ const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../learning-path/quiz_dialog.js'), 'utf8');
 const context = {window: {}};
 vm.createContext(context);
-vm.runInContext(source.replace('  window.QuizDialog = {', '  globalThis.quizTest = {fillBlanks, fillValues, hasAnswer, scoringLabel};\n  window.QuizDialog = {'), context);
-const {fillBlanks, fillValues, hasAnswer, scoringLabel} = context.quizTest;
+vm.runInContext(source.replace('  window.QuizDialog = {', '  globalThis.quizTest = {fillBlanks, fillValues, hasAnswer, scoringLabel, roundLabel};\n  window.QuizDialog = {'), context);
+const {fillBlanks, fillValues, hasAnswer, scoringLabel, roundLabel} = context.quizTest;
 const q = {type:'fill', q:'转换 ____；类型 ____。', points:20};
 assert.equal(fillBlanks(q).length,2);
 assert.equal(fillBlanks({...q,q:'Python __name__ 的值为 ____。'}).length,1);
@@ -28,4 +28,14 @@ assert(scoringLabel({...q,blanks,scoring:{mode:'per_blank'}}).includes('第 1 �
 assert(scoringLabel({...q,blanks,scoring:{mode:'per_blank'}}).includes('第 2 空 12 分'));
 assert(scoringLabel({...q,blanks,scoring:{mode:'all_or_nothing'}}).includes('全部空答对得 20 分'));
 assert(scoringLabel(q).includes('未设置每空分值'));
-console.log('PASS blank layout, legacy preservation, positional arrays and scoring labels');
+const rounds = [
+  {id: 'legacy'},
+  {id: 'edition', migration: {id: 'm1', source_round_id: 'legacy'}},
+  {id: 'fresh'}
+];
+assert.equal(roundLabel(rounds, 0, 'fresh'), '第 1 套 · 原版');
+assert.equal(roundLabel(rounds, 1, 'fresh'), '第 2 套 · 修订版');
+assert.equal(roundLabel(rounds, 2, 'fresh'), '第 3 套 · 最新');
+assert.equal(roundLabel([{id: 'only'}], 0, 'other'), '第 1 套');
+assert.equal(roundLabel([{id: 'now'}], 0, 'now'), '第 1 套 · 最新');
+console.log('PASS blank layout, legacy preservation, positional arrays, scoring labels and round labels');
