@@ -53,6 +53,10 @@ class StateStore:
                 );
                 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status, created_ms);
                 CREATE INDEX IF NOT EXISTS jobs_user ON jobs(user_id, updated_ms);
+                CREATE TABLE IF NOT EXISTS job_progress (
+                    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+                    value TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS task_titles (
                     user_id TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL,
                     PRIMARY KEY(user_id, key)
@@ -60,6 +64,15 @@ class StateStore:
             ''')
             connection.execute('PRAGMA user_version=1')
         self._import_legacy()
+
+    def job_progress(self, step, label, attempt=1):
+        job_id = getattr(self.local, 'job_id', None)
+        if not job_id:
+            return
+        value = json.dumps({'step': step, 'total': 4, 'label': label, 'attempt': attempt}, ensure_ascii=False)
+        with self.transaction() as connection:
+            connection.execute('INSERT INTO job_progress(job_id,value) VALUES (?,?) '
+                               'ON CONFLICT(job_id) DO UPDATE SET value=excluded.value', (job_id, value))
 
     @contextmanager
     def connection(self):

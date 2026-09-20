@@ -1684,6 +1684,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # -- New round: preserve every issued round and check all historical questions. --
         if path == "/path/requiz":
+            _state_store().job_progress(1, '准备请求和历史题目')
             node = body.get("node") or {}
             key = clip(body.get("key"), 200)
             node_id = clip(node.get("id"), 20)
@@ -1714,10 +1715,13 @@ class Handler(BaseHTTPRequestHandler):
                 questions, last_error = None, ""
                 for attempt in range(3):
                     try:
-                        candidate = _norm_quiz_questions(_json_block(_upstream_nonempty([
+                        _state_store().job_progress(2, '模型生成新题', attempt + 1)
+                        generated = _upstream_nonempty([
                             {"role": "system", "content": _path_system("requiz")},
                             {"role": "user", "content": json.dumps(payload, ensure_ascii=False) + "\n校验反馈：" + last_error},
-                        ], max_tokens=PATH_MAX_TOKENS, temperature=0.6)))
+                        ], max_tokens=PATH_MAX_TOKENS, temperature=0.6)
+                        _state_store().job_progress(3, '校验题目与评分标准', attempt + 1)
+                        candidate = _norm_quiz_questions(_json_block(generated))
                         if not candidate:
                             raise harness.QuizContractError("题目不完整")
                         questions = _checked_questions(candidate["questions"], previous, node=True)
@@ -1733,6 +1737,7 @@ class Handler(BaseHTTPRequestHandler):
                         for field in ("score", "lastResult", "lastAnswers"):
                             state.pop(field, None)
                     return json.loads(json.dumps(quiz))
+                _state_store().job_progress(4, '保存新题并保留历史作答', attempt + 1)
                 result = _quiz_update(key, node_id, append)
                 _gen_gate_finish(gate_key, gate, out=result)
                 self._json(200, result)

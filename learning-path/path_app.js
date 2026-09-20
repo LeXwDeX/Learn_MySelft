@@ -290,11 +290,11 @@
   }
 
   // ---------- 网络 ----------
-  function post(path, body) {
+  function post(path, body, jobOptions) {
     if (window.LearnJobs && window.LearnJobs.supports(path)) {
       if (!body.key) body.key = storeKey();
       var expectedKind = {'/path/intake': 'intake', '/path/research': 'research', '/path/plan': 'plan', '/path/node': 'node'}[path];
-      var pending = state.pending, options = {};
+      var pending = state.pending, options = Object.assign({}, jobOptions || {});
       if (pending && pending.requestId && (pending.kind === expectedKind || (path === '/path/node' && pending.kind === 'nodes'))) {
         options.requestId = pending.requestId + (pending.kind === 'nodes' ? ':' + body.node.id : '');
       }
@@ -1557,13 +1557,13 @@
     var btn = scope ? scope.querySelector('#redo-quiz') : null;
     if (btn) { btn.disabled = true; btn.textContent = '正在出新题…'; }
     hideError();
-    post('/path/requiz', {
+    return post('/path/requiz', {
       node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
       spec: state.spec,
       round_id: quiz.round_id,
       feedback: st.lastResult || null,
       key: storeKey()
-    }).then(function (r) {
+    }, { onRetry: function () { return redoQuiz(id); } }).then(function (r) {
       var qs = (r && r.questions) || [];
       if (!qs.length) throw new Error('未获得新题');
       d.quiz = r;
