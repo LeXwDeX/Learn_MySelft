@@ -66,7 +66,9 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 
 /* ---- 采集 ---- */
 .intake-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:22px 24px}
-.chat-log{min-height:180px;max-height:56vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 2px 12px}
+.chat-log{height:clamp(140px,32dvh,300px);overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:12px;padding:4px 2px 12px}
+.chat-log .bubble{flex-shrink:0}
+.intake-card #learning-materials{max-height:30dvh;overflow:auto}
 .bubble{max-width:76%;padding:10px 14px;border-radius:10px;font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
 .bubble.ai{align-self:flex-start;background:#fbfbfb;border:1px solid var(--rule);border-bottom-left-radius:3px}
 .bubble.me{align-self:flex-end;background:var(--accent-tint);border:1px solid rgba(235,108,54,.35);color:#7a3a1a;border-bottom-right-radius:3px}
@@ -77,9 +79,9 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .hint{color:var(--soft);font-size:12px;margin:8px 0 0}
 .spec-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:18px 20px;margin:0 0 18px}
 .spec-card h3{margin:0 0 10px;font-size:16px}
-.spec-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 18px}
-.spec-grid .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)}
-.spec-grid .v{font-size:13.5px;color:var(--ink);margin-bottom:6px}
+.spec-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13.5px}
+.spec-table th,.spec-table td{padding:12px 14px;border:1px solid var(--rule);text-align:left;vertical-align:top;overflow-wrap:anywhere;white-space:pre-wrap}
+.spec-table th{width:112px;background:#fafafa;color:var(--muted);font-weight:500}
 
 /* ---- 研究 ---- */
 .panel-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:20px 22px;margin:0 0 16px}
@@ -313,7 +315,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   .node-ess{overflow-wrap:anywhere}
   .panel-head,.panel-body{padding:14px 16px}
   .legend{gap:8px 14px}
-  .spec-grid{grid-template-columns:1fr}
+  .spec-table th{width:78px}
+  .spec-table th,.spec-table td{padding:9px 10px}
   .chat-input input{min-width:0}
   .lib-pop{min-width:min(340px,calc(100vw - 32px));max-width:calc(100vw - 32px);right:auto;left:0}
   footer{margin:24px 16px 0;padding:14px 0 0;overflow-wrap:anywhere}
@@ -387,6 +390,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
           <p class="eyebrow">检索式</p>
           <div class="chips" id="query-chips"></div>
           <p class="eyebrow">参考来源</p>
+          <p class="muted" id="research-source-note"></p>
+          <button class="btn" id="research-recheck" type="button" hidden>重新核验来源</button>
           <div id="source-list"></div>
           <hr class="rule" style="height:1px;background:var(--rule);border:0;margin:18px 0">
           <p class="eyebrow">研究简报</p>
@@ -849,6 +854,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     spec: null,
     queries: [],
     sources: [],
+    research_version: 0,
     brief: '',
     plan: null,
     nodeDetail: {},                   // {id: NodeDetail}
@@ -865,6 +871,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   var expandedId = null;              // 手风琴：当前展开的卡片（同时只展开一张）
   var activeScope = null;             // 当前展开卡片的 .node-content（测验交互的作用域根）
   var generatingNode = null;          // 正在生成材料的节点 id（防重复请求）
+  var nodeMaterialStatus = {};
   var reviewFilter = false;           // 只看「需复习」（纯显示层）
   var resumeAttempts = 0;             // 自动恢复重试计数
   var MARK_LABELS = [['none', '未学'], ['learning', '学习中'], ['mastered', '已掌握'], ['review', '需复习']];
@@ -1031,7 +1038,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       var payload = {
         stage: state.stage, topic: state.topic, history: state.history, materials: state.materials,
         spec: state.spec, queries: state.queries, sources: state.sources,
-        brief: state.brief, plan: state.plan,
+        brief: state.brief, research_version: state.research_version, plan: state.plan,
         nodeDetail: state.nodeDetail, nodeState: state.nodeState,
         pending: state.pending || null
       };
@@ -1073,6 +1080,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       state.spec = d.spec || null;
       state.queries = d.queries || [];
       state.sources = d.sources || [];
+      state.research_version = d.research_version || 0;
       state.brief = d.brief || '';
       state.plan = d.plan || null;
       state.nodeDetail = d.nodeDetail || {};
@@ -1288,11 +1296,12 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   // ---------- 阶段 A：采集对话 ----------
   function appendBubble(role, text) {
     var log = $('chat-log');
+    var follow = log.scrollHeight - log.scrollTop - log.clientHeight < 32;
     var d = document.createElement('div');
     d.className = 'bubble ' + (role === 'user' ? 'me' : 'ai');
     d.innerHTML = '<span class="who">' + (role === 'user' ? '你' : 'AI') + '</span>' + esc(text);
     log.appendChild(d);
-    log.scrollTop = log.scrollHeight;
+    if (role === 'user' || follow) log.scrollTop = log.scrollHeight;
   }
   function renderChat() {
     var log = $('chat-log');
@@ -1304,8 +1313,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     }
   }
   function setChatDisabled(off) {
-    $('chat-input').disabled = off;
     $('chat-send').disabled = off;
+    $('chat-send').textContent = off ? '回复中…' : '发送';
     if (materialsPanel) materialsPanel.lock(off || state.stage !== 'intake');
   }
 
@@ -1315,6 +1324,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var text = (el.value || '').trim();
     if (!text) return;
     el.value = '';
+    el.focus({ preventScroll: true });
     hideError();
     if (!state.topic) {
       // 首次输入：作为学习主题
@@ -1342,7 +1352,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var thinking = document.createElement('div');
     thinking.className = 'bubble ai';
     thinking.innerHTML = '<span class="who">AI</span><span class="spinner"></span>思考中…';
-    log.appendChild(thinking); log.scrollTop = log.scrollHeight;
+    var follow = log.scrollHeight - log.scrollTop - log.clientHeight < 32;
+    log.appendChild(thinking);
+    if (follow) log.scrollTop = log.scrollHeight;
 
     post('/path/intake', { key: storeKey(), topic: state.topic, history: state.history })
       .then(function (r) {
@@ -1371,14 +1383,14 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var sp = state.spec || {};
     var card = $('spec-card');
     function row(k, v) {
-      return '<div><div class="k">' + esc(k) + '</div><div class="v">' + esc(v || '—') + '</div></div>';
+      return '<tr><th scope="row">' + esc(k) + '</th><td>' + esc(v || '—') + '</td></tr>';
     }
-    card.innerHTML = '<h3>需求单（Spec）</h3><div class="spec-grid">' +
+    card.innerHTML = '<h3 id="spec-heading">需求单（Spec）</h3><table class="spec-table" aria-labelledby="spec-heading"><tbody>' +
       row('主题', sp.topic) + row('目标', sp.goal) + row('现有基础', sp.level) +
       row('期望深度', sp.depth) +
       row('偏好形式', (sp.preferences || []).join('、')) +
       row('约束', sp.constraints) + row('大纲线索', (sp.outline_hint || []).join('；')) +
-      '</div>';
+      '</tbody></table>';
     card.hidden = false;
   }
 
@@ -1474,6 +1486,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       .then(function (r) {
         state.queries = r.queries || [];
         state.sources = r.sources || [];
+        state.research_version = r.research_version || 0;
         state.brief = r.brief || '';
         save();
         renderResearch();
@@ -1535,6 +1548,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   }
 
   function renderResearch() {
+    var checked = state.research_version === 2;
+    $('research-recheck').hidden = checked || window.LearnUser.readOnly;
+    $('research-source-note').textContent = checked ? '仅展示通过主题相关性筛选的来源。' : '这些是旧版检索记录，尚未核验主题相关性。可重新核验，不会重建现有学习路径。';
     var chips = state.queries.map(function (q) { return '<span class="chip">' + esc(q) + '</span>'; }).join('');
     $('query-chips').innerHTML = chips || '<span class="empty-note">无检索式</span>';
     var srcs = state.sources.map(function (s, i) {
@@ -1544,10 +1560,22 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
         (s.snippet ? '<span class="snip">' + esc(s.snippet) + '</span>' : '') +
         '</div></div>';
     }).join('');
-    $('source-list').innerHTML = srcs || '<p class="empty-note">没有检索到来源（仍会基于模型知识生成路径）。</p>';
+    $('source-list').innerHTML = srcs || '<p class="empty-note">未找到通过相关性筛选的来源；后续内容基于已有资料和模型知识，未获网络来源验证。</p>';
     $('brief-text').textContent = state.brief || '（无简报）';
     renderMathIn($('brief-text'));
     $('research-card').hidden = false;
+  }
+  function recheckResearch() {
+    var button = $('research-recheck');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = '正在核验…';
+    post('/path/research', { spec: state.spec, key: storeKey() }).then(function (r) {
+      state.queries = r.queries || []; state.sources = r.sources || [];
+      state.brief = r.brief || ''; state.research_version = r.research_version || 0;
+      save(); renderResearch();
+    }).catch(function (e) { showError('来源核验失败：' + e.message, recheckResearch); })
+      .finally(function () { button.disabled = false; button.textContent = '重新核验来源'; });
   }
 
   // ---------- 阶段 C：路径图 ----------
@@ -1708,15 +1736,20 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
     requestAnimationFrame(drawEdges);
     generatingNode = id;
+    nodeMaterialStatus[id] = 'generating';
+    syncAiMaterial(id);
     setPending('node', id);
     requestNodeDetail(id).then(function (detail) {
       generatingNode = null;
       state.nodeDetail[id] = detail;
+      syncAiMaterial(id);
       state.pending = null; resumeAttempts = 0; hideResumeBar();
       save();
       if (expandedId === id) renderNodeDetail(id);
     }).catch(function (e) {
       generatingNode = null;
+      nodeMaterialStatus[id] = 'failed';
+      syncAiMaterial(id);
       if (expandedId !== id) return;
       if (handlePendingFailure(e)) {
         scope.innerHTML = '<p class="tip">服务端仍在生成本节点材料，稍后自动重试…</p>';
@@ -1868,7 +1901,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     if (window.matchMedia('(max-width:800px)').matches) $('agent-dialog').openAgent();
     else if ($('ai-input')) $('ai-input').focus({ preventScroll: true });
   }
-  var AI_SUGGEST = ['讲讲本单元的重点', '出个小题目考我', '我哪里最容易出错？'];
+  var AI_SUGGEST = ['讲讲本单元的重点', '出个小题目考我', '本单元有哪些常见误区？'];
+  var AI_PREVIEW_SUGGEST = ['学习这个单元前需要哪些基础？', '帮我理解这个单元的学习目标', '等待材料时，我可以怎样预习？'];
 
   // ---------- Part H：一键生成全部节点（含未解锁节点） ----------
   var genAllRunning = false;      // 批量生成进行中
@@ -1935,6 +1969,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     genAllRunning = true; genAllPaused = false;
     genAllQueue = ids.slice();
     genAllRemaining = ids.slice();
+    ids.forEach(function (id) { nodeMaterialStatus[id] = 'generating'; syncAiMaterial(id); });
     genAllTotal = ids.length;
     genAllIdx = 0;
     if (genAllTimer) { clearTimeout(genAllTimer); genAllTimer = null; }
@@ -1957,6 +1992,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     requestNodeDetail(id).then(function (detail) {
       setCardGenState(id, false);
       state.nodeDetail[id] = detail;
+      syncAiMaterial(id);
       var i0 = genAllRemaining.indexOf(id); if (i0 >= 0) genAllRemaining.splice(i0, 1);
       genAllQueue.shift();
       genAllSyncPending();
@@ -1964,6 +2000,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       genAllStep();
     }).catch(function () {
       setCardGenState(id, false);
+      nodeMaterialStatus[id] = 'failed';
+      syncAiMaterial(id);
       genAllQueue.shift();   // 失败：留在 genAllRemaining，继续下一个
       genAllStep();
     });
@@ -1971,6 +2009,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   function genAllFinish(reason) {
     genAllRunning = false;
     if (reason === 'paused') {
+      genAllRemaining.forEach(function (id) { nodeMaterialStatus[id] = 'missing'; syncAiMaterial(id); });
       genAllPaused = false;
       state.pending = null; save();
       hideResumeBar();
@@ -2020,9 +2059,38 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     return {
       unit_id: dispId(id), unit_title: n.title || '', domain: state.topic || '',
       essence: n.essence || '', musts: kp, traps: traps, quizzes: quizzes,
-      notes: d.study_notes ? String(d.study_notes).slice(0, 6000) : ''
+      notes: d.study_notes ? String(d.study_notes).slice(0, 6000) : '',
+      material_status: aiMaterialStatus(id)
     };
   }  // (aiUnit end)
+  function aiMaterialStatus(id) {
+    if (state.nodeDetail[id]) return 'ready';
+    if (nodeMaterialStatus[id]) return nodeMaterialStatus[id];
+    return state.pending && state.pending.kind === 'node' && state.pending.nid === id ? 'generating' : 'missing';
+  }
+  function syncAiMaterial(id) {
+    var view = aiViews.get(id);
+    if (!view) return;
+    var status = aiMaterialStatus(id);
+    var ready = status === 'ready';
+    var label = ready ? '学习材料已就绪' : status === 'generating' ? '学习材料正在生成' : status === 'failed' ? '学习材料生成失败，请在左侧重试' : '学习材料尚未生成';
+    view.root.querySelector('.ai-intro').textContent = label + (ready ? '，可以结合正文讲解和练习。' : '。可以先聊前置知识和学习目标。');
+    view.root.querySelector('.ai-note').textContent = ready ? 'AI 可参考本单元材料；个人薄弱点需结合你的实际作答判断。' : 'AI 当前仅有单元标题和学习目标，还没有本单元正文。';
+    view.input.placeholder = ready ? '就本单元提问，Enter 发送 / Shift+Enter 换行' : '可以先问学习目标或前置知识';
+    var empty = view.box.querySelector('.ai-empty');
+    if (empty) {
+      empty.replaceChildren();
+      var heading = document.createElement('p');
+      heading.textContent = ready ? '可以问我：' : '材料就绪前，可以先问：';
+      empty.appendChild(heading);
+      (ready ? AI_SUGGEST : AI_PREVIEW_SUGGEST).forEach(function (text) {
+        var button = document.createElement('button');
+        button.className = 'ai-chip'; button.type = 'button'; button.textContent = text;
+        button.addEventListener('click', function () { sendAi(id, text); });
+        empty.appendChild(button);
+      });
+    }
+  }
   function aiScroll(view, force) {
     view = view || activeAiView;
     if (!view) return;
@@ -2070,6 +2138,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     if (cached) {
       $('panel-body').replaceChildren(cached.root);
       activeAiView = cached;
+      syncAiMaterial(id);
       cached.box.scrollTop = cached.scrollTop;
       if (cached.follow) aiScroll(cached, true);
       syncAiBusy();
@@ -2089,14 +2158,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var msgs = state.aiHist[id] || [];
     var box = $('ai-msgs');
     if (!msgs.length) {
-      box.innerHTML = '<div class="ai-empty"><p>还没有对话。可以问我：</p>' +
-        AI_SUGGEST.map(function (s) { return '<button class="ai-chip" type="button">' + esc(s) + '</button>'; }).join('') + '</div>';
-      var chips = box.querySelectorAll('.ai-chip');
-      for (var i = 0; i < chips.length; i++) {
-        (function (txt, btn) {
-          btn.addEventListener('click', function () { sendAi(id, txt); });
-        })(AI_SUGGEST[i], chips[i]);
-      }
+      box.innerHTML = '<div class="ai-empty"></div>';
     } else {
       msgs.forEach(function (m) { box.appendChild(aiBubble(m.role, m.content)); });
     }
@@ -2106,6 +2168,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     var view = { root: root, box: box, input: input, send: send, more: root.querySelector('.ai-new-reply'), follow: true, scrollTop: 0 };
     aiViews.set(id, view);
     activeAiView = view;
+    syncAiMaterial(id);
     box.addEventListener('scroll', function () {
       if (!box.clientHeight) return;
       view.scrollTop = box.scrollTop;
@@ -2116,7 +2179,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     function doSend() { sendAi(id, (input.value || '').trim()); }
     send.addEventListener('click', doSend);
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); doSend(); }
     });
     syncAiBusy();
     aiScroll(view, true);
@@ -2140,6 +2203,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
     aiScroll(view, true);
     aiBusy = true;
     syncAiBusy();
+    input.focus({ preventScroll: true });
     var target = aiBubble('assistant', '');
     var body = target.querySelector('.ai-bubble');
     body.innerHTML = '<span class="spinner"></span>思考中…';
@@ -2602,7 +2666,10 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
       $('chat-input').placeholder = '说明测验范围、难度和目标，回车开始…';
     }
     $('chat-send').addEventListener('click', sendMessage);
-    $('chat-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
+    $('research-recheck').addEventListener('click', recheckResearch);
+    $('chat-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); sendMessage(); }
+    });
     $('restart-btn').addEventListener('click', restart);
     bindStageNav();
     $('errretry').addEventListener('click', function () { var f = retryFn; hideError(); if (f) f(); });

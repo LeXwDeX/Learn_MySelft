@@ -36,6 +36,7 @@ from background_jobs import JobQueue, JobError, OPERATIONS, log_job_failure, sho
 
 import quiz_harness as harness
 import material_parser
+from research_sources import collect_sources, select_sources
 from user_accounts import AccountStore, AccountError, COOKIE_NAME, SESSION_TTL, USER_ID
 
 SETTINGS = Settings.from_env()
@@ -64,6 +65,7 @@ UPSTREAM_TIMEOUT = SETTINGS.upstream_timeout
 
 # ---- 学习路径（/path/*）相关常量 ----
 SEARXNG_BASE = SETTINGS.searxng_base
+SEARXNG_ENGINES = os.environ.get('SEARXNG_ENGINES', 'brave,google cse,wikipedia').strip()
 # 路径类端点（尤其 /path/plan、/path/node）输出长；思考与正文共享输出配额（DeepSeek 官方设计），
 # 一律顶格官方最大输出 393216（384K），不再出现被思考挤爆→正文截断。
 PATH_MAX_TOKENS = SETTINGS.max_output_tokens
@@ -254,9 +256,9 @@ def _state_stage_result(key, stage):
     if not m:
         return None
     if stage == "research":
-        if m.get("brief") and m.get("queries"):
+        if m.get("brief") and m.get("queries") and m.get('research_version') == 2:
             return {"queries": m.get("queries") or [], "sources": m.get("sources") or [],
-                    "brief": m.get("brief") or ""}
+                    "brief": m.get("brief") or "", "research_version": 2}
         return None
     if stage == "plan":
         pl = m.get("plan")
@@ -354,6 +356,7 @@ SPEC 的 JSON 字段（全部必填）：
     "research_queries": """你在为一个学习路径做前期检索。根据需求单，给出 3~5 条用于搜索引擎（SearXNG）的中文或英文检索式。
 
 只输出一个 JSON 数组字面量，例如：["Rust 入门 学习路径","所有权机制 常见误区"]，不要任何解释、不要代码围栏。
+每条只检索一个子主题，含明确的学习领域关键词与2~4个关键概念；不要罗列整份大纲、单字助词或全部词形，避免过长查询失去主题。可使用目标语言。
 检索式要覆盖：核心概念、前置知识、常见误区、优质教程/课程。""",
     "research_brief": """你在把检索结果整理成一份「研究简报」，供后续生成学习路径使用。
 
@@ -593,7 +596,7 @@ def _notes_block(notes):
 
 
 def build_system(ctx):
-    return SYSTEM_TMPL.format(
+    prompt = SYSTEM_TMPL.format(
         unit_id=clip(ctx.get("unit_id"), 20),
         unit_title=clip(ctx.get("unit_title"), 80),
         domain=clip(ctx.get("domain"), 40),
@@ -603,6 +606,12 @@ def build_system(ctx):
         traps=_block("陷阱", ctx.get("traps"), 6),
         quizzes=_block("自测", ctx.get("quizzes"), 4),
     )
+    prompt += '\n个人薄弱点必须有学生实际作答证据；常见误区不等于这位学生已经犯的错误。'
+    if ctx.get('material_status') in ('missing', 'generating', 'failed'):
+        prompt += ('\n材料状态：' + ctx['material_status'] + '。本单元正文尚未就绪，目前仅有标题和学习目标。'
+                   '请据此提供预习和前置概念帮助，不得声称已经阅读正文，不得引用不存在的正文或配套测验。'
+                   '若用户索要正文重点或配套题，先说明材料尚未就绪；通用知识须明确是预习内容。')
+    return prompt
 
 
 def build_suggest_system(ctx):
@@ -701,17 +710,22 @@ def _upstream_nonempty(msgs, tries=2, **kw):
 
 
 def _searxng(query, n=5):
-    """调 SearXNG 检索，返回 [{"title","url","snippet"}]；任何失败都返回 []，不抛异常。"""
+    """Use this app's engine selection without changing the shared instance."""
     q = clip(query, 300)
     if not q:
         return []
-    url = SEARXNG_BASE.rstrip("/") + "/search?" + urllib.parse.urlencode({"q": q, "format": "json"})
+    params = {"q": q, "format": "json", "engines": SEARXNG_ENGINES}
+    url = SEARXNG_BASE.rstrip("/") + "/search?" + urllib.parse.urlencode(params)
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "study-assistant/1.1"})
         with urllib.request.urlopen(req, timeout=SEARXNG_TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))
-    except Exception:
-        return []
+    except Exception as error:
+        raise RuntimeError('搜索服务暂时不可用，请重试研究') from error
+    if not isinstance(data, dict) or not isinstance(data.get('results'), list):
+        raise RuntimeError('搜索服务返回格式异常，请重试研究')
+    if not data['results'] and data.get('unresponsive_engines'):
+        raise RuntimeError('搜索引擎暂时不可用，请重试研究')
     out = []
     for r in (data.get("results") or []):
         if not isinstance(r, dict):
@@ -1526,17 +1540,8 @@ class Handler(BaseHTTPRequestHandler):
                 queries = [clip(str(q), 200) for q in arr if str(q).strip()][:5]
                 if not queries:
                     queries = [spec.get("topic") or "学习路径"]
-                sources, seen = [], set()
-                for q in queries:
-                    for r in _searxng(q, 5):
-                        if r["url"] in seen:
-                            continue
-                        seen.add(r["url"])
-                        sources.append(r)
-                        if len(sources) >= 12:
-                            break
-                    if len(sources) >= 12:
-                        break
+                candidates = collect_sources(queries, _searxng)
+                sources = select_sources(spec, candidates, _upstream_nonempty)
                 src_txt = "\n".join("[%d] %s | %s | %s" % (i + 1, s["title"], s["url"], s["snippet"])
                                     for i, s in enumerate(sources)) or "（无检索结果）"
                 brief = _upstream_nonempty([
@@ -1548,7 +1553,7 @@ class Handler(BaseHTTPRequestHandler):
                 if gate_key:
                     _gen_gate_finish(gate_key, _gate, err="research failed")
                 raise
-            out = {"queries": queries, "sources": sources, "brief": clip(brief, 2000)}
+            out = {"queries": queries, "sources": sources, "brief": clip(brief, 2000), 'research_version': 2}
             _state_merge_put(mkey, out)   # 写穿：页面关闭也能取回
             if gate_key:
                 _gen_cache_put(gate_key, out)
