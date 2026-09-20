@@ -89,17 +89,17 @@
   var taskTimer = null;
   function loadTasks() {
     if (taskTimer) clearTimeout(taskTimer);
-    return context.request('/jobs').then(function (result) {
+    return context.request('/jobs?view=recent').then(function (result) {
       var jobs = result.jobs.slice(0, 8);
       $('tasks-panel').hidden = !jobs.length;
       $('task-list').replaceChildren();
       jobs.forEach(function (job) {
         var row = document.createElement('div'); row.className = 'learn-task';
         var info = document.createElement('div');
-        var title = document.createElement('strong'); title.textContent = window.LearnJobs.label(job.operation);
+        var title = document.createElement('strong'); title.textContent = job.title || '学习任务';
         var detail = document.createElement('small');
         var statuses = {queued: '排队中', running: '正在处理', succeeded: '已完成', failed: '未完成', interrupted: '等待恢复', cancelled: '已取消'};
-        detail.textContent = (statuses[job.status] || job.status) + ' · ' + new Date(job.created_ms).toLocaleString('zh-CN');
+        detail.textContent = window.LearnJobs.label(job.operation) + ' · ' + (statuses[job.status] || job.status) + ' · ' + new Date(job.created_ms).toLocaleString('zh-CN');
         info.append(title, detail);
         if (job.error) { var error = document.createElement('small'); error.textContent = job.error; info.appendChild(error); }
         row.appendChild(info);

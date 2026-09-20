@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from app_config import Settings
 from state_store import StateStore, StateConflict
 from state_schema import validate_value, SCHEMA_VERSION
-from background_jobs import JobQueue, JobError, OPERATIONS, log_job_failure
+from background_jobs import JobQueue, JobError, OPERATIONS, log_job_failure, short_title
 
 import quiz_harness as harness
 import material_parser
@@ -331,7 +331,9 @@ def _append_refinement(key, fallback_plan, units):
 _PATH_SYSTEM = {
     "intake": """你是一位老师，正在通过对话确认学生要掌握的知识点范围与深度，最终产出一份需求单（Spec）。
 
-你每轮只能输出下面两种格式之一（严格、不要任何多余文字）：
+每轮第一行输出 TITLE: <概括学生学习目标的中文短标题，最多10个字，不加Markdown>。
+标题应具体，例如「日语基础语法」「Python数据分析」，不要使用「确认学习目标」等流程名称。
+接下来只能输出下面两种格式之一（严格、不要任何多余文字）：
 ASK: <一个中文问题>          —— 信息还不够时，一次只问一个问题
 SPEC: <一个 JSON 对象>        —— 信息足够时，直接给出需求单
 
@@ -1381,7 +1383,9 @@ class Handler(BaseHTTPRequestHandler):
                     key = (query.get('key') or [None])[0]
                     if key:
                         self._authorize_key(key, write=False)
-                    self._json(200, {'ok': True, 'jobs': _jobs().list(target['id'], key)})
+                    recent = (query.get('view') or [''])[0] == 'recent'
+                    jobs = _jobs().recent(target['id']) if recent else _jobs().list(target['id'], key)
+                    self._json(200, {'ok': True, 'jobs': jobs})
                 else:
                     self._json(200, {'ok': True, 'job': _jobs().get(path.removeprefix('/jobs/'), target['id'])})
             elif path == '/admin/users':
@@ -1468,6 +1472,10 @@ class Handler(BaseHTTPRequestHandler):
                 tail += " 用户已回答满 %d 轮，本轮必须输出 SPEC。" % PATH_MAX_ROUNDS
             msgs.append({"role": "user", "content": tail + reference_context})
             text = _upstream_nonempty(msgs, max_tokens=PATH_MAX_TOKENS, temperature=0.4)
+            title_match = re.search(r'^\s*TITLE\s*[:：]\s*([^\r\n]+)', text or '', re.M)
+            task_title = short_title(title_match.group(1)) if title_match else ''
+            if title_match:
+                text = text[:title_match.start()] + text[title_match.end():]
             spec = None
             m = re.search(r"SPEC\s*[:：]\s*", text or "")
             if m:
@@ -1475,13 +1483,13 @@ class Handler(BaseHTTPRequestHandler):
             if spec is None:
                 spec = _json_block(text)
             if spec is not None:
-                self._json(200, {"done": True, "question": "", "spec": _norm_spec(spec, topic)})
+                self._json(200, {"done": True, "question": "", "spec": _norm_spec(spec, topic), 'task_title': task_title})
                 return
             qm = re.search(r"ASK\s*[:：]\s*(.+)", text or "", re.S)
             question = clip(qm.group(1) if qm else (text or ""), MAX_QUESTION)
             if not question:
                 question = "请告诉我你想学什么，以及你的学习目标。"
-            self._json(200, {"done": False, "question": question, "spec": None})
+            self._json(200, {"done": False, "question": question, "spec": None, 'task_title': task_title})
             return
 
         # -- 研究：检索式 → SearXNG → 简报 --
@@ -2110,8 +2118,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(body, dict):
                     raise AccountError(400, '请求必须为 JSON 对象')
                 if path == '/materials/parse':
-                    materials = material_parser.parse_upload(body.get('name'), body.get('data'))
-                    self._json(200, {'ok': True, 'materials': materials})
+                    report = material_parser.parse_upload(body.get('name'), body.get('data'), report=True)
+                    self._json(200, {'ok': True, **report})
                 else:
                     key = body.get('key')
                     self._authorize_key(key, write=True)

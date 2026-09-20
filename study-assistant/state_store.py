@@ -53,6 +53,10 @@ class StateStore:
                 );
                 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status, created_ms);
                 CREATE INDEX IF NOT EXISTS jobs_user ON jobs(user_id, updated_ms);
+                CREATE TABLE IF NOT EXISTS task_titles (
+                    user_id TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL,
+                    PRIMARY KEY(user_id, key)
+                );
             ''')
             connection.execute('PRAGMA user_version=1')
         self._import_legacy()

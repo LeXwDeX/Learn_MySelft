@@ -34,7 +34,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
     await page.goto(base+'learning-path.html?new=1');
     await page.locator('#learning-materials input').waitFor();
     await page.locator('#learning-materials input').setInputFiles({name:'星桥协议-'+env+'.txt',mimeType:'text/plain',buffer:Buffer.from(lesson)});
-    await page.getByText('解析完成，资料已保存，将用于生成地图和测验。',{exact:true}).waitFor({timeout:120000});
+    await page.getByText('已保存 1 份资料，将用于生成地图和测验。',{exact:true}).waitFor({timeout:120000});
     assert.equal(await page.locator('.materials-list li').count(),1);
     const sourceURL=page.url();
     await page.reload();await page.locator('.materials-list li').waitFor();
@@ -44,7 +44,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
     await page.getByText(/上传未完成：不支持的文件格式/).waitFor();
     report.cases.push('unsupported_file_feedback');
     await page.locator('#learning-materials input').setInputFiles({name:'remove-me.txt',mimeType:'text/plain',buffer:Buffer.from('待移除的附加笔记')});
-    await page.getByText('解析完成，资料已保存，将用于生成地图和测验。',{exact:true}).waitFor();
+    await page.getByText('已保存 1 份资料，将用于生成地图和测验。',{exact:true}).waitFor();
     await page.getByRole('button',{name:'移除 remove-me.txt',exact:true}).click();
     await page.getByText('已移除并保存',{exact:true}).waitFor();
     await page.reload();await page.locator('.materials-list li').waitFor();assert.equal(await page.locator('.materials-list li').count(),1);
@@ -64,7 +64,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
       assert.equal((await context.request.post(api+'/state/put',{data:{entries:{[key]:JSON.stringify(fixture)}}})).status(),200);
       await page.goto(sourceURL);await page.locator('#quizmap-btn').click();await page.locator('.materials-dialog input').waitFor();
       await page.locator('.materials-dialog input').setInputFiles({name:'补充资料.txt',mimeType:'text/plain',buffer:Buffer.from('仅测验参考的补充资料')});
-      await page.locator('.materials-dialog').getByText('解析完成，资料已保存，将用于生成地图和测验。',{exact:true}).waitFor();
+      await page.locator('.materials-dialog').getByText('已保存 1 份资料，将用于生成地图和测验。',{exact:true}).waitFor();
       await page.locator('.materials-dialog .cancel').click();
       await page.waitForTimeout(1000); await page.evaluate(()=>window.LearnSaves.drain());
       const persistedDraft=JSON.parse((await (await context.request.get(api+'/state/all')).json()).entries[key]);
@@ -100,7 +100,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
     report.sourceKey=key;report.sourceURL=sourceURL;
     await page.locator('#quizmap-btn').click();await page.locator('.materials-dialog input').waitFor();
     await page.locator('.materials-dialog input').setInputFiles({name:'测验补充.txt',mimeType:'text/plain',buffer:Buffer.from('测验应覆盖星桥协议原文，特别检查七个样本、两人复核、蓝绿标记与三个交接字段。')});
-    await page.locator('.materials-dialog').getByText('解析完成，资料已保存，将用于生成地图和测验。',{exact:true}).waitFor();
+    await page.locator('.materials-dialog').getByText('已保存 1 份资料，将用于生成地图和测验。',{exact:true}).waitFor();
     await page.locator('.materials-dialog .cancel').click();await page.reload();await page.locator('#quizmap-btn').click();
     await page.locator('.materials-dialog .materials-list li').waitFor();
     report.cases.push('quiz_extra_reference_draft_survives_reload');

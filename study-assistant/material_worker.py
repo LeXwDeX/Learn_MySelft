@@ -10,16 +10,19 @@ from pathlib import PurePosixPath, Path
 import re
 import resource
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
 import warnings
 import zipfile
+import unicodedata
+import zlib
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_EXPANDED = 50 * 1024 * 1024
-MAX_TEXT = 120_000
-MAX_FILES = 20
+MAX_TEXT = 200_000
+MAX_FILES = 100
 DOCS = {'txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
         'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff'}
 IMAGES = DOCS - {'txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'}
@@ -27,6 +30,43 @@ IMAGES = DOCS - {'txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'}
 
 class Invalid(ValueError):
     pass
+
+
+def zip_name(entry):
+    """Prefer declared Unicode, then recover common unmarked UTF-8/Chinese ZIPs."""
+    # Python 3.14 may already apply Unicode Path extras to filename, whereas
+    # older deployment runtimes leave it as CP437. orig_filename keeps raw text.
+    name = entry.orig_filename
+    if '\x00' in name:
+        raise Invalid('ZIP 文件名包含无效字符')
+    if not entry.flag_bits & 0x800:
+        raw = name.encode('cp437')
+        extra = entry.extra
+        while len(extra) >= 4:
+            kind, length = struct.unpack_from('<HH', extra)
+            field, extra = extra[4:4 + length], extra[4 + length:]
+            if kind == 0x7075 and len(field) >= 5 and field[0] == 1:
+                if struct.unpack_from('<I', field, 1)[0] == zlib.crc32(raw):
+                    try:
+                        return unicodedata.normalize('NFC', field[5:].decode('utf-8'))
+                    except UnicodeError:
+                        pass
+        for encoding in ('utf-8', 'gb18030'):
+            try:
+                name = raw.decode(encoding)
+                break
+            except UnicodeError:
+                continue
+    return unicodedata.normalize('NFC', name)
+
+
+def incidental_file(name):
+    """Only recognized office lock/recovery files and desktop metadata are skipped."""
+    leaf = PurePosixPath(name).name.casefold()
+    return (leaf in ('.ds_store', 'thumbs.db', 'desktop.ini') or leaf.startswith('._')
+            or (leaf.startswith('~$') and PurePosixPath(leaf).suffix in
+                ('.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'))
+            or re.fullmatch(r'~wrl[0-9a-f]+\.tmp', leaf) is not None)
 
 
 def safe_name(name):
@@ -42,9 +82,9 @@ def safe_name(name):
 
 def check_entries(entries, packed_size, office=False):
     """Validate every member before any decompression, including directories."""
-    if len(entries) > (1000 if office else 100):
+    if len(entries) > (1000 if office else 200):
         raise Invalid('压缩包成员过多')
-    names, size, count = set(), 0, 0
+    names, size, count, skipped = set(), 0, 0, []
     for name, length, directory, special, encrypted in entries:
         ext = safe_name(name)
         if name.casefold().rstrip('/') in names or special or encrypted:
@@ -52,10 +92,13 @@ def check_entries(entries, packed_size, office=False):
         names.add(name.casefold().rstrip('/'))
         if directory:
             continue
-        count += 1
         size += length
         if length < 0 or length > MAX_BYTES or size > MAX_EXPANDED:
             raise Invalid('压缩包展开体积超限（单文件 10 MB，合计 50 MB）')
+        if not office and incidental_file(name):
+            skipped.append(name)
+            continue
+        count += 1
         if not office and ext not in DOCS:
             raise Invalid('压缩包含不支持的文件（不允许程序、脚本或嵌套压缩包）：' + name)
         if office and any(s in name.lower() for s in ('vbaproject', 'macros/', 'embeddings/', 'activex/')):
@@ -63,27 +106,31 @@ def check_entries(entries, packed_size, office=False):
     if size > max(packed_size, 1) * 200:
         raise Invalid('压缩比过高，请解压后分批上传')
     if not office and count > MAX_FILES:
-        raise Invalid('压缩包最多包含 20 个资料文件')
+        raise Invalid('压缩包最多包含 100 个资料文件')
+    return skipped
 
 
-def zip_members(data, office=False):
+def zip_members(data, office=False, skipped=None):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         entries = archive.infolist()
-        check_entries([(e.filename, e.file_size, e.is_dir(),
+        names = [zip_name(e) for e in entries]
+        ignored = check_entries([(name, e.file_size, e.is_dir(),
                         stat.S_IFMT(e.external_attr >> 16) not in (0, stat.S_IFREG, stat.S_IFDIR),
-                        bool(e.flag_bits & 1)) for e in entries], len(data), office)
+                        bool(e.flag_bits & 1)) for e, name in zip(entries, names)], len(data), office)
+        if skipped is not None:
+            skipped.extend(ignored)
         result = {}
-        for entry in entries:
-            if not entry.is_dir():
+        for entry, name in zip(entries, names):
+            if not entry.is_dir() and name not in ignored:
                 with archive.open(entry) as stream:
                     content = stream.read(MAX_BYTES + 1)
                 if len(content) != entry.file_size or len(content) > MAX_BYTES:
                     raise Invalid('压缩包实际体积与目录不一致')
-                result[entry.filename] = content
+                result[name] = content
         return result
 
 
-def seven_members(data):
+def seven_members(data, skipped=None):
     import py7zr
     from py7zr.io import Py7zIO, WriterFactory
 
@@ -126,12 +173,15 @@ def seven_members(data):
         if archive.needs_password():
             raise Invalid('不支持加密压缩包')
         entries = list(archive.files)
-        check_entries([(e.filename, e.uncompressed, e.is_directory,
+        ignored = check_entries([(e.filename, e.uncompressed, e.is_directory,
                         not (e.is_file or e.is_directory),
                         False) for e in entries], len(data))
-        allowed = {e.filename: e.uncompressed for e in entries if not e.is_directory}
+        if skipped is not None:
+            skipped.extend(ignored)
+        allowed = {e.filename: e.uncompressed for e in entries if not e.is_directory and e.filename not in ignored}
         factory = Factory(allowed)
-        archive.extractall(factory=factory)
+        if allowed:
+            archive.extract(targets=list(allowed), factory=factory)
         result = {name: buf.value.getvalue() for name, buf in factory.files.items()}
         if set(result) != set(allowed) or any(len(result[n]) != allowed[n] for n in result):
             raise Invalid('7Z 实际成员与目录不一致')
@@ -167,15 +217,18 @@ def pdf_text(data):
     reader = PdfReader(io.BytesIO(data))
     if reader.is_encrypted:
         raise Invalid('不支持加密 PDF')
-    if len(reader.pages) > 40:
-        raise Invalid('单个 PDF 最多 40 页，请拆分上传')
-    pages = []
+    if len(reader.pages) > 200:
+        raise Invalid('单个 PDF 最多 200 页，请拆分上传')
+    pages, scanned = [], 0
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory) / 'input.pdf'
         source.write_bytes(data)
         for index, page in enumerate(reader.pages):
             text = page.extract_text() or ''
             if not text.strip():
+                scanned += 1
+                if scanned > 40:
+                    raise Invalid('单个 PDF 最多识别 40 页扫描页，请拆分上传')
                 prefix = str(Path(directory) / 'page')
                 command(['/usr/bin/pdftoppm', '-f', str(index + 1), '-l', str(index + 1),
                          '-scale-to', '2200', '-singlefile', '-png', str(source), prefix])
@@ -298,23 +351,23 @@ def parse_document(name, data):
     if not text:
         raise Invalid('未识别出文字，请提供清晰的文字资料：' + name)
     if len(text) > MAX_TEXT:
-        raise Invalid('资料文本超过 12 万字，请拆分上传：' + name)
+        raise Invalid('资料文本超过 20 万字，请拆分上传：' + name)
     return {'name': name, 'text': text, 'characters': len(text)}
 
 
-def parse(name, data):
+def parse(name, data, skipped=None):
     ext = safe_name(name)
     if len(data) > MAX_BYTES:
         raise Invalid('单个文件不能超过 10 MB')
     if ext in ('zip', '7z'):
-        members = zip_members(data) if ext == 'zip' else seven_members(data)
+        members = zip_members(data, skipped=skipped) if ext == 'zip' else seven_members(data, skipped=skipped)
         if not members:
             raise Invalid('压缩包没有可读取的资料')
         result = []
         for child, content in members.items():
             result.append(parse_document(child, content))
             if sum(len(x['text']) for x in result) > MAX_TEXT:
-                raise Invalid('压缩包文本合计超过 12 万字，请拆分上传')
+                raise Invalid('压缩包文本合计超过 20 万字，请拆分上传')
         for item in result:
             item['name'] = name + '/' + item['name']
         return result
@@ -329,7 +382,8 @@ def main():
     try:
         request = json.loads(sys.stdin.buffer.read(14 * 1024 * 1024))
         data = base64.b64decode(request['data'], validate=True)
-        result = {'materials': parse(request['name'], data)}
+        skipped = []
+        result = {'materials': parse(request['name'], data, skipped), 'skipped': skipped}
     except Invalid as error:
         result = {'error': str(error)}
     except Exception:

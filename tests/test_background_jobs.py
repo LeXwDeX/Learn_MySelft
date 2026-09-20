@@ -8,13 +8,48 @@ import unittest
 from unittest.mock import patch
 import test_state_regressions
 from state_store import StateStore
-from background_jobs import JobQueue, JobError
+from background_jobs import JobQueue, JobError, short_title
 import test_user_isolation as isolation
 
 study = test_state_regressions.study
 
 
 class QueueTests(unittest.TestCase):
+    def test_recent_groups_conversations_and_keeps_raw_receipts(self):
+        queue = JobQueue(self.store, lambda *args: (200, {}))
+        for index in range(105):
+            key = 'u0/other' if index == 0 else 'u0/conversation'
+            job = queue.submit('u0', 'request-%04d' % index, '/path/intake', {'key': key, 'topic': '原始输入'})
+            with self.store.transaction() as connection:
+                connection.execute("UPDATE jobs SET status='succeeded',created_ms=? WHERE id=?", (index, job['id']))
+        with self.store.transaction() as connection:
+            connection.execute('INSERT INTO task_titles VALUES (?,?,?)', ('u0', 'u0/conversation', '日语基础语法'))
+        rows = queue.recent('u0')
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['id'], job['id'])
+        self.assertEqual(rows[0]['title'], '日语基础语法')
+        self.assertEqual(queue.recent('other'), [])
+        self.assertEqual(len(queue.list('u0')), 100)
+        active = queue.submit('u0', 'request-active-new', '/path/node', {'key': 'u0/other'})
+        self.assertEqual(queue.recent('u0')[0]['id'], active['id'])
+        with self.store.transaction() as connection:
+            connection.execute("UPDATE jobs SET status='failed' WHERE id=?", (active['id'],))
+        retry = queue.retry(active['id'], 'u0')
+        self.assertEqual(queue.recent('u0')[0]['id'], retry['id'])
+
+    def test_model_title_persists_across_queue_restart(self):
+        queue = JobQueue(self.store, lambda *args: (200, {'task_title': '**日语基础语法系统学习目标**'}), workers=1)
+        self.addCleanup(queue.stop)
+        job = queue.submit('u0', 'request-title', '/path/intake', {'key': 'u0/conversation'})
+        queue.start()
+        self.wait_status(queue, job['id'])
+        queue.stop()
+        restarted = JobQueue(StateStore(self.temp.name), lambda *args: (200, {}))
+        title = restarted.recent('u0')[0]['title']
+        self.assertEqual(title, '日语基础语法系统学习')
+        self.assertLessEqual(len(title), 10)
+        self.assertEqual(short_title(None), '')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

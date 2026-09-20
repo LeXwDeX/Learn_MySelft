@@ -15,6 +15,13 @@ REQUEST_ID = re.compile(r'^[A-Za-z0-9:_-]{8,120}$')
 LOGGER = logging.getLogger(__name__)
 
 
+def short_title(value):
+    """Keep model titles plain, single-line and at most ten Unicode characters."""
+    if not isinstance(value, str):
+        return ''
+    return re.sub(r'[\s*#`<>"\[\]【】]+', '', value)[:10]
+
+
 def log_job_failure(job_id, operation, error, stage='execute'):
     """Record locations only: exception text, source lines and locals may contain secrets."""
     try:
@@ -138,6 +145,32 @@ class JobQueue:
                                       (user_id,)).fetchall()
         return [public_job(row, include_result=False) for row in rows if key is None or json.loads(row['body']).get('key') == key]
 
+    def recent(self, user_id, limit=8):
+        """One row per conversation; prefer active work, otherwise the newest call.
+
+        Raw receipts remain available to polling and retry clients. Group before
+        applying the display limit, so a long conversation cannot hide others.
+        """
+        result, seen = [], set()
+        with self.store.connection() as connection:
+            titles = {row['key']: row['title'] for row in connection.execute(
+                'SELECT key,title FROM task_titles WHERE user_id=?', (user_id,))}
+            rows = connection.execute('''SELECT id,user_id,operation,status,created_ms,
+                updated_ms,error,response_status,body FROM jobs WHERE user_id=?
+                ORDER BY (status IN ('queued','running')) DESC,created_ms DESC,rowid DESC''', (user_id,))
+            for row in rows:
+                body = json.loads(row['body'])
+                key = body.get('key') or row['id']
+                if key in seen:
+                    continue
+                seen.add(key)
+                job = public_job(row, include_result=False)
+                job['title'] = short_title(titles.get(key)) or short_title(body.get('topic')) or '学习任务'
+                result.append(job)
+                if len(result) >= limit:
+                    break
+        return result
+
     def retry(self, job_id, user_id):
         with self.store.transaction() as connection:
             row = connection.execute('SELECT * FROM jobs WHERE id=? AND user_id=?', (job_id, user_id)).fetchone()
@@ -190,6 +223,12 @@ class JobQueue:
             while not self.stopping.is_set():
                 try:
                     with self.store.transaction() as connection:
+                        title = short_title(result.get('task_title')) if succeeded else ''
+                        key = json.loads(row['body']).get('key')
+                        if title and key:
+                            connection.execute('''INSERT INTO task_titles(user_id,key,title) VALUES (?,?,?)
+                                ON CONFLICT(user_id,key) DO UPDATE SET title=excluded.title''',
+                                               (row['user_id'], key, title))
                         connection.execute('''UPDATE jobs SET status=?,result=?,error=?,response_status=?,updated_ms=?
                             WHERE id=? AND status='running' ''',
                                            ('succeeded' if succeeded else 'failed', json.dumps(result, ensure_ascii=False),
