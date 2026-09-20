@@ -8,10 +8,37 @@
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
     });
   }
+  function separateTableProse(state) {
+    var lines = state.src.split('\n'), boundaries = [];
+    state.tokens.forEach(function (token, index) {
+      if (token.type !== 'table_open' || token.level !== 0 || !token.map) return;
+      var columns = 0;
+      for (var i = index + 1; i < state.tokens.length && state.tokens[i].type !== 'thead_close'; i++) {
+        if (state.tokens[i].type === 'th_open') columns++;
+      }
+      if (columns < 2) return;
+      var start = token.map[0] + 2, end = token.map[1], row = start;
+      // Only explicit, complete pipe rows establish the generated-table pattern.
+      while (row < end && /^\s*\|.*\|\s*$/.test(lines[row])) row++;
+      if (row === start || row === end) return;
+      var prose = lines.slice(row, end), first = prose[0].trim();
+      if (first.length < 12 || !/[。！？.!?][”’"']?$/.test(first)) return;
+      if (prose.some(function (line) { return !line.trim() || line.indexOf('|') !== -1; })) return;
+      boundaries.push(row);
+    });
+    if (!boundaries.length) return;
+    boundaries.reverse().forEach(function (line) { lines.splice(line, 0, ''); });
+    // Display-only normalization: saved source and Markdown exports stay intact.
+    state.src = lines.join('\n');
+    state.env.lines = lines;
+    state.tokens = [];
+    state.md.block.parse(state.src, state.md, state.env, state.tokens);
+  }
   function getParser() {
     if (parser) return parser;
     if (!window.markdownit) return null;
     parser = window.markdownit({html:false, breaks:true, linkify:false});
+    parser.core.ruler.after('block', 'learn_table_boundary', separateTableProse);
     // Keep LaTeX untouched by Markdown's backslash/underscore processing.
     parser.inline.ruler.before('escape', 'learn_math', function (state, silent) {
       if (state.src[state.pos] !== '$') return false;
@@ -138,5 +165,43 @@
       root.appendChild(button);
     }
   }
+  function copyMathSelection(event) {
+    if (event.defaultPrevented || !event.clipboardData || !window.getSelection) return;
+    var selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return;
+    var range = selection.getRangeAt(0), start = range.startContainer;
+    var element = start.nodeType === 1 ? start : start.parentElement;
+    var root = element && element.closest('.learn-markdown');
+    if (!root || !root.contains(range.endContainer)) return;
+    var math = Array.from(root.querySelectorAll('.katex')).filter(function (node) { return range.intersectsNode(node); });
+    if (!math.length || math.some(function (node) { return !selection.containsNode(node, false); })) return;
+    var fragment = range.cloneContents(), formulas = Array.from(fragment.querySelectorAll('.katex'));
+    if (formulas.length !== math.length || formulas.some(function (node) { return !node.querySelector('annotation[encoding="application/x-tex"]'); })) return;
+    formulas.forEach(function (node) {
+      var tex = node.querySelector('annotation[encoding="application/x-tex"]').textContent;
+      var delimiter = node.closest('.katex-display') ? '$$' : '$';
+      node.replaceWith(document.createTextNode(delimiter + tex + delimiter));
+    });
+    var container = document.createElement('div');
+    if (range.commonAncestorContainer.nodeName === 'TABLE') {
+      var table = document.createElement('table'); table.appendChild(fragment); container.appendChild(table);
+    } else container.appendChild(fragment);
+    var html = container.innerHTML;
+    container.querySelectorAll('br').forEach(function (node) { node.replaceWith(document.createTextNode('\n')); });
+    container.querySelectorAll('table').forEach(function (table) {
+      var rows = Array.from(table.rows).map(function (row) {
+        return Array.from(row.cells).map(function (cell) { return cell.textContent.trim(); }).join('\t');
+      });
+      table.replaceWith(document.createTextNode(rows.join('\n') + '\n'));
+    });
+    container.querySelectorAll('tr,p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,.katex-display').forEach(function (node) { node.appendChild(document.createTextNode('\n')); });
+    var text = container.textContent.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+    try {
+      event.clipboardData.setData('text/plain', text);
+      event.clipboardData.setData('text/html', html);
+      event.preventDefault();
+    } catch (error) { /* Preserve native copy when the browser refuses clipboard data. */ }
+  }
+  if (typeof document !== 'undefined') document.addEventListener('copy', copyMathSelection);
   window.LearnMarkdown = {render:render, enhance:enhance, exportButton:exportButton};
 })();
