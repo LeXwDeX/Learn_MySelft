@@ -113,7 +113,9 @@
       }
     }
     if (job.status !== 'succeeded') {
-      var failed = new Error(job.error || '任务未完成，请重试');
+      var detail = job.error || '任务未完成，请重试';
+      if (job.response_status >= 500 && !/错误|校验/.test(detail)) detail = '服务端错误（HTTP ' + job.response_status + '）：' + detail;
+      var failed = new Error(detail);
       failed.jobId = job.id;
       var message = job.operation === '/path/requiz' ? '新题准备失败 · ' + quizProgress(job) + '\n' + failed.message + '\n旧题和作答已保留。' : failed.message;
       showJob(job, message, 'error', function () {
@@ -141,7 +143,12 @@
     supports: function (operation) { return operations.has(operation); },
     label: function (operation) { return labels[operation] || '学习任务'; },
     requestId: requestId,
-    list: function () { return request('/jobs').then(function (data) { return data.jobs; }); },
+    list: function (key) { return request('/jobs' + (key ? '?key=' + encodeURIComponent(key) : '')).then(function (data) { return data.jobs; }); },
+    get: function (id) { return request('/jobs/' + encodeURIComponent(id)).then(function (data) { return data.job; }); },
+    retry: function (id, options) {
+      if (context.readOnly) return Promise.reject(new Error('当前视图只读'));
+      return request('/jobs/' + encodeURIComponent(id) + '/retry', {}).then(function (data) { return watch(data.job, options || {}); });
+    },
     watch: function (job, options) { return watch(job, options || {}); },
     run: function (operation, body, options) {
       if (context.readOnly) return Promise.reject(new Error('管理员查看其他用户资料时只读'));

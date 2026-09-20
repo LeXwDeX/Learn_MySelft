@@ -39,3 +39,12 @@ assert.equal(roundLabel(rounds, 2, 'fresh'), '第 3 套 · 最新');
 assert.equal(roundLabel([{id: 'only'}], 0, 'other'), '第 1 套');
 assert.equal(roundLabel([{id: 'now'}], 0, 'now'), '第 1 套 · 最新');
 console.log('PASS blank layout, legacy preservation, positional arrays, scoring labels and round labels');
+
+const titleContext = {window: {}};
+vm.createContext(titleContext);
+vm.runInContext(fs.readFileSync('shared/titles.js', 'utf8'), titleContext);
+const names = titleContext.window.LearnTitles.quiz;
+const titleSource = {topic:'请你帮我学习数学。', plan:{title:'八年级数学全册系统学习路径'}};
+assert.equal(names({title:titleSource.topic+' · 测验',sourceKey:'source'}, {source:JSON.stringify(titleSource)}).title, '八年级数学全册综合测验');
+assert.equal(names({title:'几何专项测验',sourceKey:'source'}, {source:JSON.stringify(titleSource)}).title, '几何专项测验');
+assert.equal(names({title:'请帮我学习 · 测验'}, {}).title, '学习资料综合测验');

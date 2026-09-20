@@ -165,9 +165,9 @@ class JobQueue:
     def list(self, user_id, key=None):
         with self.store.connection() as connection:
             rows = connection.execute('''SELECT id,user_id,operation,status,created_ms,updated_ms,error,response_status,body
-                FROM jobs WHERE user_id=?
+                FROM jobs WHERE user_id=? AND (? IS NULL OR json_extract(body,'$.key')=?)
                 ORDER BY (status IN ('queued','running')) DESC,created_ms DESC LIMIT 100''',
-                                      (user_id,)).fetchall()
+                                      (user_id, key, key)).fetchall()
         return [public_job(row, include_result=False) for row in rows if key is None or json.loads(row['body']).get('key') == key]
 
     def recent(self, user_id, limit=8):

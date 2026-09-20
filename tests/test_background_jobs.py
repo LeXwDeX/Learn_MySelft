@@ -59,6 +59,7 @@ class QueueTests(unittest.TestCase):
                 connection.execute("UPDATE jobs SET status='succeeded',created_ms=? WHERE id=?", (index, job['id']))
         with self.store.transaction() as connection:
             connection.execute('INSERT INTO task_titles VALUES (?,?,?)', ('u0', 'u0/conversation', '日语基础语法'))
+        self.assertEqual(len(queue.list('u0', 'u0/other')), 1, 'filter by material before limiting job history')
         rows = queue.recent('u0')
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]['id'], job['id'])

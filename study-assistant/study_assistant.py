@@ -966,6 +966,18 @@ def _norm_quiz_questions(obj):
     return {"questions": qs}
 
 
+def _quizmap_title(material):
+    """Use the established learning topic, never the original chat request."""
+    plan = material.get("plan") or {}
+    spec = material.get("spec") or {}
+    subject = clip(plan.get("title") or spec.get("topic"), 100)
+    if not subject:
+        topic = clip(material.get("topic"), 100)
+        subject = "" if re.match(r"^(请|帮我|我想|我希望|你能|能不能)", topic) else topic
+    subject = re.sub(r"(?:系统学习路径|学习路径|知识点地图|知识地图|学习地图)[。！.!\s]*$", "", subject).strip()
+    return (subject or "学习资料") + "综合测验"
+
+
 def _norm_quizmap(obj, fallback_title=""):
     """归一「测验地图」：{title, questions[..16]}，至少 1 题有效否则 None。"""
     if not isinstance(obj, dict):
@@ -1775,7 +1787,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             detail = m.get("nodeDetail") if isinstance(m.get("nodeDetail"), dict) else {}
             nstate = m.get("nodeState") if isinstance(m.get("nodeState"), dict) else {}
-            map_title = clip(m.get("topic") or plan.get("title"), 120)
+            map_title = clip(plan.get("title") or (m.get("spec") or {}).get("topic") or "学习资料", 120)
             out_nodes = []
             for n in plan["nodes"]:
                 if not isinstance(n, dict):
@@ -1877,6 +1889,7 @@ class Handler(BaseHTTPRequestHandler):
                         if not candidate or len(candidate["questions"]) < 8:
                             raise harness.QuizContractError("综合测验至少8题")
                         _checked_questions(candidate["questions"], previous)
+                        candidate["title"] = _quizmap_title(m)
                         qm = candidate
                         break
                     except harness.QuizContractError as error:

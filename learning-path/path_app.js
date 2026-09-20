@@ -848,7 +848,6 @@
   function expandCard(id) {
     var n = nodeById(id);
     if (!n) return;
-    if (!isUnlocked(id) && !isDone(id)) return;   // 锁定卡不可展开
     expandedId = id;
     applyCardStates();
     renderCardContent(id);
@@ -866,7 +865,6 @@
     if (expandedId === id) { collapseCard(); return; }
     var n = nodeById(id);
     if (!n) return;
-    if (!isUnlocked(id) && !isDone(id)) return;
     expandCard(id);
   }
   // 明确聚焦某单元的卡（恢复重放/显式打开用，不 toggle）
@@ -898,7 +896,18 @@
       scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
       return;
     }
-    if (!isUnlocked(id) && !isDone(id)) return;
+    if (!isUnlocked(id) && !isDone(id)) {
+      var missing = depsOf(id).filter(function (dependency) { return !isDone(dependency); });
+      scope.innerHTML = '<p class="tip">本单元尚未解锁。请先通过前置单元测验，并点击“完成本节点并解锁下一节点”。“已掌握”等手动标记不会自动解锁。</p>' +
+        missing.map(function (dependency) {
+          var parent = nodeById(dependency);
+          return '<button class="btn prerequisite" type="button" data-node="' + esc(dependency) + '">前往 ' + esc(dispId(dependency) + ' · ' + (parent ? parent.title : '前置单元')) + '</button>';
+        }).join('');
+      scope.querySelectorAll('.prerequisite').forEach(function (button) {
+        button.onclick = function () { selectNode(button.dataset.node); };
+      });
+      return;
+    }
     scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
     requestAnimationFrame(drawEdges);
     generatingNode = id;
@@ -1518,7 +1527,11 @@
     var openQuiz = scope.querySelector('#open-quiz-workspace');
     if (openQuiz) openQuiz.addEventListener('click', function () { openQuizModal(id, scope.querySelector('#quiz-round-select').value); });
     var bRedo = scope.querySelector('#redo-quiz');
-    if (bRedo) bRedo.addEventListener('click', function () { redoQuiz(id); });
+    if (bRedo) {
+      bRedo.disabled = !!requizWork[id];
+      if (requizWork[id]) bRedo.textContent = '正在出新题…';
+      bRedo.addEventListener('click', function () { redoQuiz(id); });
+    }
     var bComp = scope.querySelector('#complete-node');
     if (bComp) bComp.addEventListener('click', function () { completeNode(id); });
     var bRefine = scope.querySelector('#refine-node');
@@ -1547,33 +1560,68 @@
       }
     });
   }
-  // 换新题重测：服务端追加新轮次，保留原题与作答。
+  // A receipt survives navigation; only the current server snapshot updates the view.
+  var requizWork = Object.create(null);
+  function trackRequiz(id, start) {
+    if (requizWork[id]) return requizWork[id];
+    var key = storeKey();
+    var work = Promise.resolve().then(start).then(function () {
+      return post('/path/quiz/state', {key: key, node: {id: id}});
+    }).then(function (quiz) {
+      if (storeKey() !== key || !state.nodeDetail[id]) return;
+      state.nodeDetail[id].quiz = quiz;
+      lastQuizShown = null;
+      // No state write: the server already saved the authoritative new round.
+    }).catch(function (error) {
+      if (storeKey() === key && !error.jobId) showError('读取新题状态失败：' + error.message, restoreRequiz);
+    }).finally(function () {
+      delete requizWork[id];
+      if (storeKey() === key && expandedId === id) renderNodeDetail(id);
+    });
+    requizWork[id] = work;
+    if (expandedId === id) renderNodeDetail(id);
+    return work;
+  }
+  function restoreRequiz() {
+    if (!window.LearnJobs || window.LearnUser.readOnly || !state.plan) return Promise.resolve();
+    var key = storeKey();
+    return window.LearnJobs.list(key).then(function (jobs) {
+      if (key !== storeKey()) return;
+      var latest = Object.create(null);
+      jobs.forEach(function (job) {
+        if (job.operation !== '/path/requiz' || !job.node_id) return;
+        var previous = latest[job.node_id];
+        if (!previous || job.created_ms > previous.created_ms) latest[job.node_id] = job;
+      });
+      return Promise.all(Object.keys(latest).map(function (id) {
+        if (!state.nodeDetail[id]) return;
+        var job = latest[id];
+        if (job.status === 'cancelled') return;
+        function retry() {
+          return trackRequiz(id, function () { return window.LearnJobs.retry(job.id, {onRetry: retry}); });
+        }
+        return trackRequiz(id, function () {
+          return window.LearnJobs.get(job.id).then(function (fresh) {
+            if (fresh.status === 'succeeded') return; // Avoid replaying a success toast on every visit.
+            return window.LearnJobs.watch(fresh, {onRetry: retry});
+          });
+        });
+      }));
+    }).catch(function (error) {
+      if (key === storeKey()) showError('无法恢复换题状态：' + error.message, restoreRequiz);
+    });
+  }
   function redoQuiz(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
-    if (!n || !d) return;
-    var quiz = d.quiz || {};
-    var st = state.nodeState[id] || {};
-    var scope = cardContentEl(id);
-    var btn = scope ? scope.querySelector('#redo-quiz') : null;
-    if (btn) { btn.disabled = true; btn.textContent = '正在出新题…'; }
+    if (!n || !d || window.LearnUser.readOnly) return;
+    var quiz = d.quiz || {}, st = state.nodeState[id] || {};
     hideError();
-    return post('/path/requiz', {
-      node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
-      spec: state.spec,
-      round_id: quiz.round_id,
-      feedback: st.lastResult || null,
-      key: storeKey()
-    }, { onRetry: function () { return redoQuiz(id); } }).then(function (r) {
-      var qs = (r && r.questions) || [];
-      if (!qs.length) throw new Error('未获得新题');
-      d.quiz = r;
-      lastQuizShown = null;
-      matTab = 'quiz';
-      save();
-      renderPlan();
-    }).catch(function (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '换新题，再试一次'; }
-      showError('换题失败：' + e.message, function () { redoQuiz(id); });
+    matTab = 'quiz'; matTabOwner = id;
+    return trackRequiz(id, function () {
+      return post('/path/requiz', {
+        node: {id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || []},
+        spec: state.spec, round_id: quiz.round_id, feedback: st.lastResult || null, key: storeKey()
+      }, {onRetry: function () { return redoQuiz(id); }});
     });
   }
 
@@ -1690,7 +1738,7 @@
         var d = null;
         try { d = JSON.parse(v); } catch (e) { d = null; }
         if (!d || typeof d !== 'object') return;
-        var it = { key: k, slug: biz.slice(QUIZ_PREFIX.length), title: d.title || biz.slice(QUIZ_PREFIX.length),
+        var it = { key: k, slug: biz.slice(QUIZ_PREFIX.length), title: window.LearnTitles.quiz(d, entries).title,
                    count: (d.questions || []).length, last: null };
         var at = d.attempts || [];
         if (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number') {
@@ -1886,6 +1934,7 @@
       materialsPanel.render();
       renderProgress();
       renderAgentPanel();
+      if (restored) restoreRequiz();
       if (restored && !window.LearnUser.readOnly) resumeIfPending();   // 上次生成中断→自动取回/重放（节点会自动展开卡片）
     });
   }
