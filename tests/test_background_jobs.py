@@ -5,16 +5,51 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 from unittest.mock import patch
 import test_state_regressions
 from state_store import StateStore
-from background_jobs import JobQueue, JobError, short_title
+from background_jobs import JobQueue, JobError, short_title, failure_detail
 import test_user_isolation as isolation
 
 study = test_state_regressions.study
 
 
 class QueueTests(unittest.TestCase):
+    def test_progress_persists_with_owner_isolation_and_retry_reset(self):
+        entered, release = threading.Event(), threading.Event()
+        def execute(*args):
+            self.store.job_progress(3, '校验题目与评分标准', 2)
+            entered.set(); release.wait(3)
+            raise urllib.error.HTTPError('https://model.invalid', 503, 'private body', {}, None)
+        queue = JobQueue(self.store, execute, workers=1)
+        self.addCleanup(queue.stop)
+        job = queue.submit('u0', 'progress-test', '/path/requiz', {'key': 'u0/test'})
+        queue.start(); self.assertTrue(entered.wait(3))
+        pending = queue.get(job['id'], 'u0')
+        self.assertEqual(pending['progress'], {'step': 3, 'total': 4, 'label': '校验题目与评分标准', 'attempt': 2})
+        with self.assertRaises(JobError): queue.get(job['id'], 'other')
+        release.set()
+        failed = self.wait_status(queue, job['id'], 'failed')
+        self.assertEqual(failed['error_category'], 'remote_api')
+        self.assertIn('API 503', failed['error'])
+        self.assertNotIn('private body', failed['error'])
+        queue.stop()
+        restarted = JobQueue(StateStore(self.temp.name), lambda *args: (200, {}))
+        self.assertEqual(restarted.get(job['id'], 'u0')['progress']['step'], 3)
+        restarted.retry(job['id'], 'u0')
+        self.assertNotIn('progress', restarted.get(job['id'], 'u0'))
+
+    def test_error_categories_do_not_leak_exception_text(self):
+        for error, category in [(TimeoutError('secret'), 'network'),
+                                (urllib.error.URLError('secret'), 'network'),
+                                (study.harness.QuizContractError('secret'), 'validation'),
+                                (ValueError('secret'), 'program')]:
+            with self.subTest(category=category):
+                actual, message = failure_detail(error)
+                self.assertEqual(actual, category)
+                self.assertNotIn('secret', message)
+
     def test_recent_groups_conversations_and_keeps_raw_receipts(self):
         queue = JobQueue(self.store, lambda *args: (200, {}))
         for index in range(105):
@@ -24,6 +59,7 @@ class QueueTests(unittest.TestCase):
                 connection.execute("UPDATE jobs SET status='succeeded',created_ms=? WHERE id=?", (index, job['id']))
         with self.store.transaction() as connection:
             connection.execute('INSERT INTO task_titles VALUES (?,?,?)', ('u0', 'u0/conversation', '日语基础语法'))
+        self.assertEqual(len(queue.list('u0', 'u0/other')), 1, 'filter by material before limiting job history')
         rows = queue.recent('u0')
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]['id'], job['id'])

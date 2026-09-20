@@ -79,14 +79,43 @@
     byId('qd-save').textContent = message;
     byId('qd-save').classList.toggle('qd-error', !!bad);
   }
-  function reportRecord(record, message, bad) {
-    if (view && dialog.open && roundConfig().key === record.config.key && round().id === record.roundId) status(message, bad);
+  function currentRecord() {
+    return view && view.quiz ? records[localKey(roundConfig(), round().id)] : null;
+  }
+  function renderSaveState() {
+    var button = byId('qd-sync');
+    button.hidden = true; button.disabled = true;
+    if (!view || !view.quiz) return;
+    if (view.busy) { status('正在保存作答并按评分点判分…', false); return; }
+    if (view.config.readOnly) { status('管理员只读查看', false); return; }
+    if (view.readOnly || view.attempt) { status('历史提交已保存，此视图只读', false); return; }
+    var record = currentRecord();
+    if (record && !record.saved) {
+      var failed = record.syncState === 'failed';
+      button.hidden = !failed; button.disabled = !failed;
+      var message = failed ? (record.localSaved ? '草稿已保存在本机，服务器同步失败；可重试保存。' : '服务器保存失败，本机草稿也不可用，请勿关闭页面。') :
+        record.retrying ? '正在重试保存…' : record.localSaved ? '已保存在本机，正在同步…' : '正在保存到服务器，请勿关闭页面…';
+      status(message, failed);
+      return;
+    }
+    status(record && record.saved ? '已自动保存到服务器' : view.localRecovery ? '已恢复本机未同步草稿' : round().draft ? '已恢复服务器草稿' : '输入后自动保存，可随时关闭', false);
+  }
+  function reportRecord(record) {
+    if (view && dialog.open && !view.busy && !view.readOnly && !view.attempt && currentRecord() === record) renderSaveState();
+  }
+  function retrySave() {
+    var record = currentRecord();
+    if (!view || !dialog.open || view.busy || view.readOnly || view.config.readOnly || view.attempt || !record || record.saved || record.syncState !== 'failed') return;
+    record.retrying = true;
+    return transmit(record);
   }
   function transmit(record) {
     if (record.timer) { clearTimeout(record.timer); record.timer = null; }
     if (record.queued === record.version) return chains[record.key] || Promise.resolve();
     var version = record.version, answers = record.answers.slice();
     record.queued = version;
+    record.syncState = 'saving';
+    reportRecord(record);
     var previous = chains[record.key] || Promise.resolve();
     var pending = previous.catch(function () {}).then(function () {
       return api(record.config, '/path/quiz/draft', {
@@ -94,19 +123,22 @@
         answers: answers, client_id: clientId, sequence: version
       }, true);
     }).then(function (result) {
-      if (record.version === version) {
+      if (records[record.key] === record && record.version === version) {
         record.saved = true;
+        record.syncState = 'saved'; record.retrying = false;
         try {
           var current = JSON.parse(localStorage.getItem(record.key) || 'null');
           if (current && current.version === version) localStorage.removeItem(record.key);
         } catch (error) { /* Server acknowledgement is authoritative even if local storage is unavailable. */ }
         record.round.draft = result.draft;
-        reportRecord(record, '已自动保存到服务器', false);
+        reportRecord(record);
       }
       return true;
     }).catch(function (error) {
-      if (record.version === version) record.queued = null;
-      reportRecord(record, record.localSaved ? '已保存在本机，服务器同步失败；联网后重试' : '保存失败，请勿关闭页面：' + error.message, true);
+      if (records[record.key] === record && record.version === version) {
+        record.queued = null; record.syncState = 'failed'; record.retrying = false;
+        reportRecord(record);
+      }
       return false;
     });
     chains[record.key] = pending;
@@ -125,17 +157,17 @@
     var record = records[key] || { key: key, config: config, roundId: issued.id, round: issued, version: 0 };
     record.version = Math.max(Date.now(), record.version + 1);
     record.answers = answers; record.saved = false;
+    record.syncState = 'pending'; record.retrying = false;
     view.answers = answers;
     issued.draft = { answers: answers };
     try {
       localStorage.setItem(key, JSON.stringify({ answers: answers, version: record.version }));
       record.localSaved = true;
-      status('已保存在本机，正在同步…', false);
     } catch (error) {
       record.localSaved = false;
-      status('本机草稿不可用，正在保存到服务器…', true);
     }
     records[key] = record;
+    renderSaveState();
     if (record.timer) clearTimeout(record.timer);
     record.timer = setTimeout(function () { transmit(record); }, 400);
     updateProgress();
@@ -168,6 +200,8 @@
       var key = localKey(config, issued.id);
       var record = records[key] || { key: key, config: config, roundId: issued.id, round: issued };
       record.answers = stored.answers; record.version = stored.version; record.localSaved = true; record.saved = false;
+      record.round = issued;
+      record.syncState = record.syncState || 'pending';
       records[key] = record;
     }
   }
@@ -226,7 +260,7 @@
     byId('qd-retry').disabled = !!view.busy;
     byId('qd-error').hidden = true;
     updateProgress();
-    status(view.busy ? '已保存，正在按评分点判分…' : view.config.readOnly ? '管理员只读查看' : view.readOnly ? '历史提交已保存，此视图只读' : view.localRecovery ? '已恢复本机未同步草稿' : issued.draft ? '已恢复服务器草稿' : '输入后自动保存，可随时关闭', false);
+    renderSaveState();
     if (config.decorate) config.decorate(byId('qd-body'));
   }
   function navigate(index) {
@@ -305,7 +339,8 @@
       view.attempt = null; view.readOnly = !!view.config.readOnly; view.answers = round().questions.map(function () { return ''; });
       render(); captureDraft();
     };
-    byId('qd-sync').onclick = flushCurrent;
+    byId('qd-sync').hidden = true;
+    byId('qd-sync').onclick = retrySave;
     byId('qd-submit').onclick = submit;
     byId('qd-body').addEventListener('click', function (event) {
       var button = event.target.closest('.qd-reveal');
@@ -328,6 +363,9 @@
       if (view && view.busy) { if (!dialog.open) dialog.showModal(); return Promise.resolve(); }
       flushCurrent();
       view = null;
+      byId('qd-sync').hidden = true;
+      byId('qd-sync').disabled = true;
+      status('正在恢复题集与草稿…', false);
       var request = ++opening;
       returnFocus = document.activeElement;
       if (!dialog.open) dialog.showModal();

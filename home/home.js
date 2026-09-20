@@ -110,10 +110,17 @@
         var link = document.createElement('a'); link.className = 'btn'; link.href = context.link(page) + '?t=' + encodeURIComponent(slug); link.textContent = '继续查看';
         actions.appendChild(link);
         if (!context.readOnly && ['failed', 'interrupted'].includes(job.status)) {
-          var retry = document.createElement('button'); retry.className = 'btn'; retry.textContent = '重试';
+          var retry = document.createElement('button'); retry.className = 'btn'; retry.textContent = job.operation === '/path/requiz' ? '重新生成新题' : '重试此任务';
           retry.onclick = function () {
-            retry.disabled = true;
-            context.request('/jobs/' + job.id + '/retry', {}).then(loadTasks).catch(function (error) {
+            retry.disabled = true; retry.textContent = '正在重新提交…';
+            window.LearnUI.set('retry-' + job.id, '正在重新提交：' + window.LearnJobs.label(job.operation));
+            context.request('/jobs/' + job.id + '/retry', {}).then(function (result) {
+              window.LearnUI.clear('retry-' + job.id);
+              window.LearnJobs.watch(result.job).then(loadTasks).catch(loadTasks);
+              return loadTasks();
+            }).catch(function (error) {
+              retry.disabled = false; retry.textContent = '重试此任务';
+              window.LearnUI.clear('retry-' + job.id);
               window.LearnUI.set('tasks', error.message, 'error', loadTasks, '刷新状态');
             });
           };

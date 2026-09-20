@@ -15,6 +15,13 @@
       if (bar) bar.after(area); else document.body.prepend(area);
     }
     area.replaceChildren();
+    var toasts = document.getElementById('learn-toast-area');
+    if (!toasts) {
+      toasts = document.createElement('section'); toasts.id = 'learn-toast-area';
+      toasts.className = 'learn-toast-area'; toasts.setAttribute('aria-live', 'polite');
+      toasts.setAttribute('aria-label', '任务进度'); document.body.appendChild(toasts);
+    }
+    toasts.replaceChildren();
     items.forEach(function (item, key) {
       var row = document.createElement('div');
       row.className = 'learn-status';
@@ -31,17 +38,28 @@
         button.onclick = function () {
           button.disabled = true;
           Promise.resolve().then(item.action).catch(function (error) {
-            window.LearnUI.set(key, error.message, 'error', item.action, item.label);
+            (item.toast ? window.LearnUI.toast : window.LearnUI.set)(key, error.message, 'error', item.action, item.label);
+          }).finally(function () {
+            if (items.get(key) === item) button.disabled = false;
           });
         };
         row.appendChild(button);
       }
-      area.appendChild(row);
+      if (item.toast && item.kind !== 'info') {
+        var dismiss = document.createElement('button'); dismiss.className = 'learn-action';
+        dismiss.textContent = '关闭'; dismiss.setAttribute('aria-label', '关闭任务提示');
+        dismiss.onclick = function () { window.LearnUI.clear(key); }; row.appendChild(dismiss);
+      }
+      (item.toast ? toasts : area).appendChild(row);
     });
   }
   window.LearnUI = {
     set: function (key, message, kind, action, label) {
       items.set(key, {message: message, kind: kind || 'info', action: action, label: label});
+      render();
+    },
+    toast: function (key, message, kind, action, label) {
+      items.set(key, {message: message, kind: kind || 'info', action: action, label: label, toast: true});
       render();
     },
     clear: function (key) { items.delete(key); render(); },

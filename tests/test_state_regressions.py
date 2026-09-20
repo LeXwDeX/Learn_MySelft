@@ -56,6 +56,33 @@ class StateRegressionTests(unittest.TestCase):
     def material(self):
         return study._state_material(KEY)
 
+    def test_quizmap_title_uses_topic_instead_of_request(self):
+        self.assertEqual(study._quizmap_title({"topic": "请你帮我学习数学", "plan": {"title": "八年级数学全册系统学习路径"}}), "八年级数学全册综合测验")
+        self.assertEqual(study._quizmap_title({"topic": "请教我", "spec": {"topic": "日语动词"}}), "日语动词综合测验")
+        self.assertEqual(study._quizmap_title({"topic": "请教我"}), "学习资料综合测验")
+
+    def test_research_filters_before_brief_and_persists_verified_version(self):
+        candidates = [{'title': 'AI news', 'url': 'https://example.org/news', 'snippet': 'GPT'},
+                      {'title': '日本語の動詞', 'url': 'https://example.org/japanese', 'snippet': '活用'}]
+        with patch.object(study, '_searxng', return_value=candidates), patch.object(
+                study, '_upstream_nonempty', side_effect=['["日语 动词"]', '{"selected_ids":[2]}', '动词活用 [1]']) as model:
+            status, result = self.post('/path/research', {'key': KEY, 'spec': {'topic': '日语'}})
+        self.assertEqual(status, 200)
+        self.assertEqual(result['sources'], candidates[1:])
+        brief_input = model.call_args_list[2].args[0][1]['content']
+        self.assertNotIn('AI news', brief_input)
+        self.assertIn('[1] 日本語の動詞', brief_input)
+        self.assertEqual(self.material()['research_version'], 2)
+
+    def test_unverified_research_cache_and_material_context(self):
+        study._state_merge_put(KEY, {'brief': 'old', 'queries': ['old'], 'sources': []})
+        self.assertIsNone(study._state_stage_result(KEY, 'research'))
+        for status in ['missing', 'generating', 'failed']:
+            prompt = study.build_system({'material_status': status, 'unit_title': '日语'})
+            self.assertIn('正文尚未就绪', prompt)
+            self.assertIn('实际作答证据', prompt)
+        self.assertNotIn('正文尚未就绪', study.build_system({'material_status': 'ready', 'notes': '正文'}))
+
     def test_all_deletion_routes_require_password(self):
         for path, body in [("/state/delete", {"keys": [KEY]}),
                            ("/state/del", {"keys": [KEY]}),

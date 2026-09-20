@@ -101,6 +101,7 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 | `LLM_MODEL` | `deepseek` | 模型名 |
 | `REASONING_EFFORT` | `max` | 推理档位（`none` 关闭 / `minimal` / `high` / `max`） |
 | `SEARXNG_BASE` | `http://192.168.33.146:8103`（当前部署所用） | SearXNG 地址（可选；「主动研究」用） |
+| `SEARXNG_ENGINES` | `brave,google cse,wikipedia` | 学习网站专用的搜索引擎列表；不修改共享 SearXNG 配置。候选来源还需通过主题相关性筛选才进入简报。 |
 | `STATE_DIR` | `<脚本目录>/state` | 学习数据存储目录；账号文件放在同级的 `state-accounts`（实际为 `STATE_DIR` 加 `-accounts`） |
 | `DELETE_PASSWORD` | （空） | 首次启动初始化 admin 的密码；账号文件存在后不会覆盖管理员密码 |
 

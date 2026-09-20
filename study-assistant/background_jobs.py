@@ -7,6 +7,9 @@ import re
 import secrets
 import threading
 import time
+import urllib.error
+from quiz_harness import QuizContractError
+from research_sources import SourceSelectionError
 
 OPERATIONS = frozenset({'/path/intake', '/path/research', '/path/plan', '/path/node',
                         '/path/requiz', '/path/quizmap', '/path/refine', '/path/gaps', '/path/quiz'})
@@ -46,6 +49,21 @@ class JobError(Exception):
         super().__init__(message)
 
 
+def failure_detail(error):
+    """Classify at the exception boundary, never expose upstream bodies or keys."""
+    if isinstance(error, urllib.error.HTTPError):
+        return 'remote_api', '远程服务端错误（API %s）：模型服务暂时不可用或拒绝请求，可稍后重试。' % error.code
+    if isinstance(error, (TimeoutError, urllib.error.URLError)):
+        return 'network', '网络连接或超时错误：无法完成与远程模型服务的通信，可稍后重试。'
+    if isinstance(error, QuizContractError):
+        return 'validation', '题目校验错误：生成内容未通过完整性、评分或重复题检查，请重试。'
+    if isinstance(error, SourceSelectionError):
+        return 'validation', '参考来源核验错误：模型返回的筛选结果无效，请重试研究；未核验来源不会使用。'
+    if isinstance(error, JobError):
+        return 'request', str(error)
+    return 'program', '本程序错误：处理任务时发生内部异常，请重试；持续失败请联系维护人员。'
+
+
 def public_job(row, include_result=True):
     result = {name: row[name] for name in ('id', 'user_id', 'operation', 'status',
                                           'created_ms', 'updated_ms', 'error', 'response_status')}
@@ -55,6 +73,8 @@ def public_job(row, include_result=True):
     result['round_id'] = body.get('round_id')
     if include_result and row['status'] == 'succeeded' and row['result'] is not None:
         result['result'] = json.loads(row['result'])
+    if 'result' in row.keys() and row['status'] == 'failed' and row['result']:
+        result['error_category'] = json.loads(row['result']).get('error_category', 'unknown')
     return result
 
 
@@ -135,14 +155,19 @@ class JobQueue:
             row = connection.execute('SELECT * FROM jobs WHERE id=? AND user_id=?', (job_id, user_id)).fetchone()
         if not row:
             raise JobError(404, '任务不存在或不属于当前用户')
-        return public_job(row)
+        result = public_job(row)
+        with self.store.connection() as connection:
+            progress = connection.execute('SELECT value FROM job_progress WHERE job_id=?', (job_id,)).fetchone()
+        if progress:
+            result['progress'] = json.loads(progress['value'])
+        return result
 
     def list(self, user_id, key=None):
         with self.store.connection() as connection:
             rows = connection.execute('''SELECT id,user_id,operation,status,created_ms,updated_ms,error,response_status,body
-                FROM jobs WHERE user_id=?
+                FROM jobs WHERE user_id=? AND (? IS NULL OR json_extract(body,'$.key')=?)
                 ORDER BY (status IN ('queued','running')) DESC,created_ms DESC LIMIT 100''',
-                                      (user_id,)).fetchall()
+                                      (user_id, key, key)).fetchall()
         return [public_job(row, include_result=False) for row in rows if key is None or json.loads(row['body']).get('key') == key]
 
     def recent(self, user_id, limit=8):
@@ -179,6 +204,7 @@ class JobQueue:
             if row['status'] not in ('failed', 'interrupted'):
                 return public_job(row)
             self._capacity(connection, user_id)
+            connection.execute('DELETE FROM job_progress WHERE job_id=?', (job_id,))
             connection.execute("UPDATE jobs SET status='queued',error=NULL,result=NULL,response_status=NULL,updated_ms=? WHERE id=?",
                                (int(time.time() * 1000), job_id))
             row = connection.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
@@ -216,7 +242,8 @@ class JobQueue:
             except Exception as error:
                 log_job_failure(row['id'], row['operation'], error)
                 status = getattr(error, 'status', 502)
-                result = {'error': str(error) if isinstance(error, JobError) else '生成暂时失败，输入已保留，请重试'}
+                category, message = failure_detail(error)
+                result = {'error': message, 'error_category': category}
             finally:
                 del self.store.local.job_id
             succeeded = 200 <= status < 300 and not result.get('error')

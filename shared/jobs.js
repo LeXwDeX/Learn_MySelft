@@ -57,11 +57,23 @@
     } finally { clearTimeout(timer); }
   }
   function delay(milliseconds) { return new Promise(function (resolve) { setTimeout(resolve, milliseconds); }); }
+  function showJob(job, message, kind, action, label) {
+    if (!window.LearnUI) return;
+    var show = job.operation === '/path/requiz' && window.LearnUI.toast ? window.LearnUI.toast : window.LearnUI.set;
+    show('job-' + job.id, message, kind, action, label);
+  }
+  function quizProgress(job) {
+    var progress = job.progress;
+    if (!progress) return job.status === 'queued' ? '步骤 0/4 · 等待开始' : '正在确认后台步骤';
+    return '步骤 ' + progress.step + '/' + progress.total + ' · ' + progress.label +
+      (progress.attempt > 1 ? '（第 ' + progress.attempt + ' 次生成）' : '');
+  }
   function announce(job, callback) {
     var elapsed = Math.max(0, Math.round((Date.now() - job.created_ms) / 1000));
     var message = (labels[job.operation] || '学习任务') + (job.status === 'queued' ? '：排队中' : '：正在处理');
     message += ' · 已等待 ' + elapsed + ' 秒，离开页面后仍会继续';
-    if (window.LearnUI) window.LearnUI.set('job-' + job.id, message);
+    if (job.operation === '/path/requiz') message = '正在准备新的题目，目前进度：' + quizProgress(job) + '\n已等待 ' + elapsed + ' 秒，离开页面后仍会继续。';
+    showJob(job, message);
     if (callback) callback(message);
   }
   async function execute(operation, body, options) {
@@ -69,7 +81,16 @@
     var receipt = readReceipt(key) || {requestId: requestId(), created: Date.now()};
     if (options.requestId) receipt.requestId = options.requestId;
     saveReceipt(key, receipt);
-    var accepted = await request('/jobs', {operation: operation, body: body, request_id: receipt.requestId});
+    var preparing = {id: 'prepare-' + receipt.requestId, operation: operation};
+    if (operation === '/path/requiz') showJob(preparing, '正在准备新的题目，目前进度：步骤 0/4 · 提交任务');
+    var accepted;
+    try {
+      accepted = await request('/jobs', {operation: operation, body: body, request_id: receipt.requestId});
+    } catch (error) {
+      if (operation === '/path/requiz') showJob(preparing, (error.status ? '本程序请求错误（HTTP ' + error.status + '）' : '网络连接或超时错误') + '\n任务提交未确认，请重试；原题和作答已保留。', 'error');
+      throw error;
+    }
+    if (window.LearnUI) window.LearnUI.clear('job-' + preparing.id);
     var job = accepted.job;
     receipt.id = job.id;
     saveReceipt(key, receipt);
@@ -87,19 +108,26 @@
       try { job = (await request('/jobs/' + job.id)).job; }
       catch (error) {
         if (error.status && error.status < 500) throw error;
-        if (window.LearnUI) window.LearnUI.set('job-' + job.id, '连接暂时中断，后台任务仍会继续；正在重新连接…', 'error');
+        showJob(job, '网络连接或超时错误：暂时无法读取任务进度，后台任务仍会继续；正在重新连接…', 'error');
         await delay(3500);
       }
     }
     if (job.status !== 'succeeded') {
-      var failed = new Error(job.error || '任务未完成，请重试');
+      var detail = job.error || '任务未完成，请重试';
+      if (job.response_status >= 500 && !/错误|校验/.test(detail)) detail = '服务端错误（HTTP ' + job.response_status + '）：' + detail;
+      var failed = new Error(detail);
       failed.jobId = job.id;
-      if (window.LearnUI) window.LearnUI.set('job-' + job.id, failed.message, 'error', function () {
+      var message = job.operation === '/path/requiz' ? '新题准备失败 · ' + quizProgress(job) + '\n' + failed.message + '\n旧题和作答已保留。' : failed.message;
+      showJob(job, message, 'error', function () {
+        if (options.onRetry) return options.onRetry();
         return request('/jobs/' + job.id + '/retry', {}).then(function () { location.reload(); });
       }, '继续原任务');
       throw failed;
     }
-    if (window.LearnUI) window.LearnUI.clear('job-' + job.id);
+    if (job.operation === '/path/requiz') {
+      showJob(job, '新的题目已准备好，目前进度：步骤 4/4 · 保存完成', 'success');
+      setTimeout(function () { if (window.LearnUI) window.LearnUI.clear('job-' + job.id); }, 8000);
+    } else if (window.LearnUI) window.LearnUI.clear('job-' + job.id);
     return job.result;
   }
   context.ready.then(function () {
@@ -115,7 +143,12 @@
     supports: function (operation) { return operations.has(operation); },
     label: function (operation) { return labels[operation] || '学习任务'; },
     requestId: requestId,
-    list: function () { return request('/jobs').then(function (data) { return data.jobs; }); },
+    list: function (key) { return request('/jobs' + (key ? '?key=' + encodeURIComponent(key) : '')).then(function (data) { return data.jobs; }); },
+    get: function (id) { return request('/jobs/' + encodeURIComponent(id)).then(function (data) { return data.job; }); },
+    retry: function (id, options) {
+      if (context.readOnly) return Promise.reject(new Error('当前视图只读'));
+      return request('/jobs/' + encodeURIComponent(id) + '/retry', {}).then(function (data) { return watch(data.job, options || {}); });
+    },
     watch: function (job, options) { return watch(job, options || {}); },
     run: function (operation, body, options) {
       if (context.readOnly) return Promise.reject(new Error('管理员查看其他用户资料时只读'));

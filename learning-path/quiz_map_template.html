@@ -4,6 +4,7 @@
 <script src="/learn/config.js"></script>
 <link rel="stylesheet" href="/learn/assets/ui.css">
 <script src="/learn/assets/ui.js"></script>
+<script src="/learn/assets/titles.js"></script>
 <script src="/learn/assets/user-session.js"></script>
 <script src="/learn/assets/saves.js"></script>
 <script src="/learn/assets/jobs.js"></script>
@@ -237,14 +238,10 @@ __QUIZ_DIALOG_JS__
         main.innerHTML = '<div class="lerr">这张测验地图数据为空或已损坏。</div>';
         return;
       }
-      var sourceTitle = d.sourceSlug || d.sourceKey || '';
-      var srcRaw = entries[d.sourceKey];
-      if (typeof srcRaw === 'string') {
-        try {
-          var sm = JSON.parse(srcRaw);
-          sourceTitle = (sm && (sm.topic || (sm.plan && sm.plan.title) || (sm.spec && sm.spec.topic))) || sourceTitle;
-        } catch (e) { /* 用 sourceSlug 兜底 */ }
-      }
+      var names = window.LearnTitles.quiz(d, entries);
+      var sourceTitle = names.source;
+      d.displayTitle = names.title;
+      document.title = names.title + ' · 测验地图';
       var tm = $('to-map');
       if (d.sourceSlug) { tm.href = 'learning-path.html?t=' + encodeURIComponent(d.sourceSlug); tm.hidden = false; }
       $('brand-sub').textContent = '来自《' + sourceTitle + '》 · 共 ' + d.questions.length + ' 题 · 满分 100 分';
@@ -254,7 +251,7 @@ __QUIZ_DIALOG_JS__
       currentSlug = slug; currentD = d; currentEntries = entries;
       currentRes = (d.lastResult && typeof d.lastResult.score === 'number') ? d.lastResult : null;
       main.innerHTML =
-        '<div class="card"><p class="eyebrow">测验地图</p><h2>' + esc(d.title || '测验') + '</h2>' +
+        '<div class="card"><p class="eyebrow">测验地图</p><h2>' + esc(d.displayTitle) + '</h2>' +
         '<p class="muted">来自《' + esc(sourceTitle) + '》 · 共 ' + qs.length + ' 题 · 满分 100 分' +
         (d.lastResult && typeof d.lastResult.score === 'number' ? ' · 上次 ' + d.lastResult.score + ' 分' : '') + '</p></div>' +
         '<div id="q-area"><p class="tip">完整题目与作答在测验窗口中展示。支持翻页查看历史题集，草稿自动保存。</p></div>' +
@@ -274,7 +271,7 @@ __QUIZ_DIALOG_JS__
     var related = Object.keys(currentEntries).filter(function (key) {
       try { return JSON.parse(currentEntries[key]).sourceKey === d.sourceKey; } catch (error) { return false; }
     }).sort(function (a, b) { return (JSON.parse(currentEntries[a]).created || 0) - (JSON.parse(currentEntries[b]).created || 0); });
-    return window.QuizDialog.open({readOnly: window.LearnUser.readOnly, relatedKeys: related, api: API, key: USER_PATH + QUIZ_PREFIX + slug, title: d.title,
+    return window.QuizDialog.open({readOnly: window.LearnUser.readOnly, relatedKeys: related, api: API, key: USER_PATH + QUIZ_PREFIX + slug, title: d.displayTitle || d.title,
       render: mdRender, decorate: function (el) { renderMathIn(el); highlightIn(el); },
       onLoad: function (quiz) { Object.assign(d, quiz); currentD = d; },
       onResult: function (res, key) { if (key !== USER_PATH + QUIZ_PREFIX + slug) return; Object.assign(d, res.quiz); currentD = d; currentQs = d.questions; showResult(res); }
@@ -483,7 +480,7 @@ __QUIZ_DIALOG_JS__
           var it = { slug: biz.slice(MAP_PREFIX.length), topic: '', total: 0, done: 0 };
           if (d && typeof d === 'object') {
             if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;
-            it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
+            it.topic = (d.plan && d.plan.title) || (d.spec && d.spec.topic) || d.topic || it.slug;
             if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
             var ns = d.nodeState || {};
             for (var nid in ns) { if (ns[nid] && ns[nid].completed) it.done++; }
@@ -493,7 +490,7 @@ __QUIZ_DIALOG_JS__
           var qd = null; try { qd = JSON.parse(v); } catch (e) { qd = null; }
           if (!qd || typeof qd !== 'object') return;
           var at = qd.attempts || [];
-          quizzes.push({ slug: biz.slice(QUIZ_PREFIX.length), title: qd.title || biz.slice(QUIZ_PREFIX.length),
+          quizzes.push({ slug: biz.slice(QUIZ_PREFIX.length), title: window.LearnTitles.quiz(qd, entries).title,
                          count: (qd.questions || []).length,
                          last: (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number')
                                ? at[at.length - 1].score : null });

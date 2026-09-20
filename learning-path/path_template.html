@@ -4,6 +4,7 @@
 <script src="/learn/config.js"></script>
 <link rel="stylesheet" href="/learn/assets/ui.css">
 <script src="/learn/assets/ui.js"></script>
+<script src="/learn/assets/titles.js"></script>
 <script src="/learn/assets/user-session.js"></script>
 <script src="/learn/assets/saves.js"></script>
 <script src="/learn/assets/jobs.js"></script>
@@ -66,7 +67,9 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 
 /* ---- 采集 ---- */
 .intake-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:22px 24px}
-.chat-log{min-height:180px;max-height:56vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 2px 12px}
+.chat-log{height:clamp(140px,32dvh,300px);overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:12px;padding:4px 2px 12px}
+.chat-log .bubble{flex-shrink:0}
+.intake-card #learning-materials{max-height:30dvh;overflow:auto}
 .bubble{max-width:76%;padding:10px 14px;border-radius:10px;font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
 .bubble.ai{align-self:flex-start;background:#fbfbfb;border:1px solid var(--rule);border-bottom-left-radius:3px}
 .bubble.me{align-self:flex-end;background:var(--accent-tint);border:1px solid rgba(235,108,54,.35);color:#7a3a1a;border-bottom-right-radius:3px}
@@ -77,9 +80,9 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .hint{color:var(--soft);font-size:12px;margin:8px 0 0}
 .spec-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:18px 20px;margin:0 0 18px}
 .spec-card h3{margin:0 0 10px;font-size:16px}
-.spec-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 18px}
-.spec-grid .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft)}
-.spec-grid .v{font-size:13.5px;color:var(--ink);margin-bottom:6px}
+.spec-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13.5px}
+.spec-table th,.spec-table td{padding:12px 14px;border:1px solid var(--rule);text-align:left;vertical-align:top;overflow-wrap:anywhere;white-space:pre-wrap}
+.spec-table th{width:112px;background:#fafafa;color:var(--muted);font-weight:500}
 
 /* ---- 研究 ---- */
 .panel-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:20px 22px;margin:0 0 16px}
@@ -313,7 +316,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   .node-ess{overflow-wrap:anywhere}
   .panel-head,.panel-body{padding:14px 16px}
   .legend{gap:8px 14px}
-  .spec-grid{grid-template-columns:1fr}
+  .spec-table th{width:78px}
+  .spec-table th,.spec-table td{padding:9px 10px}
   .chat-input input{min-width:0}
   .lib-pop{min-width:min(340px,calc(100vw - 32px));max-width:calc(100vw - 32px);right:auto;left:0}
   footer{margin:24px 16px 0;padding:14px 0 0;overflow-wrap:anywhere}
@@ -387,6 +391,8 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
           <p class="eyebrow">检索式</p>
           <div class="chips" id="query-chips"></div>
           <p class="eyebrow">参考来源</p>
+          <p class="muted" id="research-source-note"></p>
+          <button class="btn" id="research-recheck" type="button" hidden>重新核验来源</button>
           <div id="source-list"></div>
           <hr class="rule" style="height:1px;background:var(--rule);border:0;margin:18px 0">
           <p class="eyebrow">研究简报</p>

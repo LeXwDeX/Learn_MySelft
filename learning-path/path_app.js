@@ -20,6 +20,7 @@
     spec: null,
     queries: [],
     sources: [],
+    research_version: 0,
     brief: '',
     plan: null,
     nodeDetail: {},                   // {id: NodeDetail}
@@ -36,6 +37,7 @@
   var expandedId = null;              // 手风琴：当前展开的卡片（同时只展开一张）
   var activeScope = null;             // 当前展开卡片的 .node-content（测验交互的作用域根）
   var generatingNode = null;          // 正在生成材料的节点 id（防重复请求）
+  var nodeMaterialStatus = {};
   var reviewFilter = false;           // 只看「需复习」（纯显示层）
   var resumeAttempts = 0;             // 自动恢复重试计数
   var MARK_LABELS = [['none', '未学'], ['learning', '学习中'], ['mastered', '已掌握'], ['review', '需复习']];
@@ -202,7 +204,7 @@
       var payload = {
         stage: state.stage, topic: state.topic, history: state.history, materials: state.materials,
         spec: state.spec, queries: state.queries, sources: state.sources,
-        brief: state.brief, plan: state.plan,
+        brief: state.brief, research_version: state.research_version, plan: state.plan,
         nodeDetail: state.nodeDetail, nodeState: state.nodeState,
         pending: state.pending || null
       };
@@ -244,6 +246,7 @@
       state.spec = d.spec || null;
       state.queries = d.queries || [];
       state.sources = d.sources || [];
+      state.research_version = d.research_version || 0;
       state.brief = d.brief || '';
       state.plan = d.plan || null;
       state.nodeDetail = d.nodeDetail || {};
@@ -287,11 +290,11 @@
   }
 
   // ---------- 网络 ----------
-  function post(path, body) {
+  function post(path, body, jobOptions) {
     if (window.LearnJobs && window.LearnJobs.supports(path)) {
       if (!body.key) body.key = storeKey();
       var expectedKind = {'/path/intake': 'intake', '/path/research': 'research', '/path/plan': 'plan', '/path/node': 'node'}[path];
-      var pending = state.pending, options = {};
+      var pending = state.pending, options = Object.assign({}, jobOptions || {});
       if (pending && pending.requestId && (pending.kind === expectedKind || (path === '/path/node' && pending.kind === 'nodes'))) {
         options.requestId = pending.requestId + (pending.kind === 'nodes' ? ':' + body.node.id : '');
       }
@@ -459,11 +462,12 @@
   // ---------- 阶段 A：采集对话 ----------
   function appendBubble(role, text) {
     var log = $('chat-log');
+    var follow = log.scrollHeight - log.scrollTop - log.clientHeight < 32;
     var d = document.createElement('div');
     d.className = 'bubble ' + (role === 'user' ? 'me' : 'ai');
     d.innerHTML = '<span class="who">' + (role === 'user' ? '你' : 'AI') + '</span>' + esc(text);
     log.appendChild(d);
-    log.scrollTop = log.scrollHeight;
+    if (role === 'user' || follow) log.scrollTop = log.scrollHeight;
   }
   function renderChat() {
     var log = $('chat-log');
@@ -475,8 +479,8 @@
     }
   }
   function setChatDisabled(off) {
-    $('chat-input').disabled = off;
     $('chat-send').disabled = off;
+    $('chat-send').textContent = off ? '回复中…' : '发送';
     if (materialsPanel) materialsPanel.lock(off || state.stage !== 'intake');
   }
 
@@ -486,6 +490,7 @@
     var text = (el.value || '').trim();
     if (!text) return;
     el.value = '';
+    el.focus({ preventScroll: true });
     hideError();
     if (!state.topic) {
       // 首次输入：作为学习主题
@@ -513,7 +518,9 @@
     var thinking = document.createElement('div');
     thinking.className = 'bubble ai';
     thinking.innerHTML = '<span class="who">AI</span><span class="spinner"></span>思考中…';
-    log.appendChild(thinking); log.scrollTop = log.scrollHeight;
+    var follow = log.scrollHeight - log.scrollTop - log.clientHeight < 32;
+    log.appendChild(thinking);
+    if (follow) log.scrollTop = log.scrollHeight;
 
     post('/path/intake', { key: storeKey(), topic: state.topic, history: state.history })
       .then(function (r) {
@@ -542,14 +549,14 @@
     var sp = state.spec || {};
     var card = $('spec-card');
     function row(k, v) {
-      return '<div><div class="k">' + esc(k) + '</div><div class="v">' + esc(v || '—') + '</div></div>';
+      return '<tr><th scope="row">' + esc(k) + '</th><td>' + esc(v || '—') + '</td></tr>';
     }
-    card.innerHTML = '<h3>需求单（Spec）</h3><div class="spec-grid">' +
+    card.innerHTML = '<h3 id="spec-heading">需求单（Spec）</h3><table class="spec-table" aria-labelledby="spec-heading"><tbody>' +
       row('主题', sp.topic) + row('目标', sp.goal) + row('现有基础', sp.level) +
       row('期望深度', sp.depth) +
       row('偏好形式', (sp.preferences || []).join('、')) +
       row('约束', sp.constraints) + row('大纲线索', (sp.outline_hint || []).join('；')) +
-      '</div>';
+      '</tbody></table>';
     card.hidden = false;
   }
 
@@ -645,6 +652,7 @@
       .then(function (r) {
         state.queries = r.queries || [];
         state.sources = r.sources || [];
+        state.research_version = r.research_version || 0;
         state.brief = r.brief || '';
         save();
         renderResearch();
@@ -706,6 +714,9 @@
   }
 
   function renderResearch() {
+    var checked = state.research_version === 2;
+    $('research-recheck').hidden = checked || window.LearnUser.readOnly;
+    $('research-source-note').textContent = checked ? '仅展示通过主题相关性筛选的来源。' : '这些是旧版检索记录，尚未核验主题相关性。可重新核验，不会重建现有学习路径。';
     var chips = state.queries.map(function (q) { return '<span class="chip">' + esc(q) + '</span>'; }).join('');
     $('query-chips').innerHTML = chips || '<span class="empty-note">无检索式</span>';
     var srcs = state.sources.map(function (s, i) {
@@ -715,10 +726,22 @@
         (s.snippet ? '<span class="snip">' + esc(s.snippet) + '</span>' : '') +
         '</div></div>';
     }).join('');
-    $('source-list').innerHTML = srcs || '<p class="empty-note">没有检索到来源（仍会基于模型知识生成路径）。</p>';
+    $('source-list').innerHTML = srcs || '<p class="empty-note">未找到通过相关性筛选的来源；后续内容基于已有资料和模型知识，未获网络来源验证。</p>';
     $('brief-text').textContent = state.brief || '（无简报）';
     renderMathIn($('brief-text'));
     $('research-card').hidden = false;
+  }
+  function recheckResearch() {
+    var button = $('research-recheck');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = '正在核验…';
+    post('/path/research', { spec: state.spec, key: storeKey() }).then(function (r) {
+      state.queries = r.queries || []; state.sources = r.sources || [];
+      state.brief = r.brief || ''; state.research_version = r.research_version || 0;
+      save(); renderResearch();
+    }).catch(function (e) { showError('来源核验失败：' + e.message, recheckResearch); })
+      .finally(function () { button.disabled = false; button.textContent = '重新核验来源'; });
   }
 
   // ---------- 阶段 C：路径图 ----------
@@ -825,7 +848,6 @@
   function expandCard(id) {
     var n = nodeById(id);
     if (!n) return;
-    if (!isUnlocked(id) && !isDone(id)) return;   // 锁定卡不可展开
     expandedId = id;
     applyCardStates();
     renderCardContent(id);
@@ -843,7 +865,6 @@
     if (expandedId === id) { collapseCard(); return; }
     var n = nodeById(id);
     if (!n) return;
-    if (!isUnlocked(id) && !isDone(id)) return;
     expandCard(id);
   }
   // 明确聚焦某单元的卡（恢复重放/显式打开用，不 toggle）
@@ -875,19 +896,35 @@
       scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
       return;
     }
-    if (!isUnlocked(id) && !isDone(id)) return;
+    if (!isUnlocked(id) && !isDone(id)) {
+      var missing = depsOf(id).filter(function (dependency) { return !isDone(dependency); });
+      scope.innerHTML = '<p class="tip">本单元尚未解锁。请先通过前置单元测验，并点击“完成本节点并解锁下一节点”。“已掌握”等手动标记不会自动解锁。</p>' +
+        missing.map(function (dependency) {
+          var parent = nodeById(dependency);
+          return '<button class="btn prerequisite" type="button" data-node="' + esc(dependency) + '">前往 ' + esc(dispId(dependency) + ' · ' + (parent ? parent.title : '前置单元')) + '</button>';
+        }).join('');
+      scope.querySelectorAll('.prerequisite').forEach(function (button) {
+        button.onclick = function () { selectNode(button.dataset.node); };
+      });
+      return;
+    }
     scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
     requestAnimationFrame(drawEdges);
     generatingNode = id;
+    nodeMaterialStatus[id] = 'generating';
+    syncAiMaterial(id);
     setPending('node', id);
     requestNodeDetail(id).then(function (detail) {
       generatingNode = null;
       state.nodeDetail[id] = detail;
+      syncAiMaterial(id);
       state.pending = null; resumeAttempts = 0; hideResumeBar();
       save();
       if (expandedId === id) renderNodeDetail(id);
     }).catch(function (e) {
       generatingNode = null;
+      nodeMaterialStatus[id] = 'failed';
+      syncAiMaterial(id);
       if (expandedId !== id) return;
       if (handlePendingFailure(e)) {
         scope.innerHTML = '<p class="tip">服务端仍在生成本节点材料，稍后自动重试…</p>';
@@ -1039,7 +1076,8 @@
     if (window.matchMedia('(max-width:800px)').matches) $('agent-dialog').openAgent();
     else if ($('ai-input')) $('ai-input').focus({ preventScroll: true });
   }
-  var AI_SUGGEST = ['讲讲本单元的重点', '出个小题目考我', '我哪里最容易出错？'];
+  var AI_SUGGEST = ['讲讲本单元的重点', '出个小题目考我', '本单元有哪些常见误区？'];
+  var AI_PREVIEW_SUGGEST = ['学习这个单元前需要哪些基础？', '帮我理解这个单元的学习目标', '等待材料时，我可以怎样预习？'];
 
   // ---------- Part H：一键生成全部节点（含未解锁节点） ----------
   var genAllRunning = false;      // 批量生成进行中
@@ -1106,6 +1144,7 @@
     genAllRunning = true; genAllPaused = false;
     genAllQueue = ids.slice();
     genAllRemaining = ids.slice();
+    ids.forEach(function (id) { nodeMaterialStatus[id] = 'generating'; syncAiMaterial(id); });
     genAllTotal = ids.length;
     genAllIdx = 0;
     if (genAllTimer) { clearTimeout(genAllTimer); genAllTimer = null; }
@@ -1128,6 +1167,7 @@
     requestNodeDetail(id).then(function (detail) {
       setCardGenState(id, false);
       state.nodeDetail[id] = detail;
+      syncAiMaterial(id);
       var i0 = genAllRemaining.indexOf(id); if (i0 >= 0) genAllRemaining.splice(i0, 1);
       genAllQueue.shift();
       genAllSyncPending();
@@ -1135,6 +1175,8 @@
       genAllStep();
     }).catch(function () {
       setCardGenState(id, false);
+      nodeMaterialStatus[id] = 'failed';
+      syncAiMaterial(id);
       genAllQueue.shift();   // 失败：留在 genAllRemaining，继续下一个
       genAllStep();
     });
@@ -1142,6 +1184,7 @@
   function genAllFinish(reason) {
     genAllRunning = false;
     if (reason === 'paused') {
+      genAllRemaining.forEach(function (id) { nodeMaterialStatus[id] = 'missing'; syncAiMaterial(id); });
       genAllPaused = false;
       state.pending = null; save();
       hideResumeBar();
@@ -1191,9 +1234,38 @@
     return {
       unit_id: dispId(id), unit_title: n.title || '', domain: state.topic || '',
       essence: n.essence || '', musts: kp, traps: traps, quizzes: quizzes,
-      notes: d.study_notes ? String(d.study_notes).slice(0, 6000) : ''
+      notes: d.study_notes ? String(d.study_notes).slice(0, 6000) : '',
+      material_status: aiMaterialStatus(id)
     };
   }  // (aiUnit end)
+  function aiMaterialStatus(id) {
+    if (state.nodeDetail[id]) return 'ready';
+    if (nodeMaterialStatus[id]) return nodeMaterialStatus[id];
+    return state.pending && state.pending.kind === 'node' && state.pending.nid === id ? 'generating' : 'missing';
+  }
+  function syncAiMaterial(id) {
+    var view = aiViews.get(id);
+    if (!view) return;
+    var status = aiMaterialStatus(id);
+    var ready = status === 'ready';
+    var label = ready ? '学习材料已就绪' : status === 'generating' ? '学习材料正在生成' : status === 'failed' ? '学习材料生成失败，请在左侧重试' : '学习材料尚未生成';
+    view.root.querySelector('.ai-intro').textContent = label + (ready ? '，可以结合正文讲解和练习。' : '。可以先聊前置知识和学习目标。');
+    view.root.querySelector('.ai-note').textContent = ready ? 'AI 可参考本单元材料；个人薄弱点需结合你的实际作答判断。' : 'AI 当前仅有单元标题和学习目标，还没有本单元正文。';
+    view.input.placeholder = ready ? '就本单元提问，Enter 发送 / Shift+Enter 换行' : '可以先问学习目标或前置知识';
+    var empty = view.box.querySelector('.ai-empty');
+    if (empty) {
+      empty.replaceChildren();
+      var heading = document.createElement('p');
+      heading.textContent = ready ? '可以问我：' : '材料就绪前，可以先问：';
+      empty.appendChild(heading);
+      (ready ? AI_SUGGEST : AI_PREVIEW_SUGGEST).forEach(function (text) {
+        var button = document.createElement('button');
+        button.className = 'ai-chip'; button.type = 'button'; button.textContent = text;
+        button.addEventListener('click', function () { sendAi(id, text); });
+        empty.appendChild(button);
+      });
+    }
+  }
   function aiScroll(view, force) {
     view = view || activeAiView;
     if (!view) return;
@@ -1241,6 +1313,7 @@
     if (cached) {
       $('panel-body').replaceChildren(cached.root);
       activeAiView = cached;
+      syncAiMaterial(id);
       cached.box.scrollTop = cached.scrollTop;
       if (cached.follow) aiScroll(cached, true);
       syncAiBusy();
@@ -1260,14 +1333,7 @@
     var msgs = state.aiHist[id] || [];
     var box = $('ai-msgs');
     if (!msgs.length) {
-      box.innerHTML = '<div class="ai-empty"><p>还没有对话。可以问我：</p>' +
-        AI_SUGGEST.map(function (s) { return '<button class="ai-chip" type="button">' + esc(s) + '</button>'; }).join('') + '</div>';
-      var chips = box.querySelectorAll('.ai-chip');
-      for (var i = 0; i < chips.length; i++) {
-        (function (txt, btn) {
-          btn.addEventListener('click', function () { sendAi(id, txt); });
-        })(AI_SUGGEST[i], chips[i]);
-      }
+      box.innerHTML = '<div class="ai-empty"></div>';
     } else {
       msgs.forEach(function (m) { box.appendChild(aiBubble(m.role, m.content)); });
     }
@@ -1277,6 +1343,7 @@
     var view = { root: root, box: box, input: input, send: send, more: root.querySelector('.ai-new-reply'), follow: true, scrollTop: 0 };
     aiViews.set(id, view);
     activeAiView = view;
+    syncAiMaterial(id);
     box.addEventListener('scroll', function () {
       if (!box.clientHeight) return;
       view.scrollTop = box.scrollTop;
@@ -1287,7 +1354,7 @@
     function doSend() { sendAi(id, (input.value || '').trim()); }
     send.addEventListener('click', doSend);
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); doSend(); }
     });
     syncAiBusy();
     aiScroll(view, true);
@@ -1311,6 +1378,7 @@
     aiScroll(view, true);
     aiBusy = true;
     syncAiBusy();
+    input.focus({ preventScroll: true });
     var target = aiBubble('assistant', '');
     var body = target.querySelector('.ai-bubble');
     body.innerHTML = '<span class="spinner"></span>思考中…';
@@ -1459,7 +1527,11 @@
     var openQuiz = scope.querySelector('#open-quiz-workspace');
     if (openQuiz) openQuiz.addEventListener('click', function () { openQuizModal(id, scope.querySelector('#quiz-round-select').value); });
     var bRedo = scope.querySelector('#redo-quiz');
-    if (bRedo) bRedo.addEventListener('click', function () { redoQuiz(id); });
+    if (bRedo) {
+      bRedo.disabled = !!requizWork[id];
+      if (requizWork[id]) bRedo.textContent = '正在出新题…';
+      bRedo.addEventListener('click', function () { redoQuiz(id); });
+    }
     var bComp = scope.querySelector('#complete-node');
     if (bComp) bComp.addEventListener('click', function () { completeNode(id); });
     var bRefine = scope.querySelector('#refine-node');
@@ -1488,33 +1560,68 @@
       }
     });
   }
-  // 换新题重测：服务端追加新轮次，保留原题与作答。
+  // A receipt survives navigation; only the current server snapshot updates the view.
+  var requizWork = Object.create(null);
+  function trackRequiz(id, start) {
+    if (requizWork[id]) return requizWork[id];
+    var key = storeKey();
+    var work = Promise.resolve().then(start).then(function () {
+      return post('/path/quiz/state', {key: key, node: {id: id}});
+    }).then(function (quiz) {
+      if (storeKey() !== key || !state.nodeDetail[id]) return;
+      state.nodeDetail[id].quiz = quiz;
+      lastQuizShown = null;
+      // No state write: the server already saved the authoritative new round.
+    }).catch(function (error) {
+      if (storeKey() === key && !error.jobId) showError('读取新题状态失败：' + error.message, restoreRequiz);
+    }).finally(function () {
+      delete requizWork[id];
+      if (storeKey() === key && expandedId === id) renderNodeDetail(id);
+    });
+    requizWork[id] = work;
+    if (expandedId === id) renderNodeDetail(id);
+    return work;
+  }
+  function restoreRequiz() {
+    if (!window.LearnJobs || window.LearnUser.readOnly || !state.plan) return Promise.resolve();
+    var key = storeKey();
+    return window.LearnJobs.list(key).then(function (jobs) {
+      if (key !== storeKey()) return;
+      var latest = Object.create(null);
+      jobs.forEach(function (job) {
+        if (job.operation !== '/path/requiz' || !job.node_id) return;
+        var previous = latest[job.node_id];
+        if (!previous || job.created_ms > previous.created_ms) latest[job.node_id] = job;
+      });
+      return Promise.all(Object.keys(latest).map(function (id) {
+        if (!state.nodeDetail[id]) return;
+        var job = latest[id];
+        if (job.status === 'cancelled') return;
+        function retry() {
+          return trackRequiz(id, function () { return window.LearnJobs.retry(job.id, {onRetry: retry}); });
+        }
+        return trackRequiz(id, function () {
+          return window.LearnJobs.get(job.id).then(function (fresh) {
+            if (fresh.status === 'succeeded') return; // Avoid replaying a success toast on every visit.
+            return window.LearnJobs.watch(fresh, {onRetry: retry});
+          });
+        });
+      }));
+    }).catch(function (error) {
+      if (key === storeKey()) showError('无法恢复换题状态：' + error.message, restoreRequiz);
+    });
+  }
   function redoQuiz(id) {
     var n = nodeById(id), d = state.nodeDetail[id];
-    if (!n || !d) return;
-    var quiz = d.quiz || {};
-    var st = state.nodeState[id] || {};
-    var scope = cardContentEl(id);
-    var btn = scope ? scope.querySelector('#redo-quiz') : null;
-    if (btn) { btn.disabled = true; btn.textContent = '正在出新题…'; }
+    if (!n || !d || window.LearnUser.readOnly) return;
+    var quiz = d.quiz || {}, st = state.nodeState[id] || {};
     hideError();
-    post('/path/requiz', {
-      node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
-      spec: state.spec,
-      round_id: quiz.round_id,
-      feedback: st.lastResult || null,
-      key: storeKey()
-    }).then(function (r) {
-      var qs = (r && r.questions) || [];
-      if (!qs.length) throw new Error('未获得新题');
-      d.quiz = r;
-      lastQuizShown = null;
-      matTab = 'quiz';
-      save();
-      renderPlan();
-    }).catch(function (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '换新题，再试一次'; }
-      showError('换题失败：' + e.message, function () { redoQuiz(id); });
+    matTab = 'quiz'; matTabOwner = id;
+    return trackRequiz(id, function () {
+      return post('/path/requiz', {
+        node: {id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || []},
+        spec: state.spec, round_id: quiz.round_id, feedback: st.lastResult || null, key: storeKey()
+      }, {onRetry: function () { return redoQuiz(id); }});
     });
   }
 
@@ -1631,7 +1738,7 @@
         var d = null;
         try { d = JSON.parse(v); } catch (e) { d = null; }
         if (!d || typeof d !== 'object') return;
-        var it = { key: k, slug: biz.slice(QUIZ_PREFIX.length), title: d.title || biz.slice(QUIZ_PREFIX.length),
+        var it = { key: k, slug: biz.slice(QUIZ_PREFIX.length), title: window.LearnTitles.quiz(d, entries).title,
                    count: (d.questions || []).length, last: null };
         var at = d.attempts || [];
         if (at.length && at[at.length - 1] && typeof at[at.length - 1].score === 'number') {
@@ -1773,7 +1880,10 @@
       $('chat-input').placeholder = '说明测验范围、难度和目标，回车开始…';
     }
     $('chat-send').addEventListener('click', sendMessage);
-    $('chat-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
+    $('research-recheck').addEventListener('click', recheckResearch);
+    $('chat-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); sendMessage(); }
+    });
     $('restart-btn').addEventListener('click', restart);
     bindStageNav();
     $('errretry').addEventListener('click', function () { var f = retryFn; hideError(); if (f) f(); });
@@ -1824,6 +1934,7 @@
       materialsPanel.render();
       renderProgress();
       renderAgentPanel();
+      if (restored) restoreRequiz();
       if (restored && !window.LearnUser.readOnly) resumeIfPending();   // 上次生成中断→自动取回/重放（节点会自动展开卡片）
     });
   }
