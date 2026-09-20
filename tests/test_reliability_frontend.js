@@ -42,6 +42,19 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   acknowledged.LearnUser.fetch = async () => Response.json({entries: {'u0/test': '{"b": 2, "a": 1}'}});
   load(acknowledged, 'shared/saves.js'); await acknowledged.LearnUser.ready;
   assert(!acknowledged.LearnSaves.pending()); assert(!acknowledged.notices.has('state-save'));
+  const materialKey = 'u0/learn-path-v1-upload';
+  const base = {topic:'saved reference', stage:'learning', materials:[{name:'notes.txt',text:'original'}]};
+  async function recoveryCheck(key, local, remote) {
+    const check = environment({'learn-unsaved-v1/u0': JSON.stringify({[key]:JSON.stringify(local)})});
+    check.LearnUser.fetch = async () => Response.json({entries:{[key]:JSON.stringify(remote)}});
+    load(check, 'shared/saves.js'); await check.LearnUser.ready; return check;
+  }
+  const extra = [{name:'quiz.txt',text:'server-owned supplement'}];
+  assert(!(await recoveryCheck(materialKey, base, {...base,quizMaterials:extra})).LearnSaves.pending(), 'independent quiz draft must not masquerade as an unacknowledged save');
+  assert(!(await recoveryCheck(materialKey, {topic:'legacy'}, {topic:'legacy',materials:[],quizMaterials:extra})).LearnSaves.pending(), 'absent legacy materials equal the default empty list');
+  assert((await recoveryCheck(materialKey, {...base,materials:[{name:'notes.txt',text:'unsaved edit'}]}, {...base,quizMaterials:extra})).LearnSaves.pending(), 'real reference edits remain recoverable');
+  assert((await recoveryCheck(materialKey, {...base,topic:'unsaved title'}, {...base,quizMaterials:extra})).LearnSaves.pending(), 'other user fields remain strict');
+  assert((await recoveryCheck('u0/quiz-map-v1-example', base, {...base,quizMaterials:extra})).LearnSaves.pending(), 'other document kinds remain strict');
   const jobs = environment(); let submits = 0, polls = 0, requestId;
   jobs.LearnUser.fetch = async (url, options) => {
     if (options.method === 'POST') { submits++; requestId = JSON.parse(options.body).request_id; return Response.json({job: {id: 'j1', status: 'running', created_ms: Date.now(), operation: '/path/intake'}}); }

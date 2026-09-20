@@ -65,7 +65,13 @@ const lesson = `星桥分拣协议（回归专用原创资料）
       await page.goto(sourceURL);await page.locator('#quizmap-btn').click();await page.locator('.materials-dialog input').waitFor();
       await page.locator('.materials-dialog input').setInputFiles({name:'补充资料.txt',mimeType:'text/plain',buffer:Buffer.from('仅测验参考的补充资料')});
       await page.locator('.materials-dialog').getByText('解析完成，资料已保存，将用于生成地图和测验。',{exact:true}).waitFor();
-      await page.locator('.materials-dialog .cancel').click();await page.reload();await page.locator('#quizmap-btn').click();
+      await page.locator('.materials-dialog .cancel').click();
+      await page.waitForTimeout(1000); await page.evaluate(()=>window.LearnSaves.drain());
+      const persistedDraft=JSON.parse((await (await context.request.get(api+'/state/all')).json()).entries[key]);
+      delete persistedDraft.quizMaterials;
+      await page.evaluate(({user,key,value})=>localStorage.setItem('learn-unsaved-v1/'+user,JSON.stringify({[key]:JSON.stringify(value)})),{user:user.id,key,value:persistedDraft});
+      await page.reload();await page.locator('#quizmap-btn').click();
+      assert.equal(await page.getByText('发现上次未保存的内容，请重试同步后继续。',{exact:true}).count(),0,'acknowledged quiz reference must not trigger recovery');
       await page.locator('.materials-dialog .materials-list li').waitFor();
       await page.setViewportSize({width:390,height:900});await page.screenshot({path:output+'/quiz-dialog-mobile.png',fullPage:true});
       assert(await page.locator('.materials-dialog').evaluate(e=>e.getBoundingClientRect().right<=innerWidth));

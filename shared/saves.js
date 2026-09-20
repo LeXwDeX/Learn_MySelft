@@ -97,9 +97,20 @@
     }).join(',') + '}';
     return JSON.stringify(value);
   }
-  function sameValue(left, right) {
+  function sameValue(key, left, right) {
     if (left === right) return true;
-    try { return canonical(JSON.parse(left)) === canonical(JSON.parse(right)); }
+    try {
+      var before = JSON.parse(left), after = JSON.parse(right);
+      if (/^[^/]+\/learn-path-v1-/.test(key) && !key.endsWith('/learn-path-v1-last') &&
+          before && after && typeof before === 'object' && typeof after === 'object') {
+        // This field is saved independently by /materials/quiz-draft and is
+        // protected from whole-document browser writes by the server.
+        delete before.quizMaterials; delete after.quizMaterials;
+        if (!Object.prototype.hasOwnProperty.call(before, 'materials')) before.materials = [];
+        if (!Object.prototype.hasOwnProperty.call(after, 'materials')) after.materials = [];
+      }
+      return canonical(before) === canonical(after);
+    }
     catch (error) { return false; }
   }
   context.ready = context.ready.then(async function () {
@@ -120,7 +131,7 @@
           var response = await context.fetch(context.apiBase + '/state/all', {cache: 'no-store', signal: controller.signal});
           var data = await response.json();
           if (response.ok && data.entries) Object.keys(pending).forEach(function (key) {
-            if (sameValue(pending[key], data.entries[key])) delete pending[key];
+            if (sameValue(key, pending[key], data.entries[key])) delete pending[key];
           });
         } catch (error) { /* Keep the local copy when confirmation is unavailable. */ }
         finally { clearTimeout(timeout); }
