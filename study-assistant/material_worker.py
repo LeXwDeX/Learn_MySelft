@@ -88,11 +88,16 @@ def seven_members(data):
     from py7zr.io import Py7zIO, WriterFactory
 
     class Buffer(Py7zIO):
-        def __init__(self):
+        def __init__(self, factory):
             self.value = io.BytesIO()
+            self.factory = factory
         def write(self, chunk):
             if self.value.tell() + len(chunk) > MAX_BYTES:
                 raise Invalid('7Z 展开文件超限')
+            growth = max(0, self.value.tell() + len(chunk) - self.size())
+            self.factory.total += growth
+            if self.factory.total > MAX_EXPANDED:
+                raise Invalid('7Z 实际展开总量超过 50 MB')
             return self.value.write(chunk)
         def read(self, size=None):
             return self.value.read(-1 if size is None else size)
@@ -108,11 +113,12 @@ def seven_members(data):
     class Factory(WriterFactory):
         def __init__(self, allowed):
             self.files = {}
+            self.total = 0
             self.allowed = allowed
         def create(self, filename):
             if filename not in self.allowed or filename in self.files:
                 raise Invalid('7Z 成员路径无效')
-            buf = Buffer()
+            buf = Buffer(self)
             self.files[filename] = buf
             return buf
 
@@ -199,7 +205,7 @@ def office_text(data, ext):
             raise Invalid('文件内容不是 Excel 工作簿')
         import openpyxl
         workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True, keep_links=False)
-        chunks, length = [], 0
+        chunks, length, has_values = [], 0, False
         try:
             for sheet in workbook:
                 chunks.append(sheet.title)
@@ -209,9 +215,12 @@ def office_text(data, ext):
                     if length > MAX_TEXT:
                         raise Invalid('Excel 文本超限')
                     if text.strip():
+                        has_values = True
                         chunks.append(text)
         finally:
             workbook.close()
+        if not has_values:
+            raise Invalid('工作簿没有已保存的单元格值；公式请先在 Office 中计算并保存')
         return '\n'.join(chunks)
     if not selected or (ext == 'docx' and 'word/document.xml' not in members):
         raise Invalid('Office 扩展名与实际内容不符')

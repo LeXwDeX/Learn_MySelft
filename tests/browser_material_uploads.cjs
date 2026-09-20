@@ -6,8 +6,8 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const env = process.env.MATERIAL_ENV || 'test';
 assert(['test', 'production'].includes(env));
-const root = 'http://192.168.33.146:' + (env === 'test' ? '8112' : '8100');
-const api = 'http://192.168.33.146:' + (env === 'test' ? '8111' : '8101');
+const root = process.env.MATERIAL_ROOT || ('http://192.168.33.146:' + (env === 'test' ? '8112' : '8100'));
+const api = process.env.MATERIAL_ROOT ? root + '/learning-api' : 'http://192.168.33.146:' + (env === 'test' ? '8111' : '8101');
 const output = process.env.MATERIAL_OUTPUT || '/tmp/material-browser-' + env;
 fs.mkdirSync(output, {recursive:true});
 const credentials = JSON.parse(execFileSync('ssh', ['root@192.168.33.146', 'cat /opt/study-assistant/regression-credentials/' + env + '.json'], {encoding:'utf8'}));
@@ -55,14 +55,39 @@ const lesson = `星桥分拣协议（回归专用原创资料）
     }
     report.cases.push('remove_persists_and_responsive_upload');
     await page.setViewportSize({width:1440,height:1000});
-    // Complete known intake answers to exercise the real, persisted background pipeline.
+    if (process.env.MATERIAL_UI_ONLY === '1') {
+      await page.waitForTimeout(1500); await page.goto('about:blank'); await page.waitForTimeout(500);
+      const slug=new URL(sourceURL).searchParams.get('t'), key=user.id+'/learn-path-v1-'+slug;
+      const entries=(await (await context.request.get(api+'/state/all')).json()).entries;
+      const fixture=JSON.parse(entries[key]);
+      fixture.stage='learning';fixture.plan={title:'资料上传 UI 回归夹具',nodes:Array.from({length:6},(_,i)=>({id:'n'+(i+1),title:'协议规则 '+(i+1),deps:[],objectives:[],essence:'仅回归账号的界面夹具'})),edges:[]};
+      assert.equal((await context.request.post(api+'/state/put',{data:{entries:{[key]:JSON.stringify(fixture)}}})).status(),200);
+      await page.goto(sourceURL);await page.locator('#quizmap-btn').click();await page.locator('.materials-dialog input').waitFor();
+      await page.locator('.materials-dialog input').setInputFiles({name:'补充资料.txt',mimeType:'text/plain',buffer:Buffer.from('仅测验参考的补充资料')});
+      await page.locator('.materials-dialog').getByText('解析完成，资料已保存，将用于生成地图和测验。',{exact:true}).waitFor();
+      await page.locator('.materials-dialog .cancel').click();await page.reload();await page.locator('#quizmap-btn').click();
+      await page.locator('.materials-dialog .materials-list li').waitFor();
+      await page.setViewportSize({width:390,height:900});await page.screenshot({path:output+'/quiz-dialog-mobile.png',fullPage:true});
+      assert(await page.locator('.materials-dialog').evaluate(e=>e.getBoundingClientRect().right<=innerWidth));
+      await page.getByRole('button',{name:'移除 补充资料.txt',exact:true}).click();
+      await page.locator('.materials-dialog').getByText('已移除并保存',{exact:true}).waitFor();
+      await page.locator('.materials-dialog .cancel').click();
+      await page.goto(base+'quiz-map.html');await page.getByRole('link',{name:'上传资料创建测验地图'}).click();
+      await page.getByRole('heading',{name:'用自己的资料创建测验地图'}).waitFor();
+      report.cases.push('quiz_reference_upload_reload_remove_mobile','new_quiz_upload_entry');
+      report.modelGeneration='not_run';assert.deepEqual(errors,[]);report.pageErrors=errors;
+      fs.writeFileSync(output+'/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));return;
+    }
+    // Drive intake through the actual UI; do not race browser saves with fixture writes.
     const slug=new URL(sourceURL).searchParams.get('t'), key=user.id+'/learn-path-v1-'+slug;
-    const entries=(await (await context.request.get(api+'/state/all')).json()).entries;
-    const source=JSON.parse(entries[key]);
-    source.history=Array.from({length:4},()=>({role:'user',content:'零基础，仅掌握上传协议全部八项规则，按原文学习并测验，不增加外部知识。'}));
-    assert.equal((await context.request.post(api+'/state/put',{data:{entries:{[key]:JSON.stringify(source)}}})).status(),200);
-    await page.reload();await page.locator('#chat-input').fill('请直接依据上传资料生成知识地图，范围已确认。');await page.locator('#chat-send').click();
-    await page.waitForFunction(()=>!document.getElementById('stage-learning').hidden && document.querySelectorAll('.node-card').length>0,{},{timeout:480000});
+    for (let round=0; round<5; round++) {
+      await page.locator('#chat-input').fill('我已确认：零基础，只学习上传星桥协议的全部八项规则，达到能准确应用的深度，偏好例子和练习。不增加外部知识，请直接输出需求单并生成地图。');
+      await page.locator('#chat-send').click();
+      await page.waitForFunction(()=>document.getElementById('stage-intake').hidden || !document.getElementById('chat-input').disabled, {}, {timeout:240000});
+      if (await page.locator('#stage-intake').isHidden()) break;
+      if (await page.locator('#errbar').isVisible()) throw new Error(await page.locator('#errbar').innerText());
+    }
+    await page.waitForFunction(()=>!document.getElementById('stage-learning').hidden && document.querySelectorAll('article.node').length>0,{},{timeout:480000});
     const persisted=JSON.parse((await (await context.request.get(api+'/state/all')).json()).entries[key]);
     assert(persisted.plan.nodes.length>=6);assert(JSON.stringify(persisted.plan).includes('星桥'));
     report.cases.push('real_model_intake_research_plan_from_uploaded_reference');
@@ -77,6 +102,8 @@ const lesson = `星桥分拣协议（回归专用原创资料）
     assert(await page.locator('.materials-dialog').evaluate(e=>e.getBoundingClientRect().right<=innerWidth),'dialog mobile fits');
     await page.locator('.materials-dialog .generate').click();
     await page.waitForURL(/quiz-map\.html\?t=/,{timeout:480000});
+    await page.locator('#submit').waitFor({timeout:30000});
+    await page.locator('#submit').click();
     await page.locator('fieldset').first().waitFor({timeout:30000});
     const qslug=new URL(page.url()).searchParams.get('t');
     const quiz=JSON.parse((await (await context.request.get(api+'/state/all')).json()).entries[user.id+'/quiz-map-v1-'+qslug]);

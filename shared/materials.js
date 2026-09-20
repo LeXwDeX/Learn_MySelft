@@ -22,9 +22,10 @@
         remove.disabled = input.disabled;
         remove.onclick = async function () {
           var next = options.get().slice(); next.splice(index, 1);
+          uploading = true; render(); if (options.busy) options.busy(true);
           try { await options.set(next); status.textContent = '已移除并保存'; }
           catch (error) { status.textContent = '保存失败：' + error.message; }
-          render();
+          finally { uploading = false; render(); if (options.busy) options.busy(false); }
         };
         row.appendChild(remove); list.appendChild(row);
       });
