@@ -69,5 +69,39 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   const oldId = requestId; await jobs.LearnJobs.run('/path/intake', {key: 'u0/test', history: []});
   assert.equal(requestId, oldId);
   jobs.LearnUser.readOnly = true; await assert.rejects(jobs.LearnJobs.run('/path/node', {}));
+  const exams = environment();
+  let examPosts = [], savedJobs = new Map(), serial = 0;
+  exams.LearnUser.fetch = async (url, options) => {
+    if (options.method === 'GET') return Response.json({job: savedJobs.get(url.split('/').pop())});
+    const body = JSON.parse(options.body); examPosts.push(body.request_id);
+    let job = Array.from(savedJobs.values()).find(j => j.requestId === body.request_id);
+    if (!job) {
+      job = {id: 'exam' + (++serial), requestId: body.request_id, status:'succeeded', operation:'/path/quizmap', result:{slug:'exam' + serial}};
+      savedJobs.set(job.id, job);
+    }
+    return Response.json({job});
+  };
+  load(exams, 'shared/jobs.js');
+  const examBody = {key:'u0/learn-path-v1-map'};
+  const one = exams.LearnJobs.run('/path/quizmap', examBody, {newOperation:true});
+  assert.strictEqual(one, exams.LearnJobs.run('/path/quizmap', examBody, {newOperation:true}));
+  assert.equal((await one).slug, 'exam1');
+  assert.equal((await exams.LearnJobs.run('/path/quizmap', examBody, {newOperation:true})).slug, 'exam2');
+  assert.notEqual(examPosts[0], examPosts[1]);
+  assert.equal((await exams.LearnJobs.run('/path/quizmap', examBody)).slug, 'exam2', 'ordinary recovery still returns the saved exam');
+  const resume = environment(Object.fromEntries(exams.storage));
+  savedJobs.get('exam2').status = 'running';
+  let lookups = 0;
+  resume.LearnUser.fetch = async (url, options) => {
+    if (options.method === 'GET') {
+      lookups++;
+      return Response.json({job:{...savedJobs.get('exam2'),status:lookups > 1 ? 'succeeded' : 'running'}});
+    }
+    examPosts.push(JSON.parse(options.body).request_id);
+    return Response.json({job:savedJobs.get('exam2')});
+  };
+  load(resume, 'shared/jobs.js');
+  assert.equal((await resume.LearnJobs.run('/path/quizmap', examBody, {newOperation:true})).slug, 'exam2');
+  assert.equal(examPosts.at(-1), examPosts[1], 'running work survives navigation without a new receipt');
   console.log('PASS ordered saves, offline retry, protected recovery, task deduplication and reconnect');
 })().catch(error => { console.error(error); process.exitCode = 1; });

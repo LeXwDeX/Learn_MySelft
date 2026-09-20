@@ -1651,8 +1651,12 @@
     var reason = ((lr.feedback || '') + perQuestionSummary(lr.per_question)).slice(0, 500);
     if (!reason) reason = '本单元自测未通过（' + (typeof st.score === 'number' ? st.score : '') + ' 分）';
     if (btn) { btn.disabled = true; btn.textContent = '细化中…'; }
+    var quiz = (state.nodeDetail[id] || {}).quiz || {};
+    var issued = (quiz.rounds || []).find(function (round) { return round.id === quiz.round_id; });
+    var attempts = (issued && issued.attempts) || [];
     post('/path/refine', {
-      key: storeKey(),
+      key: storeKey(), node_id: id, round_id: quiz.round_id,
+      attempt_id: quiz.lastAttemptId || (attempts.length ? attempts[attempts.length - 1].id : undefined),
       spec: state.spec,
       plan: state.plan,
       weaknesses: [{ nid: id, title: n ? n.title : '', reason: reason, points: [] }]
@@ -1663,7 +1667,7 @@
         state.plan = r.plan;
         save();
         renderPlan();
-        alert('已追加 ' + ((r.added) || 0) + ' 个细化单元（已按依赖关系插入学习地图）');
+        alert(r.reused ? '本次作答的补习单元已经创建，已显示最新学习地图。' : '已为本次作答准备 ' + ((r.added) || 0) + ' 个补习单元，重复操作不会再次追加。');
       }
     }).catch(function (e) {
       if (btn) { btn.disabled = false; btn.textContent = '按薄弱点细化'; }
@@ -1680,7 +1684,7 @@
     var btn = $('quizmap-btn');
     if (btn) { btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）'; }
     hideError();
-    post('/path/quizmap', { key: storeKey() }).then(function (r) {
+    post('/path/quizmap', { key: storeKey() }, {newOperation: true}).then(function (r) {
       location.href = 'quiz-map.html?t=' + encodeURIComponent(r.slug);
     }).catch(function (e) {
       if (btn) { btn.disabled = false; btn.textContent = '生成测验'; }
