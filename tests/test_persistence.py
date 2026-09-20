@@ -40,7 +40,11 @@ class PersistenceTests(unittest.TestCase):
             path.write_text(json.dumps({'key': key, 'v': value, 'ts': 123}, ensure_ascii=False))
             before[path.name] = path.read_bytes()
         store = StateStore(self.directory)
-        self.assertEqual({row['key']: row['value'] for row in store.records()}, original)
+        imported = {row['key']: row['value'] for row in store.records()}
+        migrated = json.loads(imported.pop('u0/learn-path-v1-old'))
+        self.assertEqual(migrated.pop('title'), '旧课程')
+        self.assertEqual(migrated, json.loads(original['u0/learn-path-v1-old']))
+        self.assertEqual(imported, {key: value for key, value in original.items() if key != 'u0/learn-path-v1-old'})
         store.put('u0/learn-path-v1-old', '{"topic":"changed"}')
         reopened = StateStore(self.directory)
         self.assertEqual(reopened.record('u0/learn-path-v1-old')['value'], '{"topic":"changed"}')

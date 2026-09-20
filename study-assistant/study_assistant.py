@@ -32,7 +32,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from app_config import Settings
 from state_store import StateStore, StateConflict
 from state_schema import validate_value, SCHEMA_VERSION
-from background_jobs import JobQueue, JobError, OPERATIONS, log_job_failure, short_title
+from background_jobs import JobQueue, JobError, OPERATIONS, log_job_failure
+
+from material_titles import document_title, quiz_title, short_title
 
 import quiz_harness as harness
 import flywheel
@@ -353,6 +355,7 @@ _PATH_SYSTEM = {
     "intake": """你是一位老师，正在通过对话确认学生要掌握的知识点范围与深度，最终产出一份需求单（Spec）。
 
 每轮第一行输出 TITLE: <概括学生学习目标的中文短标题，最多10个字，不加Markdown>。
+这是整份学习资料的唯一标题；只在学习目标变化时更新，后续正文沿用它。不要把用户请求原句、上传文件名或文件路径当作标题。
 标题应具体，例如「日语基础语法」「Python数据分析」，不要使用「确认学习目标」等流程名称。
 接下来只能输出下面两种格式之一（严格、不要任何多余文字）：
 ASK: <一个中文问题>          —— 信息还不够时，一次只问一个问题
@@ -387,7 +390,7 @@ SPEC 的 JSON 字段（全部必填）：
     "plan": """你在设计一条从零基础通往目标的学习路径（有向无环图）。
 
 只输出一个 JSON 对象字面量，不要解释、不要代码围栏，格式：
-{"title":"...","summary":"...","nodes":[{"id":"n1","title":"...","essence":"...","deps":[],"objectives":["...","..."]}],"edges":[["n1","n2"]]}
+{"summary":"...","nodes":[{"id":"n1","title":"...","essence":"...","deps":[],"objectives":["...","..."]}],"edges":[["n1","n2"]]}
 
 规则：
 1. 节点数 8~12 个（最少 6、最多 12），id 从 n1 开始连续编号。
@@ -396,7 +399,8 @@ SPEC 的 JSON 字段（全部必填）：
 4. deps 只能引用编号更小的节点 id（如 n3 的 deps 只能是 n1/n2），保证严格依赖链；起点节点 deps 为空。
 5. 允许并行支线（同层多个节点），但整体要形成从零基础到目标。
 6. edges 与 deps 等价（可由 deps 推导），两者保持一致。
-7. 结合研究简报里的要点与误区安排节点顺序。""",
+7. 结合研究简报里的要点与误区安排节点顺序。
+8. 文章标题已在需求确认阶段确定，不生成顶层 title；节点仍各有自己的 title。""",
     "node": """你在为一个学习节点写学习材料。
 
 只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
@@ -440,7 +444,7 @@ func main() {
     "quizmap": """你在为一张学习地图出一套「测验地图」——按知识点逐个出题，供学习者在线作答、自动判分。
 
 只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
-{"title":"<地图标题> · 测验","questions":[{"point":"L1 环境搭建与工具链","type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"...","points":10}]}
+{"questions":[{"point":"L1 环境搭建与工具链","type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"...","points":10}]}
 
 规则：
 1. 覆盖：按地图的节点顺序出题，每个节点至少 1 题；节点多于 14 个时只覆盖最重要的 14 个节点。总题数 8~16。point 引用地图单元时用「L<编号> <标题>」形式（编号与「学习地图」页展示一致，地图内部 id n1 对应展示 L1）。
@@ -921,8 +925,7 @@ def _norm_plan(obj, spec):
                       "deps": deps, "objectives": t["objectives"]})
         for d in deps:
             edges.append([d, nid])
-    return {"title": clip(obj.get("title") or spec.get("topic"), 120) or "学习路径",
-            "summary": clip(obj.get("summary"), 400), "nodes": nodes, "edges": edges}
+    return {"summary": clip(obj.get("summary"), 400), "nodes": nodes, "edges": edges}
 
 
 def _norm_shq(q):
@@ -1006,15 +1009,7 @@ def _norm_quiz_questions(obj):
 
 
 def _quizmap_title(material):
-    """Use the established learning topic, never the original chat request."""
-    plan = material.get("plan") or {}
-    spec = material.get("spec") or {}
-    subject = clip(plan.get("title") or spec.get("topic"), 100)
-    if not subject:
-        topic = clip(material.get("topic"), 100)
-        subject = "" if re.match(r"^(请|帮我|我想|我希望|你能|能不能)", topic) else topic
-    subject = re.sub(r"(?:系统学习路径|学习路径|知识点地图|知识地图|学习地图)[。！.!\s]*$", "", subject).strip()
-    return (subject or "学习资料") + "综合测验"
+    return quiz_title(material)
 
 
 def _norm_quizmap(obj, fallback_title=""):
@@ -1389,6 +1384,8 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("quiz must contain questions")
                         current = _state_material(key)
                         if not trusted:
+                            # Titles are server-owned, independent of browser snapshots.
+                            obj['title'] = document_title(current)
                             obj.pop('refinementReceipts', None)
                             quizzes = [obj] if is_quiz else [d.get("quiz") for d in (obj.get("nodeDetail") or {}).values() if isinstance(d, dict)]
                             for quiz in quizzes:
@@ -1567,6 +1564,10 @@ class Handler(BaseHTTPRequestHandler):
             task_title = short_title(title_match.group(1)) if title_match else ''
             if title_match:
                 text = text[:title_match.start()] + text[title_match.end():]
+            if task_title:
+                _state_merge_put(body.get('key'), {'title': task_title})
+            else:
+                task_title = document_title(_state_material(body.get('key')))
             spec = None
             m = re.search(r"SPEC\s*[:：]\s*", text or "")
             if m:
@@ -1574,13 +1575,16 @@ class Handler(BaseHTTPRequestHandler):
             if spec is None:
                 spec = _json_block(text)
             if spec is not None:
-                self._json(200, {"done": True, "question": "", "spec": _norm_spec(spec, topic), 'task_title': task_title})
+                if task_title == '学习资料':
+                    task_title = short_title(_norm_spec(spec, topic).get('topic')) or task_title
+                    _state_merge_put(body.get('key'), {'title': task_title})
+                self._json(200, {"done": True, "question": "", "spec": _norm_spec(spec, topic), 'title': task_title, 'task_title': task_title})
                 return
             qm = re.search(r"ASK\s*[:：]\s*(.+)", text or "", re.S)
             question = clip(qm.group(1) if qm else (text or ""), MAX_QUESTION)
             if not question:
                 question = "请告诉我你想学什么，以及你的学习目标。"
-            self._json(200, {"done": False, "question": question, "spec": None, 'task_title': task_title})
+            self._json(200, {"done": False, "question": question, "spec": None, 'title': task_title, 'task_title': task_title})
             return
 
         # -- 研究：检索式 → SearXNG → 简报 --
@@ -1852,7 +1856,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             detail = m.get("nodeDetail") if isinstance(m.get("nodeDetail"), dict) else {}
             nstate = m.get("nodeState") if isinstance(m.get("nodeState"), dict) else {}
-            map_title = clip(plan.get("title") or (m.get("spec") or {}).get("topic") or "学习资料", 120)
+            map_title = document_title(m)
             out_nodes = []
             for n in plan["nodes"]:
                 if not isinstance(n, dict):

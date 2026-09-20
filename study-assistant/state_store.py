@@ -13,6 +13,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+from material_titles import migrate_titles
 
 
 class StateConflict(ValueError):
@@ -64,6 +65,8 @@ class StateStore:
             ''')
             connection.execute('PRAGMA user_version=1')
         self._import_legacy()
+        with self.transaction() as connection:
+            migrate_titles(connection)
 
     def job_progress(self, step, label, attempt=1):
         job_id = getattr(self.local, 'job_id', None)

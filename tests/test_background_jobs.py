@@ -9,7 +9,8 @@ import urllib.error
 from unittest.mock import patch
 import test_state_regressions
 from state_store import StateStore
-from background_jobs import JobQueue, JobError, short_title, failure_detail
+from background_jobs import JobQueue, JobError, failure_detail
+from material_titles import short_title
 import test_user_isolation as isolation
 
 study = test_state_regressions.study
@@ -57,8 +58,7 @@ class QueueTests(unittest.TestCase):
             job = queue.submit('u0', 'request-%04d' % index, '/path/intake', {'key': key, 'topic': '原始输入'})
             with self.store.transaction() as connection:
                 connection.execute("UPDATE jobs SET status='succeeded',created_ms=? WHERE id=?", (index, job['id']))
-        with self.store.transaction() as connection:
-            connection.execute('INSERT INTO task_titles VALUES (?,?,?)', ('u0', 'u0/conversation', '日语基础语法'))
+        self.store.put('u0/conversation', json.dumps({'title': '日语基础语法'}))
         self.assertEqual(len(queue.list('u0', 'u0/other')), 1, 'filter by material before limiting job history')
         rows = queue.recent('u0')
         self.assertEqual(len(rows), 2)
@@ -73,17 +73,18 @@ class QueueTests(unittest.TestCase):
         retry = queue.retry(active['id'], 'u0')
         self.assertEqual(queue.recent('u0')[0]['id'], retry['id'])
 
-    def test_model_title_persists_across_queue_restart(self):
-        queue = JobQueue(self.store, lambda *args: (200, {'task_title': '**日语基础语法系统学习目标**'}), workers=1)
+    def test_document_title_is_only_source_across_queue_restart(self):
+        self.store.put('u0/conversation', json.dumps({'title': '日语基础语法'}))
+        queue = JobQueue(self.store, lambda *args: (200, {'task_title': '不能覆盖文档标题'}), workers=1)
         self.addCleanup(queue.stop)
         job = queue.submit('u0', 'request-title', '/path/intake', {'key': 'u0/conversation'})
         queue.start()
         self.wait_status(queue, job['id'])
         queue.stop()
         restarted = JobQueue(StateStore(self.temp.name), lambda *args: (200, {}))
-        title = restarted.recent('u0')[0]['title']
-        self.assertEqual(title, '日语基础语法系统学习')
-        self.assertLessEqual(len(title), 10)
+        self.assertEqual(restarted.recent('u0')[0]['title'], '日语基础语法')
+        with self.store.connection() as connection:
+            self.assertEqual(connection.execute('SELECT count(*) FROM task_titles').fetchone()[0], 0)
         self.assertEqual(short_title(None), '')
 
     def setUp(self):

@@ -50,7 +50,7 @@ def validate_value(key, value):
         if field in data:
             validate_materials(data[field])
     if material:
-        typed_fields(data, {'topic': str, 'history': list, 'spec': dict, 'queries': list,
+        typed_fields(data, {'title': str, 'topic': str, 'history': list, 'spec': dict, 'queries': list,
                            'sources': list, 'brief': str, 'plan': dict, 'nodeDetail': dict,
                            'nodeState': dict, 'pending': dict}, 'material')
         if 'stage' in data and data['stage'] not in STAGES:
