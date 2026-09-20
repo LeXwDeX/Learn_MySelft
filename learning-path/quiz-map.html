@@ -7,6 +7,8 @@
 <script src="/learn/assets/user-session.js"></script>
 <script src="/learn/assets/saves.js"></script>
 <script src="/learn/assets/jobs.js"></script>
+<script src="/learn/assets/materials.js"></script>
+<link rel="stylesheet" href="/learn/assets/materials.css">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>测验地图 · 按知识点出题 → 在线作答 → 自动判分</title>
@@ -882,6 +884,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
 
       var h = '<div class="card"><div class="mode-h"><p class="eyebrow" style="margin:0">从学习地图生成测验</p>' +
               '<span class="qcount">' + maps.length + ' 张学习地图</span></div>';
+      h += '<p><a class="btn primary" href="learning-path.html?new=1&amp;mode=quiz">上传资料创建测验地图</a></p>';
       h += '<p class="muted">选择一张学习地图，按其知识点与你的学习情况生成一整套测验（8~16 道，合计 100 分）。</p>';
       if (!maps.length) {
         h += '<p class="lempty">暂无学习地图——先去 <a href="learning-path.html?new=1">生成一张学习地图</a>。</p>';
@@ -920,7 +923,9 @@ pre.md-code code.hljs{background:transparent;padding:0}
   function genQuizMap(btn) {
     var key = btn.getAttribute('data-gen');
     if (!key) return;
-    if (!confirm('确认根据这张学习地图和你的学习情况生成一套测验？\n（按知识点出题 8~16 道，合计 100 分；生成后打开作答）')) return;
+    window.LearnMaterials.quiz(key, function () { submitQuizMap(btn, key); });
+  }
+  function submitQuizMap(btn, key) {
     var old = btn.textContent;
     btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）';
     post('/path/quizmap', { key: key }).then(function (r) {
