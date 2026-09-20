@@ -15,6 +15,7 @@
   var state = {
     stage: 'intake',                  // intake | research | learning
     topic: '',
+    materials: [],
     history: [],                      // [{role:'assistant'|'user', content}]
     spec: null,
     queries: [],
@@ -26,6 +27,8 @@
     aiHist: {},                       // {id: [{role, content}]} —— 每单元独立的 AI 辅助对话
     pending: null                     // {kind:'research'|'plan'|'node', nid?, at} —— 生成防中断
   };
+  var materialsPanel = null;
+  var quizCreation = false;
   var materialSlug = null;            // Stable document identity, independent of its title
   var selectedId = null;
   var busy = false;
@@ -197,7 +200,7 @@
       // 没有主题就不写：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
       if (!state.topic || blockedStateKeys[storeKey()]) return;
       var payload = {
-        stage: state.stage, topic: state.topic, history: state.history,
+        stage: state.stage, topic: state.topic, history: state.history, materials: state.materials,
         spec: state.spec, queries: state.queries, sources: state.sources,
         brief: state.brief, plan: state.plan,
         nodeDetail: state.nodeDetail, nodeState: state.nodeState,
@@ -237,6 +240,7 @@
       state.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || '';
       if (!state.topic) return false;
       state.history = Array.isArray(d.history) ? d.history : [];
+      state.materials = d.materials || [];
       state.spec = d.spec || null;
       state.queries = d.queries || [];
       state.sources = d.sources || [];
@@ -326,6 +330,7 @@
   var STAGE_LABEL = { intake: '阶段 I · 需求采集', research: '阶段 R · 主动研究', learning: '阶段 L · 学习路径' };
   function setStage(s) {
     state.stage = s;
+    if (materialsPanel) materialsPanel.lock(s !== 'intake' || busy);
     viewStage(s);
     save();
   }
@@ -472,10 +477,11 @@
   function setChatDisabled(off) {
     $('chat-input').disabled = off;
     $('chat-send').disabled = off;
+    if (materialsPanel) materialsPanel.lock(off || state.stage !== 'intake');
   }
 
   function sendMessage() {
-    if (busy) return;
+    if (busy || (materialsPanel && materialsPanel.busy())) return;
     var el = $('chat-input');
     var text = (el.value || '').trim();
     if (!text) return;
@@ -669,6 +675,7 @@
         $('research-status').hidden = true;
         setStage('learning');
         renderPlan();
+        if (quizCreation) genQuizMap();
       })
       .catch(function (e) {
         $('research-status').innerHTML = '生成路径失败：' + esc(e.message);
@@ -1560,7 +1567,9 @@
   // ---------- 生成测验地图（按学习地图 + 学习情况） ----------
   function genQuizMap() {
     if (!(state.stage === 'learning' && state.plan)) return;
-    if (!confirm('确认根据这张学习地图和你的学习情况生成一套测验？\n（按知识点出题 8~16 道，合计 100 分；生成后打开「测验地图」作答）')) return;
+    window.LearnMaterials.quiz(storeKey(), submitQuizMap);
+  }
+  function submitQuizMap() {
     var btn = $('quizmap-btn');
     if (btn) { btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）'; }
     hideError();
@@ -1742,7 +1751,27 @@
   // 页面不做任何本地保存；每次打开都从服务端远程加载
   function init() { window.LearnUser.ready.then(boot); }
   function boot() {
+    quizCreation = new URLSearchParams(location.search).get("mode") === "quiz";
     bindAgentLayout();
+    materialsPanel = window.LearnMaterials.mount($('learning-materials'), {
+      get: function () { return state.materials; },
+      set: async function (next) {
+        state.materials = next;
+        if (!state.topic && next.length) {
+          state.topic = next[0].name.replace(/\.[^.]+$/, '');
+          materialSlug = slug(state.topic) + '-' + window.LearnJobs.requestId().slice(0, 8);
+          var url = new URL(location.href); url.searchParams.delete('new'); url.searchParams.set('t', materialSlug);
+          window.history.replaceState(null, '', url.pathname + url.search);
+          renderChat();
+        }
+        save(); await flushSave(); await Promise.all(stateWrites.slice());
+      },
+      busy: function (off) { setChatDisabled(off); }
+    });
+    if (quizCreation) {
+      $('stage-intake').querySelector('h2').textContent = '用自己的资料创建测验地图';
+      $('chat-input').placeholder = '说明测验范围、难度和目标，回车开始…';
+    }
     $('chat-send').addEventListener('click', sendMessage);
     $('chat-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMessage(); });
     $('restart-btn').addEventListener('click', restart);
@@ -1792,6 +1821,7 @@
         setStage('intake');
         renderChat();
       }
+      materialsPanel.render();
       renderProgress();
       renderAgentPanel();
       if (restored && !window.LearnUser.readOnly) resumeIfPending();   // 上次生成中断→自动取回/重放（节点会自动展开卡片）

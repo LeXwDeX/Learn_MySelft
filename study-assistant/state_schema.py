@@ -5,6 +5,7 @@ unknown fields remain compatible with deployed clients and generated content.
 Server-owned question rounds and grades are protected by the merge layer.
 """
 import json
+from material_parser import validate_materials
 
 SCHEMA_VERSION = 1
 STAGES = {'intake', 'research', 'learning'}
@@ -45,6 +46,9 @@ def validate_value(key, value):
         raise ValueError('state document must be an object')
     if 'schema_version' in data and data['schema_version'] != SCHEMA_VERSION:
         raise ValueError('unsupported state schema version')
+    for field in ('materials', 'quizMaterials'):
+        if field in data:
+            validate_materials(data[field])
     if material:
         typed_fields(data, {'topic': str, 'history': list, 'spec': dict, 'queries': list,
                            'sources': list, 'brief': str, 'plan': dict, 'nodeDetail': dict,
