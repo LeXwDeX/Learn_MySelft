@@ -348,6 +348,7 @@
       var content = byId(button.getAttribute('aria-controls'));
       if (content.hidden && !window.confirm('确定查看本题的参考答案与解题思路吗？建议先独立作答。')) return;
       content.hidden = !content.hidden;
+      if (!content.hidden && view.config.decorate) view.config.decorate(content);
       button.setAttribute('aria-expanded', String(!content.hidden));
       button.textContent = content.hidden ? '查看答案与思路' : '收起答案与思路';
     });
