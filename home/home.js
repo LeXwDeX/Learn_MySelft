@@ -89,6 +89,9 @@
   var taskTimer = null;
   function loadTasks() {
     if (taskTimer) clearTimeout(taskTimer);
+    context.request('/state/all').then(function (result) {
+      renderLibrary(result.entries);
+    }).catch(function (e) { error('library-error', e.message); });
     return context.request('/jobs?view=recent').then(function (result) {
       var jobs = result.jobs.slice(0, 8);
       $('tasks-panel').hidden = !jobs.length;
@@ -96,7 +99,7 @@
       jobs.forEach(function (job) {
         var row = document.createElement('div'); row.className = 'learn-task';
         var info = document.createElement('div');
-        var title = document.createElement('strong'); title.textContent = job.title || '学习任务';
+        var title = document.createElement('strong'); title.textContent = window.LearnTitles.document(job);
         var detail = document.createElement('small');
         var statuses = {queued: '排队中', running: '正在处理', succeeded: '已完成', failed: '未完成', interrupted: '等待恢复', cancelled: '已取消'};
         detail.textContent = window.LearnJobs.label(job.operation) + ' · ' + (statuses[job.status] || job.status) + ' · ' + new Date(job.created_ms).toLocaleString('zh-CN');
@@ -222,11 +225,7 @@
           }).length;
         maps.push({
           slug: business.slice("learn-path-v1-".length),
-          title:
-            data.topic ||
-            (data.plan || {}).title ||
-            (data.spec || {}).topic ||
-            "学习地图",
+          title: window.LearnTitles.document(data),
           meta: total
             ? done + "/" + total + " 单元已完成"
             : { intake: "正在确认学习目标", research: "正在研究学习资料" }[
@@ -237,7 +236,7 @@
         var result = data.lastResult || (data.attempts || []).slice(-1)[0];
         quizzes.push({
           slug: business.slice("quiz-map-v1-".length),
-          title: data.title || "综合测验",
+          title: window.LearnTitles.document(data),
           meta:
             (data.questions || []).length +
             "题" +
@@ -369,14 +368,6 @@
     document.querySelectorAll("[data-page]").forEach(function (link) {
       link.href = context.link(link.dataset.page);
     });
-    context
-      .request("/state/all")
-      .then(function (result) {
-        renderLibrary(result.entries);
-      })
-      .catch(function (e) {
-        error("library-error", e.message);
-      });
     if (
       new URLSearchParams(location.search).get("account") &&
       context.userId === context.user.id

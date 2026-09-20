@@ -177,8 +177,12 @@
         // This field is saved independently by /materials/quiz-draft and is
         // protected from whole-document browser writes by the server.
         delete before.quizMaterials; delete after.quizMaterials;
+        delete before.title; delete after.title;
         if (!Object.prototype.hasOwnProperty.call(before, 'materials')) before.materials = [];
         if (!Object.prototype.hasOwnProperty.call(after, 'materials')) after.materials = [];
+      }
+      if (/^[^/]+\/quiz-map-v1-/.test(key) && before && after && typeof before === 'object' && typeof after === 'object') {
+        delete before.title; delete after.title;
       }
       return canonical(before) === canonical(after);
     }

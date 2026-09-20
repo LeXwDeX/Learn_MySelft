@@ -15,6 +15,7 @@
   var state = {
     stage: 'intake',                  // intake | research | learning
     topic: '',
+    title: '',
     materials: [],
     history: [],                      // [{role:'assistant'|'user', content}]
     spec: null,
@@ -195,7 +196,7 @@
       // 没有主题就不写：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
       if (!state.topic || blockedStateKeys[storeKey()]) return;
       var payload = {
-        stage: state.stage, topic: state.topic, history: state.history, materials: state.materials,
+        stage: state.stage, title: state.title, topic: state.topic, history: state.history, materials: state.materials,
         spec: state.spec, queries: state.queries, sources: state.sources,
         brief: state.brief, research_version: state.research_version, plan: state.plan,
         nodeDetail: state.nodeDetail, nodeState: state.nodeState,
@@ -231,6 +232,8 @@
       if (!d || typeof d !== 'object') return false;
       materialSlug = s;
       state.stage = d.stage || 'intake';
+      state.title = window.LearnTitles.document(d);
+      renderDocumentTitle();
       // 兼容修复：历史状态可能缺 topic 字段 → 依次从 plan/spec 恢复，而不是拒绝加载
       state.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || '';
       if (!state.topic) return false;
@@ -518,6 +521,8 @@
     post('/path/intake', { key: storeKey(), topic: state.topic, history: state.history })
       .then(function (r) {
         thinking.remove();
+        state.title = window.LearnTitles.document(r);
+        renderDocumentTitle();
         clearPending();
         busy = false; setChatDisabled(false);
         if (r.done && r.spec) {
@@ -702,7 +707,7 @@
       n.deps.forEach(function (d) { edges.push([d, n.id]); });
     });
     plan.edges = edges;
-    plan.title = plan.title || '学习路径';
+
     plan.summary = plan.summary || '';
   }
 
@@ -738,9 +743,15 @@
   }
 
   // ---------- 阶段 C：路径图 ----------
+  function renderDocumentTitle() {
+    var title = window.LearnTitles.document(state);
+    document.title = title;
+    $('document-title').textContent = title;
+    $('plan-title').textContent = title;
+  }
   function renderPlan() {
     var plan = state.plan;
-    $('plan-title').textContent = plan.title || '学习路径';
+    renderDocumentTitle();
     $('plan-summary').textContent = plan.summary || '';
     // 分层：level = 前置最大层级 + 1
     var level = {};
@@ -1712,7 +1723,7 @@
         var it = { key: k, slug: biz.slice(STORE_PREFIX.length), topic: '', stage: '', total: 0, done: 0 };
         if (d && typeof d === 'object') {
           if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;   // 跳过历史空壳
-          it.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || it.slug;
+          it.topic = window.LearnTitles.document(d);
           it.stage = d.stage || '';
           if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
           var ns = d.nodeState || {};

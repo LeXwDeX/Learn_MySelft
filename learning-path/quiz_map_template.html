@@ -97,7 +97,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
   <div class="toolbar-inner">
     <a class="btn home-link" href="/learn/" title="返回首页">← 首页</a>
     <div class="brand">
-      <h1>测验地图</h1>
+      <h1 id="document-title">测验地图</h1>
       <p class="sub" id="brand-sub">按知识点出题 · 在线作答 · 自动判分</p>
     </div>
     <div class="spacer"></div>
@@ -237,7 +237,8 @@ __QUIZ_DIALOG_JS__
       var names = window.LearnTitles.quiz(d, entries);
       var sourceTitle = names.source;
       d.displayTitle = names.title;
-      document.title = names.title + ' · 测验地图';
+      document.title = names.title;
+      $('document-title').textContent = names.title;
       var tm = $('to-map');
       if (d.sourceSlug) { tm.href = 'learning-path.html?t=' + encodeURIComponent(d.sourceSlug); tm.hidden = false; }
       $('brand-sub').textContent = '来自《' + sourceTitle + '》 · 共 ' + d.questions.length + ' 题 · 满分 100 分';
@@ -446,7 +447,7 @@ __QUIZ_DIALOG_JS__
           var it = { slug: biz.slice(MAP_PREFIX.length), topic: '', total: 0, done: 0 };
           if (d && typeof d === 'object') {
             if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;
-            it.topic = (d.plan && d.plan.title) || (d.spec && d.spec.topic) || d.topic || it.slug;
+            it.topic = window.LearnTitles.document(d);
             if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
             var ns = d.nodeState || {};
             for (var nid in ns) { if (ns[nid] && ns[nid].completed) it.done++; }
