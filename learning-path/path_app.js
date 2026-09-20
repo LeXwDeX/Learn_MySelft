@@ -65,6 +65,7 @@
   }
   // KaTeX：把 $...$ / $$...$$ 渲染成公式（失败不影响正文）
   function renderMathIn(el) {
+    if (window.LearnMarkdown) window.LearnMarkdown.enhance(el);
     if (!el || typeof window.renderMathInElement !== 'function') return;
     try {
       window.renderMathInElement(el, {
@@ -101,18 +102,10 @@
       .replace(/`([^`\n]+)`/g, function (_, c) { return '<code class="md-inline">' + c + '</code>'; })
       .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
   }
-  function mdRender(text) {
-    var src = String(text == null ? '' : text);
-    var out = '', last = 0, m;
-    var re = /```([a-zA-Z0-9+#-]*)\r?\n?([\s\S]*?)```/g;
-    while ((m = re.exec(src))) {
-      out += mdText(src.slice(last, m.index));
-      out += '<pre class="md-code"><code' + (m[1] ? ' class="language-' + m[1] + '"' : '') + '>' + esc(m[2].replace(/\r/g, '').replace(/\n+$/, '')) + '</code></pre>';
-      last = m.index + m[0].length;
-    }
-    out += mdText(src.slice(last));
-    return out;
+  function mdRender(text, options) {
+    return window.LearnMarkdown ? window.LearnMarkdown.render(text, options) : mdText(String(text || ''));
   }
+
   function storeKey() { return USER_PATH + STORE_PREFIX + (materialSlug || slug(state.topic)); }
   function aiKey() { return USER_PATH + 'learn-ai-v1-' + (materialSlug || slug(state.topic)); }
   // 答案框自动扩展：随输入增高（以 CSS min-height 为下限）
@@ -1252,6 +1245,17 @@
     view.root.querySelector('.ai-intro').textContent = label + (ready ? '，可以结合正文讲解和练习。' : '。可以先聊前置知识和学习目标。');
     view.root.querySelector('.ai-note').textContent = ready ? 'AI 可参考本单元材料；个人薄弱点需结合你的实际作答判断。' : 'AI 当前仅有单元标题和学习目标，还没有本单元正文。';
     view.input.placeholder = ready ? '就本单元提问，Enter 发送 / Shift+Enter 换行' : '可以先问学习目标或前置知识';
+    var methods = view.root.querySelector('.ai-methods');
+    if (methods && !methods.childNodes.length) {
+      ['画图解释', '用表格对比', '举个例子', '分步推导'].forEach(function (method) {
+        var button = document.createElement('button'); button.type = 'button'; button.className = 'ai-method'; button.textContent = method;
+        button.onclick = function () {
+          var available = aiMaterialStatus(id) === 'ready';
+          sendAi(id, (available ? '结合本单元及当前对话，' : '正文尚未就绪，请仅对前置知识做预习说明：') + method + '，选择适合讲解的内容；不要透露我正在作答题目的答案。');
+        };
+        methods.appendChild(button);
+      });
+    }
     var empty = view.box.querySelector('.ai-empty');
     if (empty) {
       empty.replaceChildren();
@@ -1283,9 +1287,10 @@
       view.send.title = aiBusy ? 'AI 正在回复，可以继续编辑下一条问题' : '';
     });
   }
-  function aiRenderInto(el, text) {
+  function aiRenderInto(el, text, streaming) {
     if (!el) return;
-    el.innerHTML = mdRender(text);
+    el.innerHTML = mdRender(text, {streaming:!!streaming});
+    if (!streaming && window.LearnMarkdown) window.LearnMarkdown.exportButton(el, text, "AI讲解.md");
     renderMathIn(el);
     highlightIn(el);
   }
@@ -1295,7 +1300,10 @@
     var b = document.createElement('div');
     b.className = 'ai-bubble';
     if (role === 'user') b.textContent = content;
-    else b.innerHTML = mdRender(content);
+    else {
+      b.innerHTML = mdRender(content);
+      if (content && window.LearnMarkdown) window.LearnMarkdown.exportButton(b, content, 'AI讲解.md');
+    }
     d.appendChild(b);
     return d;
   }
@@ -1323,6 +1331,7 @@
     root.className = 'agent-view';
     root.innerHTML =
       '<p class="ai-intro">AI 辅助 · 交互式学习 —— 会讲解、追问、出小题检验你；不会直接给答案。</p>' +
+      '<div class="ai-methods" aria-label="换种讲法"></div>' +
       '<div class="ai-msgs" id="ai-msgs"></div>' +
       '<button class="btn quiet ai-new-reply" type="button" hidden>有新回复 ↓</button>' +
       '<div class="ai-compose"><textarea id="ai-input" placeholder="就本单元提问，Enter 发送 / Shift+Enter 换行"></textarea>' +
@@ -1337,6 +1346,8 @@
     } else {
       msgs.forEach(function (m) { box.appendChild(aiBubble(m.role, m.content)); });
     }
+    renderMathIn(box);
+    highlightIn(box);
     var input = $('ai-input');
     bindAutoGrow(input);
     var send = $('ai-send');
@@ -1403,7 +1414,7 @@
             var payload = line.slice(5).trim(); if (!payload) continue;
             var obj; try { obj = JSON.parse(payload); } catch (e2) { continue; }
             if (obj.error) acc += '\n[出错] ' + obj.error;
-            if (obj.delta) { acc += obj.delta; aiRenderInto(body, acc); aiScroll(view); }
+            if (obj.delta) { acc += obj.delta; aiRenderInto(body, acc, true); aiScroll(view); }
           }
           return pump();
         });
@@ -1420,7 +1431,7 @@
   function aiFinish(id, body, acc, view) {
     aiRenderInto(body, acc);
     var msgs = state.aiHist[id] || (state.aiHist[id] = []);
-    msgs.push({ role: 'assistant', content: aiClip(acc, 4000) });
+    msgs.push({ role: 'assistant', content: acc });
     aiHistTrim(msgs, 60);
     state.aiHist[id] = msgs;
     saveAi();
@@ -1428,29 +1439,7 @@
     syncAiBusy();
     aiScroll(view);
   }
-  // 简单 markdown：## 小标题 + 空行分段 + ``` 围栏代码块 + 行内 `code`；$...$ 交给 KaTeX
-  function renderNotes(s) {
-    var lines = String(s || '').split('\n');
-    var out = [], fence = null;
-    lines.forEach(function (ln) {
-      var m = ln.match(/^\s*```([a-zA-Z0-9+#-]*)\s*$/);
-      if (fence === null && m) { fence = { lang: m[1] || '', lines: [] }; return; }
-      if (fence !== null) {
-        if (m) {
-          out.push('<pre class="md-code"><code' + (fence.lang ? ' class="language-' + fence.lang + '"' : '') + '>' + esc(fence.lines.join('\n')) + '</code></pre>');
-          fence = null;
-        } else fence.lines.push(ln);
-        return;
-      }
-      var t = ln.trim();
-      if (/^#{2,3}\s+/.test(t)) out.push('<h5>' + esc(t.replace(/^#{2,3}\s+/, '')) + '</h5>');
-      else if (/^\s*[-*]\s+/.test(ln)) out.push('<div style="padding-left:14px">· ' + mdText(t.replace(/^\s*[-*]\s+/, '')) + '</div>');
-      else if (t === '') out.push('<div style="height:8px"></div>');
-      else out.push('<div>' + mdText(ln) + '</div>');
-    });
-    if (fence !== null) out.push('<pre class="md-code"><code' + (fence.lang ? ' class="language-' + fence.lang + '"' : '') + '>' + esc(fence.lines.join('\n')) + '</code></pre>');
-    return out.join('');
-  }
+  function renderNotes(s) { return mdRender(s); }
   function listSection(title, arr) {
     if (!arr || !arr.length) return '';
     return '<div class="panel-sec"><h4>' + esc(title) + '</h4><ul class="mdlist">' +
@@ -1509,6 +1498,14 @@
       '<div class="mat-pane mat-pane-material"' + (matTab === 'material' ? '' : ' hidden') + '>' + matPane + '</div>' +
       '<div class="mat-pane mat-pane-quiz"' + (matTab === 'quiz' ? '' : ' hidden') + '>' + quizPane + '</div>';
     renderMathIn(scope);
+    var notes = scope.querySelector('.notes');
+    if (notes && window.LearnMarkdown) {
+      var materialMd = '# ' + n.title + '\n\n' + (d.study_notes || '');
+      [['要点', d.key_points], ['例子', d.examples], ['易错点', d.misconceptions]].forEach(function (part) {
+        if (part[1] && part[1].length) materialMd += '\n\n## ' + part[0] + '\n\n' + part[1].join('\n\n');
+      });
+      window.LearnMarkdown.exportButton(notes, materialMd, '学习材料.md');
+    }
     highlightIn(scope);
     qs.forEach(function (q, i) { bindAutoGrow(scope.querySelector('#ans-' + i)); });
 

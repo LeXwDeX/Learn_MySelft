@@ -9,6 +9,9 @@
 <script src="/learn/assets/saves.js"></script>
 <script src="/learn/assets/jobs.js"></script>
 <script src="/learn/assets/materials.js"></script>
+<link rel="stylesheet" href="/learn/assets/markdown.css">
+<script src="/learn/assets/vendor-markdown-it.js"></script>
+<script src="/learn/assets/markdown.js"></script>
 <link rel="stylesheet" href="/learn/assets/materials.css">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -462,6 +465,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
       var content = byId(button.getAttribute('aria-controls'));
       if (content.hidden && !window.confirm('确定查看本题的参考答案与解题思路吗？建议先独立作答。')) return;
       content.hidden = !content.hidden;
+      if (!content.hidden && view.config.decorate) view.config.decorate(content);
       button.setAttribute('aria-expanded', String(!content.hidden));
       button.textContent = content.hidden ? '查看答案与思路' : '收起答案与思路';
     });
@@ -568,6 +572,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
     return undefined;
   }
   function renderMathIn(el) {
+    if (window.LearnMarkdown) window.LearnMarkdown.enhance(el);
     if (!el || typeof window.renderMathInElement !== 'function') return;
     try {
       window.renderMathInElement(el, {
@@ -597,18 +602,10 @@ pre.md-code code.hljs{background:transparent;padding:0}
       .replace(/`([^`\n]+)`/g, function (_, c) { return '<code class="md-inline">' + c + '</code>'; })
       .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
   }
-  function mdRender(text) {
-    var src = String(text == null ? '' : text);
-    var out = '', last = 0, m;
-    var re = /```([a-zA-Z0-9+#-]*)\r?\n?([\s\S]*?)```/g;
-    while ((m = re.exec(src))) {
-      out += mdText(src.slice(last, m.index));
-      out += '<pre class="md-code"><code' + (m[1] ? ' class="language-' + m[1] + '"' : '') + '>' + esc(m[2].replace(/\r/g, '').replace(/\n+$/, '')) + '</code></pre>';
-      last = m.index + m[0].length;
-    }
-    out += mdText(src.slice(last));
-    return out;
+  function mdRender(text, options) {
+    return window.LearnMarkdown ? window.LearnMarkdown.render(text, options) : mdText(String(text || ''));
   }
+
   function post(path, body, options) {
     if (window.LearnJobs && window.LearnJobs.supports(path)) {
       if (!body.key && currentSlug) body.key = USER_PATH + QUIZ_PREFIX + currentSlug;

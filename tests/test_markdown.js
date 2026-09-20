@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const window={markdownit:require('../shared/vendor-markdown-it.js')};
+vm.runInNewContext(fs.readFileSync('shared/markdown.js','utf8'),{window,WeakMap,Promise});
+const md=window.LearnMarkdown;
+assert.match(md.render('| 比较 | 说明 |\n| --- | --- |\n| A | B |'),/<table>/);
+assert.match(md.render('$\\|x\\|_2$'),/\\\|x\\\|_2/);
+assert.doesNotMatch(md.render('<img src=x onerror=alert(1)>'),/<img/);
+assert.doesNotMatch(md.render('[bad](javascript:alert(1))'),/href="javascript:/);
+assert.doesNotMatch(md.render('![external](https://invalid.example/image.png)'),/<img/);
+const graph='```mermaid\nflowchart TD\n A["条件"] --> B["结论"]\n```';
+assert.match(md.render(graph),/data-diagram="pending"/);
+assert.match(md.render(graph,{streaming:true}),/data-diagram="waiting"/);
+assert.match(md.render(graph.slice(0,-3)),/data-diagram="invalid"/);
+assert.match(md.render('~~~mermaid\nflowchart TD\n A-->B\n~~~'),/data-diagram="pending"/);
+assert.match(md.render('```js\nconsole.log(1)\n```'),/language-js/);
+console.log('Markdown parser contract passed');
