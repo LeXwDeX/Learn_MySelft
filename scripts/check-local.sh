@@ -8,6 +8,7 @@ node tests/test_quiz_frontend.js
 node tests/test_quiz_save_state.js
 node tests/test_flywheel_frontend.js
 node tests/test_markdown.js
+node tests/test_logout_recovery.js
 node --check learning-path/path_app.js
 node --check learning-path/quiz_dialog.js
 node --check home/home.js

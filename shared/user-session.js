@@ -46,6 +46,9 @@
         ),
       );
     }
+    if (context.exiting && !read && !endpoint.startsWith('/auth/')) {
+      return Promise.resolve(new Response(JSON.stringify({error:'正在退出，草稿已保留在本机'}), {status:409, headers:{'Content-Type':'application/json'}}));
+    }
     options.credentials = "include";
     options.headers = new Headers(options.headers || {});
     if (context.userId) options.headers.set("X-Learn-User", context.userId);
@@ -91,17 +94,42 @@
         });
       });
   };
+  var logoutWork = null;
+  async function logout() {
+    var controller = new AbortController(), timer = setTimeout(function () { controller.abort(); }, 5000);
+    var session;
+    try {
+      var response = await context.fetch(api + '/auth/session', {cache:'no-store', signal:controller.signal});
+      if (!response.ok) throw new Error('无法确认登录状态，请检查网络后重试');
+      session = await response.json();
+    } finally { clearTimeout(timer); }
+    if (session.user) {
+      window.dispatchEvent(new Event('pagehide'));
+      var waitTimer;
+      try {
+        await Promise.race([Promise.allSettled(Array.from(writes)), new Promise(function (resolve) { waitTimer = setTimeout(resolve, 5000); })]);
+      } finally { clearTimeout(waitTimer); }
+      if (window.LearnSaves && window.LearnSaves.pending()) {
+        await window.LearnSaves.refresh();
+        if (window.LearnSaves.pending() && !window.confirm('仍有内容未同步到服务器。保留本机草稿并退出？下次登录可以继续恢复。')) return;
+      }
+    }
+    // Expired sessions cannot flush drafts. Keep them locally, then reconcile
+    // against server tombstones after the next successful login.
+    if (window.LearnSaves) window.LearnSaves.prepareExit();
+    context.exiting = true;
+    try {
+      await context.request('/auth/logout', {});
+      location.href = '/learn/';
+    } catch (error) {
+      context.exiting = false;
+      if (window.LearnSaves) window.LearnSaves.cancelExit();
+      throw error;
+    }
+  }
   context.logout = function () {
-    // Flush pending application drafts before invalidating the cookie.
-    window.dispatchEvent(new Event("pagehide"));
-    return Promise.allSettled(Array.from(writes))
-      .then(function () {
-        if (window.LearnSaves && window.LearnSaves.pending()) throw new Error('还有未保存的内容，请先重试保存再退出');
-        return context.request("/auth/logout", {});
-      })
-      .then(function () {
-        location.href = "/learn/";
-      });
+    if (!logoutWork) logoutWork = logout().finally(function () { logoutWork = null; });
+    return logoutWork;
   };
   function domReady(callback) {
     if (document.readyState === "loading")
@@ -162,9 +190,8 @@
       logout.onclick = function () {
         logout.disabled = true;
         context.logout().catch(function (error) {
-          logout.disabled = false;
           alert(error.message);
-        });
+        }).finally(function () { logout.disabled = false; });
       };
       bar.append(account, settings, logout);
       document.body.prepend(bar);

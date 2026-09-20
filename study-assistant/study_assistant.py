@@ -1331,12 +1331,13 @@ class Handler(BaseHTTPRequestHandler):
             self.session_cookie = '%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d' % (COOKIE_NAME, token, SESSION_TTL)
             self._json(200, {'ok': True, 'user': user})
             return
-        self._authenticate()
         if path == '/auth/logout':
             store.logout(self._session_token())
             self.session_cookie = COOKIE_NAME + '=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'
             self._json(200, {'ok': True})
-        elif path == '/auth/password':
+            return
+        self._authenticate()
+        if path == '/auth/password':
             store.change_password(self.actor, body.get('old_password'), body.get('new_password'))
             self.session_cookie = COOKIE_NAME + '=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'
             self._json(200, {'ok': True})
