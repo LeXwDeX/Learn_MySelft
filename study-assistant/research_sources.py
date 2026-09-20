@@ -34,7 +34,7 @@ def select_sources(spec, candidates, complete):
     text = complete([
         {'role': 'system', 'content': SELECTION_PROMPT},
         {'role': 'user', 'content': json.dumps({'spec': spec, 'candidates': records}, ensure_ascii=False)},
-    ], temperature=0)
+    ], temperature=0, max_tokens=8192)
     try:
         result = json.loads(text)
         ids = result['selected_ids']

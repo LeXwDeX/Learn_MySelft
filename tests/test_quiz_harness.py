@@ -175,8 +175,10 @@ class HarnessIntegrationTests(unittest.TestCase):
         self.post('/path/quiz', {'key': KEY, 'node': {'id': 'n1'},
                                'answers': [q['answer'] for q in quiz['questions']]})
         with patch.object(study, '_upstream_nonempty', return_value=json.dumps({'questions': questions()})), \
-             patch.object(study, '_checked_questions', return_value=questions()):
+             patch.object(study, '_checked_questions', return_value=questions()), \
+             patch.object(study._state_store(), 'job_progress') as progress:
             code, current = self.post('/path/requiz', {'key': KEY, 'node': {'id': 'n1'}, 'round_id': quiz['round_id']})
+        self.assertEqual([call.args[0] for call in progress.call_args_list], [1, 2, 3, 4])
         self.assertEqual(code, 200)
         self.assertEqual(len(current['rounds']), 2)
         self.assertEqual(current['rounds'][0]['attempts'][0]['result']['score'], 100)
