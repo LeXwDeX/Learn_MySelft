@@ -9,6 +9,7 @@ import threading
 import time
 import urllib.error
 from quiz_harness import QuizContractError
+from research_sources import SourceSelectionError
 
 OPERATIONS = frozenset({'/path/intake', '/path/research', '/path/plan', '/path/node',
                         '/path/requiz', '/path/quizmap', '/path/refine', '/path/gaps', '/path/quiz'})
@@ -56,6 +57,8 @@ def failure_detail(error):
         return 'network', '网络连接或超时错误：无法完成与远程模型服务的通信，可稍后重试。'
     if isinstance(error, QuizContractError):
         return 'validation', '题目校验错误：生成内容未通过完整性、评分或重复题检查，请重试。'
+    if isinstance(error, SourceSelectionError):
+        return 'validation', '参考来源核验错误：模型返回的筛选结果无效，请重试研究；未核验来源不会使用。'
     if isinstance(error, JobError):
         return 'request', str(error)
     return 'program', '本程序错误：处理任务时发生内部异常，请重试；持续失败请联系维护人员。'

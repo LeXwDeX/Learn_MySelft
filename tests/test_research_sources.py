@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'study-assistant'))
-from research_sources import collect_sources, select_sources
+from research_sources import collect_sources, select_sources, selection_ids
 
 
 class ResearchSourcesTests(unittest.TestCase):
@@ -28,9 +28,16 @@ class ResearchSourcesTests(unittest.TestCase):
     def test_bad_selection_never_passes_raw_sources(self):
         for text in ('{}', 'null', '[]', 'bad', '{"selected_ids":[true]}',
                      '{"selected_ids":[0]}', '{"selected_ids":[4]}',
-                     '{"selected_ids":[1,1]}', '{"selected_ids":"1"}'):
+                     '{"selected_ids":"1"}'):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, '相关性核验未完成'):
                 select_sources({}, self.sources, Mock(return_value=text))
+
+    def test_fences_duplicates_and_limits_preserve_only_real_ids(self):
+        self.assertEqual(selection_ids('```json\n{"selected_ids":[2,2,1]}\n```', 3), [2, 1])
+        self.assertEqual(selection_ids(json.dumps({'selected_ids': list(range(1, 21))}), 20), list(range(1, 13)))
+        complete = Mock(side_effect=['bad format', '{"selected_ids":[2]}'])
+        self.assertEqual(select_sources({}, self.sources, complete), self.sources[1:2])
+        self.assertEqual(complete.call_count, 2)
 
     def test_empty_or_rejected_sources(self):
         complete = Mock(return_value='{"selected_ids":[]}')
