@@ -35,6 +35,7 @@ from state_schema import validate_value, SCHEMA_VERSION
 from background_jobs import JobQueue, JobError, OPERATIONS, log_job_failure, short_title
 
 import quiz_harness as harness
+import flywheel
 import material_parser
 from research_sources import collect_sources, select_sources
 from user_accounts import AccountStore, AccountError, COOKIE_NAME, SESSION_TTL, USER_ID
@@ -290,12 +291,20 @@ def _state_merge_put(mkey, patch):
         return True
 
 
-def _append_refinement(key, fallback_plan, units):
+def _append_refinement(key, fallback_plan, units, receipt=None, validate=None):
     """Allocate ids and append to the latest plan under the same state lock."""
     with STATE_LOCK, _state_store().transaction():
         material = _state_material(key) if key else None
         if key and material is None:
             raise ValueError("学习地图已删除或不存在，请重新打开")
+        if validate:
+            validate()
+        if receipt and material:
+            prior = (material.get('refinementReceipts') or {}).get(receipt)
+            if prior:
+                result = {**prior, 'plan': material['plan'], 'reused': True}
+                _state_store().record_job_effect(result)
+                return material['plan']
         plan = material.get("plan") if material else fallback_plan
         if not isinstance(plan, dict):
             raise ValueError("学习地图没有有效路径")
@@ -304,6 +313,7 @@ def _append_refinement(key, fallback_plan, units):
         maxn = max([int(nid[1:]) for nid in by_id if re.fullmatch(r"n\d+", nid)] or [0])
         edges = [list(e) for e in plan.get("edges", [])]
         last_by_parent = {}
+        added_ids = []
         for unit in units:
             parent = unit["for"]
             if parent not in by_id:
@@ -315,14 +325,23 @@ def _append_refinement(key, fallback_plan, units):
             deps = [previous] if previous else list(by_id[parent].get("deps") or [])
             nodes.append({"id": nid, "title": unit["title"], "essence": unit["essence"],
                           "deps": deps, "objectives": unit["objectives"]})
+            added_ids.append(nid)
+            if receipt:
+                nodes[-1]['remediation'] = {'receipt': receipt, 'parent': parent}
             edges.extend([[dep, nid] for dep in deps])
             last_by_parent[parent] = nid
         new_plan = {**plan, "nodes": nodes, "edges": edges}
         if material is not None:
             material["plan"] = new_plan
+            if receipt:
+                material.setdefault('refinementReceipts', {})[receipt] = {
+                    'ok': True, 'added': len(units), 'node_ids': added_ids,
+                    'units': [{'for': unit['for'], 'title': unit['title']} for unit in units]}
             _state_write_key(key, json.dumps(material, ensure_ascii=False))
-            _state_store().record_job_effect({'ok': True, 'added': len(units),
-                'units': [{'for': unit.get('for'), 'title': unit.get('title')} for unit in units], 'plan': new_plan})
+            effect = (material['refinementReceipts'][receipt] if receipt else {
+                'ok': True, 'added': len(units),
+                'units': [{'for': unit.get('for'), 'title': unit.get('title')} for unit in units]})
+            _state_store().record_job_effect({**effect, 'plan': new_plan})
         return new_plan
 
 
@@ -434,7 +453,8 @@ func main() {
 8. 前端渲染能力（只用以下语法）：```语言 围栏代码块、行内 `代码`、**加粗**、$...$ 行内 LaTeX。不要用表格、图片、HTML 标签。
 9. 这是给**同一学员**的**专属**测验：**优先针对「最近自测」「历史错题」中判错的考点/误区，以及「掌握标记」为review的单元出新题**（同一误区换角度再考）；其次选未测且已解锁的节点。
 10. 参考「作答摘录」反映的水平与思路（如简答题的思路是否完整）调整考察深度：答得浅的考点加深检验；高分且无错题的考点只少量抽查。
-11. 保持现有 JSON 结构与出题规模不变（8~16 题、合计 100 分、每题标分值、题型结构与分组规则照旧）。""",
+11. 有「综合测验表现」时，结合最近作答的单元失分调整重点；历史失分已在最近作答纠正的，不当作仍未掌握。新细化单元也应纳入覆盖；单元自测成绩和综合测验成绩是不同证据。
+12. 保持现有 JSON 结构与出题规模不变（8~16 题、合计 100 分、每题标分值、题型结构与分组规则照旧）。""",
     "gaps": """你是老师，正在批改完学生的一次测验后做失分归因，要给学生一份「缺漏清单」。
 
 你会收到学生本次测验的失分题目（题干、学生作答、参考答案、解析）。请分析学生的知识缺漏，输出一个 JSON 对象字面量（不要解释、不要代码围栏）：
@@ -1017,6 +1037,19 @@ def _norm_gaps(obj):
     return {"summary": clip(obj.get("summary"), 600), "gaps": gaps}
 
 
+def _saved_attempt(key, identity, node_id=None):
+    material = _state_material(key)
+    if material is None:
+        raise JobError(404, "学习资料不存在")
+    quiz = ((material.get('nodeDetail') or {}).get(node_id) or {}).get('quiz') if node_id else material
+    if not isinstance(quiz, dict):
+        raise JobError(409, "题集不存在，请刷新")
+    harness.ensure_round(quiz)
+    if not flywheel.matches(quiz, identity):
+        raise JobError(409, "作答已更新，请刷新后重新诊断")
+    return material, quiz
+
+
 def _resolve_refine_parent(raw, nodes, ids):
     """把 LLM 返回的父节点引用归一为 plan 内的节点 id。
     容忍：精确 id（n3）、显示编号（L3 / 3 / L3 后跟标题）、标题包含匹配。"""
@@ -1245,6 +1278,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._authorize_key(key, write=True)
         elif body.get('key') is not None:
             self._authorize_key(body['key'], write=not read_only)
+        if body.get('quiz_key') is not None:
+            self._authorize_key(body['quiz_key'], write=True)
 
     def _user_overview(self):
         users = _accounts().list_users(self.actor)
@@ -1334,10 +1369,11 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("quiz must contain questions")
                         current = _state_material(key)
                         if not trusted:
+                            obj.pop('refinementReceipts', None)
                             quizzes = [obj] if is_quiz else [d.get("quiz") for d in (obj.get("nodeDetail") or {}).values() if isinstance(d, dict)]
                             for quiz in quizzes:
                                 if isinstance(quiz, dict):
-                                    for field in ("rounds", "round_id", "verified", "harness_version", "attempts", "lastResult", "lastAnswers"):
+                                    for field in ("rounds", "round_id", "verified", "harness_version", "attempts", "lastResult", "lastAnswers", "lastAttemptId"):
                                         quiz.pop(field, None)
                             if is_material:
                                 for nid, state in (obj.get("nodeState") or {}).items():
@@ -1350,6 +1386,7 @@ class Handler(BaseHTTPRequestHandler):
                                         state["completed"] = False
                         if is_material and current:
                             # Quiz-upload drafts have a dedicated transactional endpoint.
+                            obj['refinementReceipts'] = current.get('refinementReceipts') or {}
                             if 'quizMaterials' in current:
                                 obj['quizMaterials'] = current['quizMaterials']
                             if 'materials' not in obj or current.get('stage', 'intake') != 'intake':
@@ -1367,6 +1404,14 @@ class Handler(BaseHTTPRequestHandler):
                             for nid, state in (current.get("nodeState") or {}).items():
                                 states[nid] = {**states[nid], **{k: state[k] for k in ("score", "lastResult", "lastAnswers") if k in state}}
                             obj["nodeState"] = states
+                        if is_quiz and not trusted:
+                            for field in ('gaps', 'gapsAt', 'diagnosis', 'lastAttemptId'):
+                                obj.pop(field, None)
+                                if current and field in current:
+                                    obj[field] = current[field]
+                            if current and 'sourceKey' in current:
+                                obj['sourceKey'] = current['sourceKey']
+                                obj['sourceSlug'] = current.get('sourceSlug')
                         if is_quiz and current and current.get("rounds"):
                             for field in ("questions", "round_id", "rounds", "attempts", "lastResult", "lastAnswers"):
                                 if field in current:
@@ -1874,6 +1919,7 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(old, dict) and old.get("sourceKey") == key:
                     previous.extend(old.get("questions") or [])
             payload["已出过的题目"] = [q["q"] for q in previous]
+            payload["综合测验表现"] = flywheel.exam_evidence(self._state_all(), key, plan)
             def _mk_quizmap(extra=""):
                 return [
                     {"role": "system", "content": _path_system("quizmap")},
@@ -1888,6 +1934,10 @@ class Handler(BaseHTTPRequestHandler):
                             _mk_quizmap(" 校验反馈：" + last_error), max_tokens=PATH_MAX_TOKENS, temperature=0.5)), map_title)
                         if not candidate or len(candidate["questions"]) < 8:
                             raise harness.QuizContractError("综合测验至少8题")
+                        for question in candidate['questions']:
+                            question['node_id'] = flywheel.node_id(question.get('point'), plan)
+                            if not question['node_id']:
+                                raise harness.QuizContractError('每道综合题必须关联现有单元，point使用L编号与标题')
                         _checked_questions(candidate["questions"], previous)
                         candidate["title"] = _quizmap_title(m)
                         qm = candidate
@@ -1927,6 +1977,19 @@ class Handler(BaseHTTPRequestHandler):
 
         # -- 测验缺漏诊断（飞轮：测验结果 → 缺漏清单）--
         if path.startswith("/path/gaps"):
+            diagnosis_key = body.get('key') or ''
+            identity = None
+            if diagnosis_key.split('/', 1)[-1].startswith('quiz-map-v1-'):
+                identity = {name: body.get(name) for name in ('round_id', 'attempt_id')}
+                _, saved_quiz = _saved_attempt(diagnosis_key, identity)
+                if saved_quiz.get('diagnosis') == identity and saved_quiz.get('gaps'):
+                    self._json(200, {**saved_quiz['gaps'], 'diagnosis': identity})
+                    return
+                body = {**body, 'items': flywheel.gap_items(saved_quiz),
+                        'score': (saved_quiz.get('lastResult') or {}).get('score')}
+                if not body['items']:
+                    self._json(200, {'summary': '本次作答没有失分题，无需补习。', 'gaps': [], 'diagnosis': identity})
+                    return
             items = []
             for it in (body.get("items") if isinstance(body.get("items"), list) else [])[:24]:
                 if not isinstance(it, dict):
@@ -1954,6 +2017,12 @@ class Handler(BaseHTTPRequestHandler):
             if res is None:
                 self._json(502, {"error": "gap analysis failed"})
                 return
+            if identity:
+                with STATE_LOCK, _state_store().transaction():
+                    current, _ = _saved_attempt(diagnosis_key, identity)
+                    current.update(gaps=res, diagnosis=identity, gapsAt=int(time.time() * 1000))
+                    _state_write_key(diagnosis_key, json.dumps(current, ensure_ascii=False))
+                res = {**res, 'diagnosis': identity}
             self._json(200, res)
             return
 
@@ -1969,6 +2038,37 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 plan = material["plan"]
                 spec = material.get("spec") or spec
+            receipt, validate = None, None
+            if body.get('quiz_key'):
+                source_key = body['quiz_key']
+                identity = {name: body.get(name) for name in ('round_id', 'attempt_id')}
+                def validate():
+                    source, quiz = _saved_attempt(source_key, identity)
+                    if source.get('sourceKey') != key or quiz.get('diagnosis') != identity:
+                        raise JobError(409, '请先针对当前作答重新诊断')
+                    if not flywheel.gap_items(quiz):
+                        raise JobError(409, '本次作答没有失分题，无需补习')
+                    return quiz
+                quiz = validate()
+                body = {**body, 'weaknesses': flywheel.weaknesses(quiz, plan)}
+                receipt = flywheel.receipt_id(source_key, identity)
+            elif body.get('attempt_id') and body.get('node_id'):
+                identity = {name: body.get(name) for name in ('round_id', 'attempt_id')}
+                def validate():
+                    _, quiz = _saved_attempt(key, identity, body['node_id'])
+                    if not flywheel.gap_items(quiz):
+                        raise JobError(409, '本次作答没有失分题，无需补习')
+                    return quiz
+                validate()
+                receipt = flywheel.receipt_id(key + '/' + body['node_id'], identity)
+            if receipt:
+                with STATE_LOCK, _state_store().transaction():
+                    validate()
+                    current = _state_material(key)
+                    prior = (current.get('refinementReceipts') or {}).get(receipt)
+                    if prior:
+                        self._json(200, {**prior, 'plan': current['plan'], 'reused': True})
+                        return
             weak = []
             for w in (body.get("weaknesses") if isinstance(body.get("weaknesses"), list) else [])[:8]:
                 if not isinstance(w, dict):
@@ -1983,7 +2083,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "weaknesses required"})
                 return
             mkey = key or None
-            gate_key = (mkey + "#refine#" + hashlib.sha1(json.dumps(weak, sort_keys=True).encode()).hexdigest()) if mkey else None
+            gate_key = (mkey + "#refine#" + (receipt or hashlib.sha1(json.dumps(weak, sort_keys=True).encode()).hexdigest())) if mkey else None
             _gate = None
             if gate_key:
                 _gate, _owner = _gen_gate_join(gate_key)
@@ -2009,13 +2109,13 @@ class Handler(BaseHTTPRequestHandler):
                     _gen_gate_finish(gate_key, _gate, err="refine generation failed")
                 raise
             units = _norm_refine_units(obj, plan)
-            if not units:
+            if not units or any(unit['for'] not in {w['nid'] for w in weak} for unit in units):
                 if gate_key:
                     _gen_gate_finish(gate_key, _gate, err="refine generation failed")
                 self._json(502, {"error": "refine generation failed"})
                 return
             try:
-                new_plan = _append_refinement(mkey, plan, units)
+                new_plan = _append_refinement(mkey, plan, units, receipt, validate)
             except Exception:
                 if gate_key:
                     _gen_gate_finish(gate_key, _gate, err="refine save failed")
@@ -2023,6 +2123,8 @@ class Handler(BaseHTTPRequestHandler):
             out = {"ok": True, "added": len(units),
                    "units": [{"for": u.get("for"), "title": u.get("title")} for u in units],
                    "plan": new_plan}
+            if receipt:
+                out = {**(_state_material(mkey).get('refinementReceipts') or {})[receipt], 'plan': new_plan}
             if gate_key:
                 _gen_cache_put(gate_key, out)
                 _gen_gate_finish(gate_key, _gate, out=out)
@@ -2105,6 +2207,10 @@ class Handler(BaseHTTPRequestHandler):
                 if current["round_id"] == issued["id"]:
                     target = material.setdefault("nodeState", {}).setdefault(node_id, {}) if node_id else material
                     target.update(score=saved_result["score"], lastResult=saved_result, lastAnswers=answers)
+                    current['lastAttemptId'] = identity
+                    if not node_id and current.get('diagnosis') != {'round_id': issued['id'], 'attempt_id': identity}:
+                        for field in ('gaps', 'gapsAt', 'diagnosis'):
+                            current.pop(field, None)
                 return {**saved_result, "attempt_id": identity, "quiz": json.loads(json.dumps(current)), "round_id": issued["id"]}
             self._json(200, _quiz_update(key, node_id, record))
             return

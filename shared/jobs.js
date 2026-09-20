@@ -79,6 +79,14 @@
   async function execute(operation, body, options) {
     var key = receiptKey(operation, body);
     var receipt = readReceipt(key) || {requestId: requestId(), created: Date.now()};
+    if (options.newOperation && receipt.id) {
+      // Only an explicit next exam rotates a completed receipt. Unconfirmed,
+      // running and failed work stays resumable with its original identity.
+      var previous = (await request('/jobs/' + encodeURIComponent(receipt.id))).job;
+      if (previous.status === 'succeeded' || previous.status === 'cancelled') {
+        receipt = {requestId: requestId(), created: Date.now()};
+      }
+    }
     if (options.requestId) receipt.requestId = options.requestId;
     saveReceipt(key, receipt);
     var preparing = {id: 'prepare-' + receipt.requestId, operation: operation};

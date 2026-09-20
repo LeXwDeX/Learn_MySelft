@@ -609,10 +609,10 @@ pre.md-code code.hljs{background:transparent;padding:0}
     out += mdText(src.slice(last));
     return out;
   }
-  function post(path, body) {
+  function post(path, body, options) {
     if (window.LearnJobs && window.LearnJobs.supports(path)) {
       if (!body.key && currentSlug) body.key = USER_PATH + QUIZ_PREFIX + currentSlug;
-      return window.LearnJobs.run(path, body);
+      return window.LearnJobs.run(path, body, options || {});
     }
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
@@ -685,14 +685,31 @@ pre.md-code code.hljs{background:transparent;padding:0}
     });
   }
 
+  function attemptIdentity() {
+    if (!currentD) return null;
+    var issued = (currentD.rounds || []).find(function (round) { return round.id === currentD.round_id; });
+    var attempts = (issued && issued.attempts) || [];
+    var id = currentD.lastAttemptId || (attempts.length && attempts[attempts.length - 1].id);
+    return id ? {round_id: currentD.round_id, attempt_id: id} : null;
+  }
+  function sameIdentity(a, b) {
+    return !!(a && b && a.round_id === b.round_id && a.attempt_id === b.attempt_id);
+  }
+  function currentDiagnosis() { return currentD && sameIdentity(currentD.diagnosis, attemptIdentity()) && currentD.gaps; }
+  function syncQuiz(d, quiz) {
+    ['gaps', 'gapsAt', 'diagnosis', 'lastAttemptId'].forEach(function (field) { delete d[field]; });
+    Object.assign(d, quiz); currentD = d; currentQs = d.questions;
+    currentRes = d.lastResult || null;
+    if (currentRes) showResult(currentRes);
+  }
   function openExam(slug, d) {
     var related = Object.keys(currentEntries).filter(function (key) {
       try { return JSON.parse(currentEntries[key]).sourceKey === d.sourceKey; } catch (error) { return false; }
     }).sort(function (a, b) { return (JSON.parse(currentEntries[a]).created || 0) - (JSON.parse(currentEntries[b]).created || 0); });
     return window.QuizDialog.open({readOnly: window.LearnUser.readOnly, relatedKeys: related, api: API, key: USER_PATH + QUIZ_PREFIX + slug, title: d.displayTitle || d.title,
       render: mdRender, decorate: function (el) { renderMathIn(el); highlightIn(el); },
-      onLoad: function (quiz) { Object.assign(d, quiz); currentD = d; },
-      onResult: function (res, key) { if (key !== USER_PATH + QUIZ_PREFIX + slug) return; Object.assign(d, res.quiz); currentD = d; currentQs = d.questions; showResult(res); }
+      onLoad: function (quiz) { syncQuiz(d, quiz); },
+      onResult: function (res, key) { if (key !== USER_PATH + QUIZ_PREFIX + slug) return; syncQuiz(d, res.quiz); }
     });
   }
   function showResult(res) {
@@ -719,7 +736,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
     if (again) again.addEventListener('click', function () {
       if (!currentD.sourceKey) { alert('找不到关联学习地图'); return; }
       again.disabled = true; again.textContent = '出题与验题中…';
-      post('/path/quizmap', {key: currentD.sourceKey}).then(function (result) {
+      post('/path/quizmap', {key: currentD.sourceKey}, {newOperation: true}).then(function (result) {
         location.href = 'quiz-map.html?t=' + encodeURIComponent(result.slug);
       }).catch(function (error) {
         again.disabled = false; again.textContent = '换新题，再测一次';
@@ -730,17 +747,9 @@ pre.md-code code.hljs{background:transparent;padding:0}
     if (gb) gb.addEventListener('click', function () { runGaps(); });
     var rb = $('refine-btn');
     if (rb) rb.addEventListener('click', function () { runRefine(); });
-    if (currentD && currentD.gaps) renderGaps(currentD.gaps);   // 已有诊断：直接回显
+    if (currentDiagnosis()) renderGaps(currentD.gaps);   // 已有诊断：直接回显
   }
 
-  function persistQuiz(slug, d) {
-    var entries = {};
-    entries[USER_PATH + QUIZ_PREFIX + slug] = JSON.stringify(d);
-    return window.LearnUser.fetch(API + '/state/put', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries: entries }), keepalive: true
-    }).catch(function () { /* 回写失败不阻断作答 */ });
-  }
   // ============================ 飞轮：诊断缺漏 → 细化学习地图 ============================
   // 本卷失分题：ok=false，或简答题未写出「思路」
   function collectGapItems() {
@@ -786,14 +795,15 @@ pre.md-code code.hljs{background:transparent;padding:0}
       if (onDone) onDone(null);
       return;
     }
+    var identity = attemptIdentity(), owner = currentD;
+    if (!identity) { alert('请先提交并保存本次作答'); if (onDone) onDone(null); return; }
     var btn = $('gaps-btn'), old = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = '诊断中…'; }
-    var res = currentRes || (currentD && currentD.lastResult) || {};
-    post('/path/gaps', { items: items, score: res.score != null ? res.score : '' }).then(function (resp) {
+    post('/path/gaps', {key: USER_PATH + QUIZ_PREFIX + currentSlug, round_id: identity.round_id, attempt_id: identity.attempt_id}).then(function (resp) {
       if (btn) { btn.disabled = false; btn.textContent = old; }
+      if (currentD !== owner || !sameIdentity(identity, attemptIdentity())) { if (onDone) onDone(null); return; }
       currentD.gaps = resp;
-      currentD.gapsAt = Date.now();
-      persistQuiz(currentSlug, currentD);
+      currentD.diagnosis = resp.diagnosis;
       renderGaps(resp);
       if (onDone) onDone(resp);
     }).catch(function (e) {
@@ -803,51 +813,10 @@ pre.md-code code.hljs{background:transparent;padding:0}
       if (onDone) onDone(null);
     });
   }
-  // 题目 point（「L<k> 标题」）→ plan.nodes[k-1].id；失败再按标题兜底
-  function pointToNid(point, plan) {
-    if (!plan || !plan.nodes) return null;
-    var s = String(point == null ? '' : point).trim();
-    var m = s.match(/^L(\d+)/);
-    if (m) {
-      var k = parseInt(m[1], 10);
-      if (k >= 1 && k <= plan.nodes.length) return plan.nodes[k - 1].id;
-    }
-    for (var i = 0; i < plan.nodes.length; i++) {
-      var t = String(plan.nodes[i].title || '');
-      if (t && s.indexOf(t) >= 0) return plan.nodes[i].id;
-    }
-    return null;
-  }
-  function buildWeaknesses(items, gaps, plan) {
-    var byNid = {}, titleOf = {};
-    plan.nodes.forEach(function (n) { titleOf[n.id] = n.title || ''; });
-    function slot(nid) {
-      if (!byNid[nid]) byNid[nid] = { nid: nid, title: titleOf[nid] || '', reasons: [], points: [] };
-      return byNid[nid];
-    }
-    // 诊断点按 unit（同样「L<k>」）归到对应节点
-    ((gaps && gaps.gaps) || []).forEach(function (g) {
-      var nid = pointToNid(g.unit, plan);
-      if (!nid) return;
-      var s = slot(nid);
-      (g.points || []).forEach(function (p) { if (s.points.indexOf(p) < 0) s.points.push(p); });
-    });
-    // 失分题按 point 归到对应节点，拼错题摘要
-    items.forEach(function (it) {
-      var nid = pointToNid(it.unit, plan);
-      if (!nid) return;   // 映射失败跳过该单元
-      var s = slot(nid);
-      s.reasons.push(it.q + (it.explain ? ' → ' + it.explain : ''));
-    });
-    return Object.keys(byNid).map(function (nid) {
-      var s = byNid[nid];
-      var reason = s.reasons.join('；').slice(0, 500) || ('本卷在该单元失分（' + (titleOf[nid] || nid) + '）');
-      return { nid: nid, title: s.title, reason: reason, points: s.points };
-    });
-  }
   function runRefine() {
     var btn = $('refine-btn');
     if (!currentD) return;
+    if (!collectGapItems().length) { alert('本次作答没有失分题，无需补习。'); return; }
     var srcSlug = currentD.sourceSlug;
     if (!srcSlug) { alert('这张测验地图没有关联的学习地图，无法细化。'); return; }
     if (btn) { btn.disabled = true; btn.textContent = '细化中…'; }
@@ -864,21 +833,22 @@ pre.md-code code.hljs{background:transparent;padding:0}
         var m = null;
         try { m = JSON.parse(mraw); } catch (e) { m = null; }
         if (!m || !m.plan || !m.plan.nodes || !m.plan.nodes.length) { fail('找不到对应学习地图的路径'); return; }
-        var weaknesses = buildWeaknesses(collectGapItems(), currentD.gaps, m.plan);
-        if (!weaknesses.length) { fail('失分题无法映射到学习地图单元'); return; }
+        var identity = attemptIdentity();
+        if (!identity || !currentDiagnosis()) { fail('作答已更新，请重新诊断'); return; }
         return post('/path/refine', {
           key: USER_PATH + MAP_PREFIX + srcSlug,
-          spec: m.spec || {}, plan: m.plan, weaknesses: weaknesses
+          quiz_key: USER_PATH + QUIZ_PREFIX + currentSlug,
+          round_id: identity.round_id, attempt_id: identity.attempt_id
         }).then(function (r) {
           restore();
           var box = $('refine-area');
           if (box) box.innerHTML =
-            '<div class="result ok">已在学习地图追加 ' + ((r && r.added) || 0) + ' 个细化单元</div>' +
+            '<div class="result ok">' + (r.reused ? '本次作答的补习单元已经创建，未重复追加。' : '已为本次作答准备 ' + ((r && r.added) || 0) + ' 个补习单元，重复操作不会再次追加。') + '</div>' +
             '<div class="foot"><a class="btn" href="learning-path.html?t=' + encodeURIComponent(srcSlug) + '">去学习地图 →</a></div>';
         });
       }).catch(function (e) { fail(e.message); });
     };
-    if (currentD.gaps) { go(); return; }
+    if (currentDiagnosis()) { go(); return; }
     // 没有诊断数据：先自动跑一次诊断，成功后再细化
     runGaps(function (resp) { if (resp) go(); else restore(); });
   }
@@ -963,7 +933,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
   function submitQuizMap(btn, key) {
     var old = btn.textContent;
     btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）';
-    post('/path/quizmap', { key: key }).then(function (r) {
+    post('/path/quizmap', { key: key }, {newOperation: true}).then(function (r) {
       location.href = 'quiz-map.html?t=' + encodeURIComponent(r.slug);
     }).catch(function (e) {
       btn.disabled = false; btn.textContent = old;
