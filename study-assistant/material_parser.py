@@ -7,8 +7,8 @@ import subprocess
 import threading
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_TEXT = 120_000
-MAX_FILES = 20
+MAX_TEXT = 200_000
+MAX_FILES = 100
 SLOTS = threading.BoundedSemaphore(2)
 
 
@@ -18,7 +18,7 @@ class MaterialError(ValueError):
         self.status = status
 
 
-def parse_upload(name, encoded):
+def parse_upload(name, encoded, *, report=False):
     if not isinstance(name, str) or not name or len(name) > 200:
         raise MaterialError('文件名无效', 400)
     if not isinstance(encoded, str) or len(encoded) > ((MAX_FILE_BYTES + 2) // 3) * 4:
@@ -53,7 +53,10 @@ def parse_upload(name, encoded):
             raise MaterialError('资料解析服务返回异常', 503) from error
         if result.get('error'):
             raise MaterialError(result['error'])
-        return validate_materials(result.get('materials'))
+        materials = validate_materials(result.get('materials'))
+        if report:
+            return {'materials': materials, 'skipped': result.get('skipped', [])}
+        return materials
     finally:
         SLOTS.release()
 
@@ -61,7 +64,7 @@ def parse_upload(name, encoded):
 def validate_materials(items):
     """Bound stored context as well as new parser output; never silently truncate."""
     if not isinstance(items, list) or len(items) > MAX_FILES:
-        raise MaterialError('每份地图最多使用 20 个资料文件', 400)
+        raise MaterialError('每份地图最多使用 100 个资料文件', 400)
     total = 0
     for item in items:
         if not isinstance(item, dict) or not isinstance(item.get('name'), str) or not isinstance(item.get('text'), str):
@@ -70,7 +73,7 @@ def validate_materials(items):
             raise MaterialError('资料名称或内容无效', 400)
         total += len(item['text'])
     if total > MAX_TEXT:
-        raise MaterialError('资料文本合计超过 12 万字，请拆分后创建地图', 413)
+        raise MaterialError('资料文本合计超过 20 万字，请拆分后创建地图', 413)
     return items
 
 
