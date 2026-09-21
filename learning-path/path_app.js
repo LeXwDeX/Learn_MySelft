@@ -76,6 +76,7 @@
           { left: '$', right: '$', display: false }
         ],
         throwOnError: false,
+        ignoredClasses: ['learn-markdown', 'katex', 'md-math-fallback'],
         ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option']
       });
     } catch (e) { /* 渲染失败保留原始文本 */ }
@@ -1511,11 +1512,13 @@
     renderMathIn(scope);
     var notes = scope.querySelector('.notes');
     if (notes && window.LearnMarkdown) {
-      var materialMd = '# ' + n.title + '\n\n' + (d.study_notes || '');
+      var materialMd = '# ' + (n.title || '未命名单元') + '\n\n' + (d.study_notes || '');
       [['要点', d.key_points], ['例子', d.examples], ['易错点', d.misconceptions]].forEach(function (part) {
         if (part[1] && part[1].length) materialMd += '\n\n## ' + part[0] + '\n\n' + part[1].join('\n\n');
       });
-      window.LearnMarkdown.exportButton(notes, materialMd, '学习材料.md');
+      var unitIndex = (state.plan.nodes || []).findIndex(function (node) { return node.id === id; }) + 1;
+      var filename = window.LearnMarkdown.unitFilename(window.LearnTitles.document(state), unitIndex, n.title);
+      window.LearnMarkdown.exportButton(notes, materialMd, filename);
     }
     highlightIn(scope);
     qs.forEach(function (q, i) { bindAutoGrow(scope.querySelector('#ans-' + i)); });
