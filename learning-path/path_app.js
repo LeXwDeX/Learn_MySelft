@@ -76,6 +76,7 @@
           { left: '$', right: '$', display: false }
         ],
         throwOnError: false,
+        ignoredClasses: ['learn-markdown', 'katex', 'md-math-fallback'],
         ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option']
       });
     } catch (e) { /* 渲染失败保留原始文本 */ }
