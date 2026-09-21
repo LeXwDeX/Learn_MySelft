@@ -3,6 +3,7 @@ set -eu
 cd "$(dirname "$0")/.."
 python3 -m unittest discover -s tests -v
 node tests/test_frontend_regressions.js
+node tests/test_refinement_hierarchy_frontend.js
 node tests/test_reliability_frontend.js
 node tests/test_quiz_frontend.js
 node tests/test_quiz_save_state.js

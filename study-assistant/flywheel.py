@@ -3,6 +3,8 @@ import hashlib
 import json
 import re
 
+from path_hierarchy import hierarchy
+
 
 def node_id(point, plan):
     nodes = (plan or {}).get('nodes') or []
@@ -10,11 +12,20 @@ def node_id(point, plan):
     value = str(point or '').strip()
     if value in ids:
         return value
-    match = re.match(r'^[Ll](\d+)(?:\s|$)', value)
-    if match and 'n' + match[1] in ids:
-        return 'n' + match[1]
+    # Titles preserve historical flat labels when roots have since been regrouped.
     matches = [n['id'] for n in nodes if n.get('title') and n['title'] in value]
-    return matches[0] if len(matches) == 1 else None
+    if len(matches) == 1:
+        return matches[0]
+    match = re.match(r'^[Ll](\d+(?:\.\d+)*)(?:\s|$)', value)
+    if match:
+        label = 'L' + match[1]
+        entry = next((entry for entry in hierarchy(nodes) if entry['label'] == label), None)
+        if entry:
+            return entry['node']['id']
+        # Old comprehensive quizzes stored flat L<numeric node id> labels.
+        if '.' not in match[1] and 'n' + match[1] in ids:
+            return 'n' + match[1]
+    return None
 
 
 def current_attempt(quiz):

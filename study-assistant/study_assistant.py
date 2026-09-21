@@ -40,6 +40,7 @@ import quiz_harness as harness
 import flywheel
 import material_parser
 import render_review
+import path_hierarchy
 from research_sources import collect_sources, select_sources
 from user_accounts import AccountStore, AccountError, COOKIE_NAME, SESSION_TTL, USER_ID
 
@@ -311,6 +312,7 @@ def _append_refinement(key, fallback_plan, units, receipt=None, validate=None):
         plan = material.get("plan") if material else fallback_plan
         if not isinstance(plan, dict):
             raise ValueError("学习地图没有有效路径")
+        path_hierarchy.ensure_refinable(plan, [unit["for"] for unit in units])
         nodes = [dict(n) for n in plan.get("nodes", []) if isinstance(n, dict)]
         by_id = {n["id"]: n for n in nodes}
         maxn = max([int(nid[1:]) for nid in by_id if re.fullmatch(r"n\d+", nid)] or [0])
@@ -329,11 +331,12 @@ def _append_refinement(key, fallback_plan, units, receipt=None, validate=None):
             nodes.append({"id": nid, "title": unit["title"], "essence": unit["essence"],
                           "deps": deps, "objectives": unit["objectives"]})
             added_ids.append(nid)
+            nodes[-1]["remediation"] = {"parent": parent}
             if receipt:
-                nodes[-1]['remediation'] = {'receipt': receipt, 'parent': parent}
+                nodes[-1]["remediation"]["receipt"] = receipt
             edges.extend([[dep, nid] for dep in deps])
             last_by_parent[parent] = nid
-        new_plan = {**plan, "nodes": nodes, "edges": edges}
+        new_plan = path_hierarchy.canonicalize_plan({**plan, "nodes": nodes, "edges": edges})
         if material is not None:
             material["plan"] = new_plan
             if receipt:
@@ -1075,11 +1078,13 @@ def _resolve_refine_parent(raw, nodes, ids):
         return ""
     if fid in ids:
         return fid
-    m = re.match(r"^[Ll]?\s*(\d+)(?![0-9])", fid)
-    if m:
-        k = int(m.group(1))
-        if 1 <= k <= len(nodes) and str(nodes[k - 1].get("id")) in ids:
-            return str(nodes[k - 1].get("id"))
+    match = re.match(r"^[Ll]?\s*(\d+(?:\.\d+)*)(?![\d.])", fid)
+    if match:
+        label = "L" + match.group(1)
+        for entry in path_hierarchy.hierarchy(nodes):
+            if entry['label'] == label and str(entry['node']['id']) in ids:
+                return str(entry['node']['id'])
+        return ""
     if len(fid) >= 2:
         for n in nodes:
             t = str(n.get("title") or "").strip()
@@ -2122,6 +2127,11 @@ class Handler(BaseHTTPRequestHandler):
             if not weak:
                 self._json(400, {"error": "weaknesses required"})
                 return
+            try:
+                path_hierarchy.ensure_refinable(plan, [item['nid'] for item in weak])
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
             mkey = key or None
             gate_key = (mkey + "#refine#" + (receipt or hashlib.sha1(json.dumps(weak, sort_keys=True).encode()).hexdigest())) if mkey else None
             _gate = None
@@ -2156,6 +2166,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 new_plan = _append_refinement(mkey, plan, units, receipt, validate)
+            except ValueError as exc:
+                if gate_key:
+                    _gen_gate_finish(gate_key, _gate, err=str(exc))
+                raise JobError(409, str(exc)) from exc
             except Exception:
                 if gate_key:
                     _gen_gate_finish(gate_key, _gate, err="refine save failed")

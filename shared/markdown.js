@@ -140,7 +140,7 @@
       }
       return result;
     }
-    var number = Number.isSafeInteger(index) && index > 0 ? 'L' + index : 'L未编号';
+    var number = typeof index === 'string' && /^L[1-9]\d*(?:\.[1-9]\d*)*$/.test(index) ? index : (Number.isSafeInteger(index) && index > 0 ? 'L' + index : 'L未编号');
     return safe(course,'学习资料') + '_' + number + '_' + safe(title,'未命名单元') + '.md';
   }
   function getParser() {
