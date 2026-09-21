@@ -116,11 +116,8 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .graph-svg{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 .layer{position:relative;z-index:2;display:flex;flex-direction:column;align-items:stretch;gap:26px}
 /* .layer + .layer 的 margin 与 #graph-layer 的 flex gap 重复叠加（52px vs 26px 不齐），故移除 */
-.node{width:100%;background:#fff;border:1px solid var(--rule);border-left:3px solid var(--lock);border-radius:8px;padding:18px 20px;cursor:pointer;position:relative;transition:box-shadow .15s,border-color .15s}
+.node{width:100%;background:#fff;border:1px solid var(--rule);border-left:4px solid var(--group-color,var(--lock));border-radius:8px;padding:18px 20px;cursor:pointer;position:relative;transition:box-shadow .15s,border-color .15s}
 .node:hover{box-shadow:0 6px 18px -12px rgba(45,49,66,.5)}
-.node.unlocked{border-left-color:var(--accent)}
-.node.done{border-left-color:var(--ok)}
-.node.failed{border-left-color:#b23a48}
 .node-head{display:flex;align-items:flex-start;gap:12px}
 .node-head .node-no,.node-head .status,.node-head .ai-mini{height:26px;display:inline-flex;align-items:center;justify-content:center;padding-top:0;padding-bottom:0;line-height:1}
 .node-head .node-caret{line-height:26px}
@@ -140,7 +137,7 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 /* 单元状态标记（卡片） */
 .node-caret{font-family:var(--mono);font-size:11px;color:var(--soft);flex:none;width:12px;text-align:center}
 .node-head .ai-mini{margin-left:auto;font-size:11px;padding:3px 10px;border-color:rgba(235,108,54,.45);color:var(--accent);flex:none}
-.node.selected{border-color:var(--soft);box-shadow:0 0 0 2px var(--accent-tint)}
+.node.selected{border-color:var(--soft);border-left-color:var(--group-color,var(--lock));box-shadow:0 0 0 2px var(--accent-tint)}
 .node.expanded{box-shadow:0 10px 26px -18px rgba(45,49,66,.45)}
 .node-foot{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:9px;border-top:1px dashed var(--rule)}
 .node-foot .marks{display:flex;gap:5px;flex-wrap:wrap}

@@ -371,8 +371,48 @@
   }
 
   // ---------- 图状态 ----------
-  // 显示层编号：学习单元 n1 → L1（内部 id / 数据键 / DOM id 一律不动）
-  function dispId(id) { return String(id).replace(/^n(\d+)$/, 'L$1'); }
+  // Refinement ancestry is independent of prerequisite edges. Preserve sibling
+  // insertion order and detach the earliest member of malformed parent cycles.
+  function planHierarchy(nodes) {
+    var byId = new Map(), positions = new Map(), parents = new Map(), children = new Map();
+    nodes.forEach(function (node, index) { byId.set(node.id, node); positions.set(node.id, index); children.set(node.id, []); });
+    nodes.forEach(function (node) {
+      var parent = node.remediation && node.remediation.parent;
+      parents.set(node.id, parent !== node.id && byId.has(parent) ? parent : null);
+    });
+    nodes.forEach(function (node) {
+      var path = [], seen = new Map(), current = node.id;
+      while (current != null) {
+        if (seen.has(current)) {
+          var cycle = path.slice(seen.get(current));
+          var first = cycle.reduce(function (best, id) { return positions.get(id) < positions.get(best) ? id : best; });
+          parents.set(first, null);
+          break;
+        }
+        seen.set(current, path.length); path.push(current); current = parents.get(current);
+      }
+    });
+    var roots = [];
+    nodes.forEach(function (node) {
+      var parent = parents.get(node.id);
+      if (parent == null) roots.push(node); else children.get(parent).push(node);
+    });
+    var entries = [];
+    function visit(node, label, depth, rootId, rootIndex) {
+      entries.push({node: node, label: label, depth: depth, root_id: rootId, root_index: rootIndex, parent_id: parents.get(node.id)});
+      children.get(node.id).forEach(function (child, index) { visit(child, label + '.' + (index + 1), depth + 1, rootId, rootIndex); });
+    }
+    roots.forEach(function (node, index) { visit(node, 'L' + (index + 1), 1, node.id, index); });
+    return entries;
+  }
+  function hierarchyEntry(id) {
+    return planHierarchy((state.plan && state.plan.nodes) || []).find(function (entry) { return entry.node.id === id; });
+  }
+  function dispId(id) {
+    var entry = hierarchyEntry(id);
+    return entry ? entry.label : String(id).replace(/^n(\d+)$/, 'L$1');
+  }
+  function canRefine(id) { var entry = hierarchyEntry(id); return !!entry && entry.depth < 4; }
   function nodeById(id) {
     if (!state.plan) return null;
     for (var i = 0; i < state.plan.nodes.length; i++) if (state.plan.nodes[i].id === id) return state.plan.nodes[i];
@@ -694,15 +734,27 @@
       });
   }
 
-  // 补齐 edges、确保 id 连续、deps 只引用更小序号
+  // Keep valid prerequisites even when hierarchy order places them later.
+  // Accept edges deterministically while rejecting missing, self and cyclic links.
   function normalizePlan(plan) {
     plan.nodes.forEach(function (n, i) { if (!n.id) n.id = 'n' + (i + 1); });
-    var order = {};
-    plan.nodes.forEach(function (n, i) { order[n.id] = i; });
-    plan.nodes.forEach(function (n) {
-      n.deps = (n.deps || []).filter(function (d) { return order[d] != null && order[d] < order[n.id]; });
-      n.objectives = n.objectives || [];
+    var accepted = new Map();
+    plan.nodes.forEach(function (node) { accepted.set(node.id, []); });
+    function reaches(start, target, visited) {
+      if (start === target) return true;
+      if (visited.has(start)) return false;
+      visited.add(start);
+      return accepted.get(start).some(function (dependency) { return reaches(dependency, target, visited); });
+    }
+    plan.nodes.forEach(function (node) {
+      (Array.isArray(node.deps) ? node.deps : []).forEach(function (dependency) {
+        var dependencies = accepted.get(node.id);
+        if (accepted.has(dependency) && dependencies.indexOf(dependency) === -1 && !reaches(dependency, node.id, new Set())) dependencies.push(dependency);
+      });
+      node.deps = accepted.get(node.id);
+      node.objectives = node.objectives || [];
     });
+    plan.nodes = planHierarchy(plan.nodes).map(function (entry) { return entry.node; });
     var edges = [];
     plan.nodes.forEach(function (n) {
       n.deps.forEach(function (d) { edges.push([d, n.id]); });
@@ -754,18 +806,9 @@
     var plan = state.plan;
     renderDocumentTitle();
     $('plan-summary').textContent = plan.summary || '';
-    // 分层：level = 前置最大层级 + 1
-    var level = {};
-    plan.nodes.forEach(function (n) {
-      var mx = -1;
-      n.deps.forEach(function (d) { if (level[d] != null && level[d] > mx) mx = level[d]; });
-      level[n.id] = mx + 1;
-    });
-    var maxLv = 0;
-    plan.nodes.forEach(function (n) { if (level[n.id] > maxLv) maxLv = level[n.id]; });
     var layerEl = $('graph-layer');
     layerEl.innerHTML = '';
-    var visible = plan.nodes.filter(function (n) { return !reviewFilter || markOf(n.id) === 'review'; });
+    var visible = planHierarchy(plan.nodes).filter(function (entry) { return !reviewFilter || markOf(entry.node.id) === 'review'; });
     if (!visible.length) {
       layerEl.innerHTML = '<p class="empty-note">没有标记为「需复习」的单元</p>';
       expandedId = null; activeScope = null;
@@ -773,15 +816,10 @@
       var svg0 = $('graph-svg'); if (svg0) svg0.innerHTML = '';
       return;
     }
-    for (var lv = 0; lv <= maxLv; lv++) {
-      var div = document.createElement('div');
-      div.className = 'layer';
-      visible.forEach(function (n) {
-        if (level[n.id] !== lv) return;
-        div.appendChild(nodeCard(n, plan.nodes.indexOf(n) + 1));
-      });
-      if (div.childNodes.length) layerEl.appendChild(div);
-    }
+    var layer = document.createElement('div');
+    layer.className = 'layer';
+    visible.forEach(function (entry) { layer.appendChild(nodeCard(entry.node, entry)); });
+    layerEl.appendChild(layer);
     renderProgress();
     applyCardStates();
     // 重建后恢复手风琴展开的卡片（含卡内内容重渲染）
@@ -793,7 +831,7 @@
   }
 
   // 卡片结构：卡头（编号+标题+状态+四态+AI） → 卡体（选项卡+内容）
-  function nodeCard(n, no) {
+  function nodeCard(n, entry) {
     var done = isDone(n.id);
     var unlocked = isUnlocked(n.id);
     var st = state.nodeState[n.id] || {};
@@ -806,6 +844,12 @@
     el.className = 'node ' + cls;
     el.id = 'node-' + n.id;
     el.dataset.id = n.id;
+    entry = entry || hierarchyEntry(n.id);
+    var hues = [212, 354, 155, 275, 32, 186];
+    var hue = hues[entry.root_index % hues.length];
+    el.dataset.group = entry.root_id;
+    el.dataset.depth = entry.depth;
+    el.style.setProperty('--group-color', 'hsl(' + hue + ', 58%, ' + (entry.depth === 1 ? 45 : 66 + Math.min(entry.depth - 2, 2) * 5) + '%)');
     el.innerHTML = '<div class="node-head">' +
       '<span class="node-caret">▸</span>' +
       '<span class="node-no">' + esc(dispId(n.id)) + '</span>' +
@@ -1498,7 +1542,7 @@
         '<button class="btn primary" id="open-quiz-workspace">打开测验</button>' +
         '<button class="btn" id="redo-quiz">出一套新题</button>' +
         (latest && latest.pass && !isDone(id) ? '<button class="btn" id="complete-node">完成本节点并解锁下一节点</button>' : '') +
-        (lowScore ? '<button class="btn" id="refine-node">按薄弱点细化</button>' : '') + '</div></div>';
+        (lowScore ? (canRefine(id) ? '<button class="btn" id="refine-node">按薄弱点细化</button>' : '<span class="tip">已达四层细化上限，可继续学习或重新测验。</span>') : '') + '</div></div>';
     } else {
       quizPane = '<p class="tip">本单元暂无自测题。</p>';
     }
@@ -1516,8 +1560,7 @@
       [['要点', d.key_points], ['例子', d.examples], ['易错点', d.misconceptions]].forEach(function (part) {
         if (part[1] && part[1].length) materialMd += '\n\n## ' + part[0] + '\n\n' + part[1].join('\n\n');
       });
-      var unitIndex = (state.plan.nodes || []).findIndex(function (node) { return node.id === id; }) + 1;
-      var filename = window.LearnMarkdown.unitFilename(window.LearnTitles.document(state), unitIndex, n.title);
+      var filename = window.LearnMarkdown.unitFilename(window.LearnTitles.document(state), dispId(id), n.title);
       window.LearnMarkdown.exportButton(notes, materialMd, filename);
     }
     highlightIn(scope);
@@ -1654,6 +1697,7 @@
     return parts.length ? '；错题：' + parts.join('；') : '';
   }
   function refineNode(id) {
+    if (!canRefine(id)) { alert('已达四层细化上限，可继续学习或重新测验。'); return; }
     var n = nodeById(id);
     var st = state.nodeState[id] || {};
     var lr = st.lastResult || {};

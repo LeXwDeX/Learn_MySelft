@@ -153,7 +153,7 @@ class StateRegressionTests(unittest.TestCase):
     def test_refinement_inherits_prerequisites_not_failed_parent(self):
         status, result = self.refine()
         self.assertEqual(status, 200)
-        self.assertEqual(result['plan']['nodes'][-1]['deps'], [])
+        self.assertEqual(result['plan']['nodes'][1]['deps'], [])
         status, result = self.refine(nid='n2')
         self.assertEqual(result['plan']['nodes'][-1]['deps'], ['n1'])
         self.assertFalse(self.material()['nodeState']['n1']['completed'])
@@ -162,8 +162,8 @@ class StateRegressionTests(unittest.TestCase):
         self.refine('First')
         self.refine('Second')
         nodes = self.material()['plan']['nodes']
-        self.assertEqual([n['title'] for n in nodes[-2:]], ['First', 'Second'])
-        self.assertEqual([n['id'] for n in nodes], ['n1', 'n2', 'n3', 'n4'])
+        self.assertEqual([n['title'] for n in nodes[1:3]], ['First', 'Second'])
+        self.assertEqual([n['id'] for n in nodes], ['n1', 'n3', 'n4', 'n2'])
         self.assertEqual(self.material()['nodeState'], self.initial['nodeState'])
 
     def test_parallel_refinement_allocates_distinct_ids(self):
@@ -179,11 +179,11 @@ class StateRegressionTests(unittest.TestCase):
         self.refine('Keep me')
         study._state_merge_put(KEY, {'nodeDetail': {'n3': {'study_notes': 'new'}}})
         self.assertEqual(self.post('/state/put', {'entries': {KEY: json.dumps(self.initial)}})[0], 200)
-        self.assertEqual(self.material()['plan']['nodes'][-1]['title'], 'Keep me')
+        self.assertEqual(self.material()['plan']['nodes'][1]['title'], 'Keep me')
         self.assertIn('n3', self.material()['nodeDetail'])
 
     def test_missing_parent_rejects_without_writing(self):
-        self.assertEqual(self.refine(nid='missing')[0], 502)
+        self.assertEqual(self.refine(nid='missing')[0], 400)
         self.assertEqual(self.material(), self.initial)
         self.assertFalse(study._GEN_GATES)
 

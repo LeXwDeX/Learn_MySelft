@@ -36,6 +36,8 @@ assert.match(md.render('> [!WARNING]\n> 注意符号。'), /易错提醒/);
 assert.match(md.render('```text\n[^1]: 原样\n> [!NOTE]\n```'), /\[\^1\]: 原样/);
 assert.match(md.render('$\\badcommand{x}$'), /md-math-fallback/);
 assert.equal(md.unitFilename('命题逻辑与有效推理',1,'命题、变元与复合命题'), '命题逻辑与有效推理_L1_命题、变元与复合命题.md');
+assert.equal(md.unitFilename('课程','L1.2.3.12','细化单元'), '课程_L1.2.3.12_细化单元.md');
+assert.equal(md.unitFilename('课程','L1/2','单元'), '课程_L未编号_单元.md');
 assert.equal(md.unitFilename('',0,''), '学习资料_L未编号_未命名单元.md');
 assert.equal(md.unitFilename(' /:*?"<>| ',2,'../概念\n测试'), '学习资料_L2_.. 概念 测试.md');
 assert(Buffer.byteLength(md.unitFilename('课'.repeat(100),12,'题'.repeat(100))) < 255);

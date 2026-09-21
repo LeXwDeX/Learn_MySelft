@@ -1,0 +1,35 @@
+'use strict';
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
+const source = fs.readFileSync('learning-path/path_app.js', 'utf8').replace("  if (document.readyState === 'loading')", `
+  globalThis.testApi = {state, planHierarchy, normalizePlan, dispId, canRefine, refineNode, nodeCard, isUnlocked};
+  if (document.readyState === 'loading')`);
+const alerts = [];
+function element() { return {dataset:{}, style:{setProperty(key,value){this[key]=value;}},addEventListener(){}, querySelector(){return {addEventListener(){}};},querySelectorAll(){return [];}}; }
+const context = {console, setTimeout, clearTimeout, alert: value=>alerts.push(value), location:{search:''},
+ document:{readyState:'loading',addEventListener(){},createElement:element}, window:{addEventListener(){},LearnUser:{apiBase:'',userId:'u0'}}};
+vm.createContext(context); vm.runInContext(source,context);
+const api=context.testApi;
+const root={id:'n1',deps:[]}, second={id:'n2',deps:['n1']};
+const children=Array.from({length:12},(_,index)=>({id:'n'+(index+3),deps:index?['n'+(index+2)]:[],remediation:{parent:'n1'}}));
+const nested={id:'n15',deps:[],remediation:{parent:'n3'}}, deepest={id:'n16',deps:[],remediation:{parent:'n15'}};
+const plan={nodes:[root,second,...children,nested,deepest]};
+api.normalizePlan(plan); api.state.plan=plan;
+assert.deepEqual(Array.from(plan.nodes,node=>node.id),['n1','n3','n15','n16',...children.slice(1).map(node=>node.id),'n2']);
+assert.equal(api.dispId('n14'),'L1.12');assert.equal(api.dispId('n16'),'L1.1.1.1');assert.equal(api.dispId('n2'),'L2');
+assert.equal(api.canRefine('n16'),false);api.refineNode('n16');assert.match(alerts[0],/四层/);
+assert.equal(api.canRefine('n15'),true);
+const parentCard=api.nodeCard(root), childCard=api.nodeCard(children[0]), otherCard=api.nodeCard(second);
+assert.equal(parentCard.dataset.group,childCard.dataset.group);assert.notEqual(parentCard.dataset.group,otherCard.dataset.group);
+assert.match(parentCard.style['--group-color'],/212, 58%, 45/);assert.match(childCard.style['--group-color'],/212, 58%, 66/);
+assert.match(childCard.innerHTML,/>L1.1<\/span>/);
+const gate={nodes:[{id:'n1',deps:['n3']},{id:'n2',deps:['n1']},{id:'n3',deps:[],remediation:{parent:'n1'}}]};
+api.normalizePlan(gate);api.state.plan=gate;
+assert.deepEqual(Array.from(gate.nodes[0].deps),['n3']);assert.equal(api.isUnlocked('n1'),false);
+api.state.nodeState.n3={completed:true};assert.equal(api.isUnlocked('n1'),true);
+const bad={nodes:[{id:'a',deps:['b'],remediation:{parent:'b'}},{id:'b',deps:['a'],remediation:{parent:'a'}},{id:'orphan',deps:['missing','orphan'],remediation:{parent:'missing'}},{id:'self',deps:[],remediation:{parent:'self'}}]};
+api.normalizePlan(bad);
+assert.deepEqual(Array.from(api.planHierarchy(bad.nodes),entry=>entry.label),['L1','L1.1','L2','L3']);
+assert.deepEqual(Array.from(bad.nodes[1].deps),[]);assert.deepEqual(Array.from(bad.nodes[2].deps),[]);
+const css=fs.readFileSync('learning-path/path_template.html','utf8');
+assert.match(css,/border-left:4px solid var\(--group-color/);assert.doesNotMatch(css,/\.node\.(?:done|failed|unlocked)\{border-left-color/);
+console.log('PASS hierarchy ordering, numeric siblings, cycles, group colors, prerequisite preservation and depth guard');
