@@ -1138,7 +1138,7 @@ def _checked_questions(questions, previous=(), node=False, legacy=False):
 def _review_rendered(candidate):
     try:
         return render_review.review(candidate, lambda messages: _json_block(upstream_json(
-            messages, max_tokens=PATH_MAX_TOKENS, temperature=0, timeout=60)))
+            messages, max_tokens=PATH_MAX_TOKENS, temperature=0, timeout=120)))
     except render_review.ReviewIssue as error:
         raise harness.QuizContractError(str(error)) from error
 
@@ -1813,7 +1813,7 @@ class Handler(BaseHTTPRequestHandler):
                             {"role": "system", "content": _path_system("requiz")},
                             {"role": "user", "content": json.dumps(payload, ensure_ascii=False) + "\n校验反馈：" + last_error},
                         ], max_tokens=PATH_MAX_TOKENS, temperature=0.6)
-                        _state_store().job_progress(3, '校验题目与评分标准', attempt + 1)
+                        _state_store().job_progress(3, '校验题目、评分标准与页面显示', attempt + 1)
                         candidate = _norm_quiz_questions(_json_block(generated))
                         if not candidate:
                             raise harness.QuizContractError("题目不完整")

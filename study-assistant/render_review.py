@@ -10,6 +10,7 @@ import signal
 from pathlib import Path
 import re
 import subprocess
+import urllib.error
 
 
 class ReviewIssue(ValueError):
@@ -54,7 +55,7 @@ def review(candidate, ask, config_path=None):
     source = markdown(candidate)
     digest = hashlib.sha256(source.encode()).hexdigest()
     report = {'source_sha256': digest, 'status': 'not_needed'}
-    if not re.search(r'\$|```mermaid|~~~mermaid|\|.*\||\[\^|\[!', source):
+    if not re.search(r'\$|\\[([]|```mermaid|~~~mermaid|\|.*\||\[\^|\[!', source):
         return report
     path = Path(config_path) if config_path else Path(__file__).with_name('render-review.json')
     if not path.exists():
@@ -84,6 +85,12 @@ def review(candidate, ask, config_path=None):
             raise ValueError('invalid review contract')
         if not all(isinstance(issue, str) and issue.strip() for issue in answer['issues']):
             raise ValueError('invalid issues')
+    except urllib.error.HTTPError as error:
+        return dict(report, status='unavailable', reason='model_http_error', http_status=error.code)
+    except (TimeoutError, subprocess.TimeoutExpired):
+        return dict(report, status='unavailable', reason='model_timeout')
+    except ValueError:
+        return dict(report, status='unavailable', reason='model_reply_invalid')
     except Exception:
         return dict(report, status='unavailable', reason='model_review_unavailable')
     if not answer['ok'] or answer['issues']:

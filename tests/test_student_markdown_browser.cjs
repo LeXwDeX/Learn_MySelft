@@ -16,8 +16,8 @@ const html='<!doctype html><meta charset="utf-8"><meta name="viewport" content="
  try{
  for(const width of [1440,390]){
   const page=await browser.newPage({viewport:{width,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
-  if(!server)await page.route(base+'/fixture',r=>r.fulfill({contentType:'text/html',body:html}));
-  await page.goto(base+'/fixture');
+  if(server)await page.goto(base+'/fixture');
+  else {await page.goto(base+'/learn/');await page.setContent(html,{waitUntil:'load'});}
   async function render(text){await page.evaluate(async text=>{content.innerHTML=LearnMarkdown.render(text);await LearnMarkdown.enhance(content)},text)}
   await render('公式 $2^3$，$\\frac{a+b}{c+d}$，$p\\to q$，$x_{12}$。\n\n|p|q|\n|---|---|\n|$p$|$q$|\n\n定义[^1]。\n\n[^1]: **补充**解释。\n\n> [!WARNING]\n> 注意括号。');
   const copied=await page.evaluate(()=>{
@@ -43,6 +43,6 @@ const html='<!doctype html><meta charset="utf-8"><meta name="viewport" content="
   if(process.env.ARTIFACT_DIR){fs.mkdirSync(process.env.ARTIFACT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.ARTIFACT_DIR,'fallback-'+width+'.png'),fullPage:true});}
   console.log(JSON.stringify({width,status:'passed',cases:['math copy plain/rich','notes','isolated invalid formula','slash delimiters','complex exact fallback','complete filename and source','diagram loader failure','invalid diagram','mobile width']}));await page.close();
  }
- const page=await browser.newPage();if(!server)await page.route(base+'/fixture',r=>r.fulfill({contentType:'text/html',body:html}));await page.route('**/katex.min.js',r=>r.abort());await page.goto(base+'/fixture');await page.evaluate(()=>{content.innerHTML=LearnMarkdown.render('文字 $a+b$ 继续。')});assert.match(await page.locator('#content').innerText(),/a\+b/);assert.equal(await page.locator('.md-math-fallback').count(),1);await page.close();
+ const page=await browser.newPage();await page.route('**/katex.min.js',r=>r.abort());if(server)await page.goto(base+'/fixture');else {await page.goto(base+'/learn/');await page.setContent(html,{waitUntil:'load'});}await page.evaluate(()=>{content.innerHTML=LearnMarkdown.render('文字 $a+b$ 继续。')});assert.match(await page.locator('#content').innerText(),/a\+b/);assert.equal(await page.locator('.md-math-fallback').count(),1);await page.close();
  }finally{await browser.close();if(server)await new Promise(r=>server.close(r))}
 })().catch(e=>{console.error(e);process.exitCode=1});

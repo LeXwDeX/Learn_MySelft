@@ -43,6 +43,25 @@ class RenderReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(review.ReviewIssue, '公式'):
             self.run_review({'complete': True, 'images': ['data:image/jpeg;base64,AA=='], 'errors': ['公式无效']}, {})
 
+    def test_model_failures_keep_distinct_diagnostics(self):
+        captured = {'complete': True, 'images': ['data:image/jpeg;base64,AA=='], 'errors': []}
+        for error, reason in [(TimeoutError(), 'model_timeout'), (ValueError(), 'model_reply_invalid'),
+                              (review.urllib.error.HTTPError('local', 400, 'bad', {}, None), 'model_http_error')]:
+            with self.subTest(reason=reason), patch.object(review, '_capture', return_value=captured):
+                def ask(_):
+                    raise error
+                self.assertEqual(review.review(self.candidate, ask, self.config)['reason'], reason)
+
+    def test_capture_timeout_cleans_up_browser_process_group(self):
+        from unittest.mock import Mock
+        process = Mock(pid=123)
+        process.communicate.side_effect = [review.subprocess.TimeoutExpired('worker', 75), ('', '')]
+        with patch.object(review.subprocess, 'Popen', return_value=process), patch.object(review.os, 'killpg') as kill:
+            with self.assertRaises(review.subprocess.TimeoutExpired):
+                review._capture({'python': 'python3'}, self.config, 'text')
+            kill.assert_called_once_with(123, review.signal.SIGKILL)
+            self.assertEqual(process.communicate.call_count, 2)
+
     def test_plain_text_needs_no_image_and_answers_stay_separate(self):
         self.assertEqual(review.review({'study_notes': '普通文字'}, lambda _: self.fail())['status'], 'not_needed')
         text = review.markdown({'questions': [{'q':'问题', 'answer':'答案', 'explain':'思路'}]})
