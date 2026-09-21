@@ -31,3 +31,12 @@ assert.match(md.render(matrix+'\n\n'+graph),/data-diagram="pending"/, 'table nor
 assert.match(md.render(matrix+'\n\n'+graph.slice(0,-3)),/data-diagram="invalid"/);
 assert.doesNotThrow(()=>md.render(matrix,{streaming:true}));
 console.log('PASS conservative table boundaries, sparse/single-column/code/math and fence maps');
+assert.match(md.render('定义[^1]。\n\n[^1]: **补充**说明\n    继续说明'), /补充说明〔1〕.*<strong>补充<\/strong>说明/);
+assert.match(md.render('> [!WARNING]\n> 注意符号。'), /易错提醒/);
+assert.match(md.render('```text\n[^1]: 原样\n> [!NOTE]\n```'), /\[\^1\]: 原样/);
+assert.match(md.render('$\\badcommand{x}$'), /md-math-fallback/);
+assert.equal(md.unitFilename('命题逻辑与有效推理',1,'命题、变元与复合命题'), '命题逻辑与有效推理_L1_命题、变元与复合命题.md');
+assert.equal(md.unitFilename('',0,''), '学习资料_L未编号_未命名单元.md');
+assert.equal(md.unitFilename(' /:*?"<>| ',2,'../概念\n测试'), '学习资料_L2_.. 概念 测试.md');
+assert(Buffer.byteLength(md.unitFilename('课'.repeat(100),12,'题'.repeat(100))) < 255);
+console.log('PASS notes, formula fallback, safe complete unit filenames');

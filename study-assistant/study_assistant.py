@@ -39,6 +39,7 @@ from material_titles import document_title, quiz_title, short_title
 import quiz_harness as harness
 import flywheel
 import material_parser
+import render_review
 from research_sources import collect_sources, select_sources
 from user_accounts import AccountStore, AccountError, COOKIE_NAME, SESSION_TTL, USER_ID
 
@@ -496,7 +497,8 @@ flowchart TD
 ```
 也支持 sequenceDiagram 时序图；仅使用普通节点、箭头和文字，不使用HTML、脚本、click、配置指令或外部图片URL。节点ID用简短英文字母，中文标签加双引号。图前后说明图意及符号，让读者即使看不到图也能理解；图复杂时拆小。
 表格前后必须各留一行空白；每个表格行使用首尾 |，各行列数一致；表后的解释另起段落，不放进数据行。
-输出前自检：检查围栏成对闭合、表格前后空行、分隔行与列数、公式定界及LaTeX语法、Mermaid节点引用和引号；验算数值、核对图中关系/方向/标注与正文一致。发现不确定语法就改成简单图或文字，不声称已通过浏览器验证。
+可按需使用脚注：正文写 [^1]，另起一段写 [^1]: 补充说明；提示块可写 > [!NOTE] 后换行 > 说明内容。不要用隐藏HTML注释承载学生应看到的知识。
+输出前自检：检查脚注引用与定义对应、围栏成对闭合、表格前后空行、分隔行与列数、公式定界及LaTeX语法、Mermaid节点引用和引号；验算数值、核对图中关系/方向/标注与正文一致。发现不确定语法就改成简单图或文字，不声称已通过浏览器验证。
 题干中的图和表只呈现已知条件，不包含答案、解题步骤或暗示正确选项；答案图放在answer/explain中，由提交后的答案视图展示。AI辅导沿用引导式教学纪律，图也不能提前泄露正在作答题目的答案。材料未就绪时只提供明确标注的预习示例，不冒充已有正文或配套题。
 """
 
@@ -674,7 +676,7 @@ def _ctx():
     return ssl.create_default_context()
 
 
-def upstream_json(messages, max_tokens=MAX_TOKENS, temperature=0.7):
+def upstream_json(messages, max_tokens=MAX_TOKENS, temperature=0.7, timeout=None):
     body = {
         "model": LLM_MODEL,
         "messages": messages,
@@ -690,7 +692,7 @@ def upstream_json(messages, max_tokens=MAX_TOKENS, temperature=0.7):
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + LLM_KEY},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=timeout or UPSTREAM_TIMEOUT) as resp:
         data = json.loads(resp.read().decode("utf-8", "replace"))
     return (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
 
@@ -1131,6 +1133,14 @@ def _checked_questions(questions, previous=(), node=False, legacy=False):
     ], max_tokens=PATH_MAX_TOKENS, temperature=0))
     harness.validate_verification(verification, len(questions))
     return questions
+
+
+def _review_rendered(candidate):
+    try:
+        return render_review.review(candidate, lambda messages: _json_block(upstream_json(
+            messages, max_tokens=PATH_MAX_TOKENS, temperature=0, timeout=60)))
+    except render_review.ReviewIssue as error:
+        raise harness.QuizContractError(str(error)) from error
 
 
 def _issued_quiz(questions):
@@ -1744,6 +1754,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise harness.QuizContractError("材料不完整")
                         stage = 'verification'
                         qs = _checked_questions(candidate["quiz"]["questions"], node=True)
+                        candidate['render_review'] = _review_rendered(candidate)
                         candidate["quiz"] = _issued_quiz(qs)
                         detail = candidate
                         break
@@ -1806,7 +1817,9 @@ class Handler(BaseHTTPRequestHandler):
                         candidate = _norm_quiz_questions(_json_block(generated))
                         if not candidate:
                             raise harness.QuizContractError("题目不完整")
-                        questions = _checked_questions(candidate["questions"], previous, node=True)
+                        checked = _checked_questions(candidate["questions"], previous, node=True)
+                        review = _review_rendered(candidate)
+                        questions = checked
                         break
                     except harness.QuizContractError as error:
                         last_error = str(error)
@@ -1815,6 +1828,7 @@ class Handler(BaseHTTPRequestHandler):
                 def append(quiz, material):
                     if quiz["round_id"] == expected:
                         harness.add_round(quiz, questions)
+                        quiz['render_review'] = review
                         state = material.setdefault("nodeState", {}).setdefault(node_id, {})
                         for field in ("score", "lastResult", "lastAnswers"):
                             state.pop(field, None)
@@ -1964,6 +1978,7 @@ class Handler(BaseHTTPRequestHandler):
                             if not question['node_id']:
                                 raise harness.QuizContractError('每道综合题必须关联现有单元，point使用L编号与标题')
                         _checked_questions(candidate["questions"], previous)
+                        candidate["render_review"] = _review_rendered(candidate)
                         candidate["title"] = _quizmap_title(m)
                         qm = candidate
                         break
@@ -1988,7 +2003,7 @@ class Handler(BaseHTTPRequestHandler):
                         slug = base_slug + str(i)
                     store = {"kind": "quiz-map", "sourceKey": key, "sourceSlug": src_slug,
                              "title": qm["title"], "created": int(time.time()),
-                             "attempts": [], "materials": references, **_issued_quiz(qm["questions"])}
+                             "attempts": [], "materials": references, "render_review": qm.get("render_review"), **_issued_quiz(qm["questions"])}
                     self._state_put({_u + "quiz-map-v1-" + slug: json.dumps(store, ensure_ascii=False)}, trusted=True)
                     _state_store().record_job_effect({"ok": True, "slug": slug, "title": qm["title"], "count": len(qm["questions"])})
             except Exception:

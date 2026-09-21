@@ -28,7 +28,7 @@ const graph='先检查条件，再检查结论。\n\n```mermaid\nflowchart TD\n 
   await page.evaluate(source=>LearnMarkdown.exportButton(document.querySelector('#content'),source,'讲解.md'),graph);
   const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'导出 Markdown'}).click();const download=await downloadPromise;assert.equal(fs.readFileSync(await download.path(),'utf8'),graph);
   await render('```mermaid\nflowchart TD\n A["bad\n```\n\n正文仍然可读');assert.equal(await page.locator('[data-diagram=failed]').count(),1);assert.match(await page.locator('#content').innerText(),/正文仍然可读/);
-  await render(graph.slice(0,-3));assert.equal(await page.locator('[data-diagram=invalid]').count(),1);
+  await render(graph.slice(0,-3));assert.equal(await page.locator('[data-diagram=failed]').count(),1);
   await render('```mermaid\nflowchart TD\n A-->B\n click A "javascript:alert(1)"\n```');assert.equal(await page.locator('[data-diagram=failed]').count(),1);
   await render('```mermaid\nsequenceDiagram\n participant A as 学生\n participant B as 老师\n A->>B: 提问\n B-->>A: 提示\n```');assert.equal(await page.locator('[data-diagram=ready]').count(),1);
   await page.evaluate(async source=>{const el=document.querySelector('#content');el.innerHTML=LearnMarkdown.render(source);const work=LearnMarkdown.enhance(el);el.textContent='新视图';await work},graph);assert.equal(await page.locator('#content').innerText(),'新视图');

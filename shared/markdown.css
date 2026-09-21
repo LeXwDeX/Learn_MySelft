@@ -14,3 +14,7 @@
 @media print{.md-export,.md-diagram button,.md-diagram details{display:none}.md-diagram{break-inside:avoid}}
 
 .ai-methods{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}.ai-method{border:1px solid #d9dce4;border-radius:14px;background:white;color:#526078;padding:5px 10px;font-size:12px;cursor:pointer}
+
+.md-math-fallback{display:inline-block;max-width:100%;padding:2px 6px;border:1px solid #d9dce4;border-radius:4px}.md-math-fallback>span{font-size:.85em;color:#526078}.md-math-fallback code{white-space:pre-wrap;overflow-wrap:anywhere}.md-note{background:#f5f7fb;padding:8px 12px}.md-diagram-fallback{line-height:1.7}
+
+.md-diagram>img{max-height:480px;width:auto;object-fit:contain}
