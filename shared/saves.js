@@ -178,6 +178,8 @@
         // This field is saved independently by /materials/quiz-draft and is
         // protected from whole-document browser writes by the server.
         delete before.quizMaterials; delete after.quizMaterials;
+        // Refinement receipts are server-owned replay guards, not browser edits.
+        delete before.refinementReceipts; delete after.refinementReceipts;
         delete before.title; delete after.title;
         if (!Object.prototype.hasOwnProperty.call(before, 'materials')) before.materials = [];
         if (!Object.prototype.hasOwnProperty.call(after, 'materials')) after.materials = [];
