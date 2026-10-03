@@ -55,6 +55,44 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   assert((await recoveryCheck(materialKey, {...base,materials:[{name:'notes.txt',text:'unsaved edit'}]}, {...base,quizMaterials:extra})).LearnSaves.pending(), 'real reference edits remain recoverable');
   assert((await recoveryCheck(materialKey, {...base,topic:'unsaved title'}, {...base,quizMaterials:extra})).LearnSaves.pending(), 'other user fields remain strict');
   assert((await recoveryCheck('u0/quiz-map-v1-example', base, {...base,quizMaterials:extra})).LearnSaves.pending(), 'other document kinds remain strict');
+  // The server commits before navigation, but the old page never handles its
+  // acknowledgement. Reload must compare browser fields, not server receipts.
+  async function committedBeforeAcknowledgement(local, receipts) {
+    const original = environment(); load(original, 'shared/saves.js'); await original.LearnUser.ready;
+    let serverValue, acknowledge;
+    original.LearnUser.fetch = (url, options) => original.LearnSaves.send(options, () => {
+      serverValue = {...JSON.parse(JSON.parse(options.body).entries[materialKey]), refinementReceipts:receipts};
+      return new Promise(resolve => { acknowledge = () => resolve(Response.json({ok:true})); });
+    });
+    const saving = original.LearnUser.fetch('', {body:JSON.stringify({entries:{[materialKey]:JSON.stringify(local)}})});
+    assert(original.LearnSaves.pending(), 'unhandled acknowledgement keeps an emergency snapshot');
+    const reloaded = environment(Object.fromEntries(original.storage));
+    reloaded.LearnUser.fetch = async () => Response.json({entries:{[materialKey]:JSON.stringify(serverValue)}});
+    load(reloaded, 'shared/saves.js'); await reloaded.LearnUser.ready;
+    // Finish the abandoned VM request only to release its timeout, after reload
+    // has already consumed its independent copy of the pending local snapshot.
+    acknowledge(); await saving;
+    assert(!reloaded.LearnSaves.pending(), 'committed browser fields reconcile despite missing or changed internal receipts');
+    assert(!reloaded.notices.has('state-save'), 'acknowledged content must not show a recovery prompt');
+    assert.equal(reloaded.storage.get('learn-unsaved-v1/u0'), undefined);
+    let dispatched = 0;
+    reloaded.LearnUser.fetch = (url, options) => reloaded.LearnSaves.send(options, async () => { dispatched++; return Response.json({ok:true}); });
+    const next = await reloaded.LearnUser.fetch('', {body:JSON.stringify({entries:{[materialKey]:JSON.stringify({...local,topic:'next edit'})}})});
+    assert.equal(next.status, 200, 'reconciled snapshot must permit the next normal edit');
+    assert.equal(dispatched, 1, 'the next edit must reach the server');
+  }
+  await committedBeforeAcknowledgement(base, {});
+  await committedBeforeAcknowledgement({...base,refinementReceipts:{}}, {serverReceipt:{added:1}});
+  await committedBeforeAcknowledgement({...base,refinementReceipts:{old:{added:1}}}, {newer:{added:2}});
+  const changed = {...base,materials:[{name:'notes.txt',text:'real unsaved edit'}]};
+  const protectedRecovery = await recoveryCheck(materialKey, changed, {...base,refinementReceipts:{serverReceipt:{added:1}}});
+  assert(protectedRecovery.LearnSaves.pending(), 'real editable differences must survive receipt reconciliation');
+  assert.equal(JSON.parse(protectedRecovery.storage.get('learn-unsaved-v1/u0'))[materialKey], JSON.stringify(changed));
+  let recoveryDispatches = 0;
+  protectedRecovery.LearnUser.fetch = (url, options) => protectedRecovery.LearnSaves.send(options, async () => { recoveryDispatches++; return Response.json({ok:true}); });
+  assert.equal((await protectedRecovery.LearnUser.fetch('', {body:JSON.stringify({entries:{[materialKey]:JSON.stringify(base)}})})).status, 409);
+  assert.equal(recoveryDispatches, 0, 'real unsaved content must still block conflicting new edits');
+  assert((await recoveryCheck('u0/quiz-map-v1-example', base, {...base,refinementReceipts:{serverReceipt:{added:1}}})).LearnSaves.pending(), 'receipt exemption applies only to learning material documents');
   const jobs = environment(); let submits = 0, polls = 0, requestId;
   jobs.LearnUser.fetch = async (url, options) => {
     if (options.method === 'POST') { submits++; requestId = JSON.parse(options.body).request_id; return Response.json({job: {id: 'j1', status: 'running', created_ms: Date.now(), operation: '/path/intake'}}); }
