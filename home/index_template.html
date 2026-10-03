@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自学社 · 学习与用户管理</title>
+__SHARED_HEAD__
+<link rel="stylesheet" href="/learn/assets/home.css">
+</head>
+<body>
+<main class="wrap">
+  <p class="eyebrow">ZiXueShe · 自学社</p>
+  <h1 id="page-title">你的学习，从这里开始</h1>
+  <p class="lead muted" id="page-subtitle">登录后进入自己的学习空间，资料、对话、测验和学习进度独立保存。</p>
+  <section class="card login" id="login-panel" hidden>
+    <h2>登录自学社</h2>
+    <form id="login-form">
+      <div class="field"><label for="login-username">账号</label><input id="login-username" name="username" autocomplete="username" required maxlength="32"></div>
+      <div class="field"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="256"></div>
+      <p class="error" id="login-error" role="alert" hidden></p>
+      <button class="btn primary" id="login-submit" type="submit">登录</button>
+    </form>
+    <p class="muted help">还没有账号？请联系管理员创建。</p>
+  </section>
+  <section id="admin-panel" class="section" hidden>
+    <div class="section-head"><h2>所有用户 <span id="user-count" class="badge"></span></h2><input class="end" id="user-search" type="search" placeholder="搜索姓名或账号" aria-label="搜索用户"><button class="btn primary" id="create-user">＋ 创建用户</button></div>
+    <p id="admin-error" class="error" role="alert" hidden></p>
+    <div class="user-grid" id="user-list"></div>
+  </section>
+  <div id="workspace" hidden>
+    <section id="tasks-panel" class="section card" hidden>
+      <div class="section-head"><h2>近期任务</h2><button id="refresh-tasks" class="btn end">刷新状态</button></div>
+      <p class="muted">生成和评分会在后台继续，返回对应学习资料即可接着完成。</p>
+      <div id="task-list" class="learn-task-list"></div>
+    </section>
+    <section class="section"><div class="section-head"><h2 id="tools-title">学习入口</h2></div>
+      <div class="tool-grid">
+        <a class="card tool" data-page="learning-path.html?new=1" href="#"><span class="icon">01 · 学习地图</span><h3>从一个目标开始</h3><p>确认学习范围，生成路线，逐个单元学习、讨论与自测。</p><span class="go">打开学习地图 →</span></a>
+        <a class="card tool" data-page="quiz-map.html" href="#"><span class="icon">02 · 测验地图</span><h3>看看掌握得怎样</h3><p>根据学习情况生成综合测验，回看作答，针对薄弱点继续学习。</p><span class="go">打开测验地图 →</span></a>
+      </div>
+    </section>
+    <section class="section card"><div class="section-head"><h2>学习资料库</h2><span class="muted" id="library-count"></span></div><p id="library-error" class="error" role="alert" hidden></p><div class="library"><div><h3>学习地图</h3><div id="map-list"></div></div><div><h3>测验地图</h3><div id="quiz-list"></div></div></div></section>
+  </div>
+  <footer>固定入口 · <a href="/learn/">自学社首页</a> · 学习资料保存在服务器，换设备登录后可继续。</footer>
+</main>
+<dialog id="user-dialog" aria-labelledby="user-dialog-title">
+  <h2 id="user-dialog-title">创建用户</h2>
+  <form id="user-form">
+    <div class="field"><label for="user-name">显示名称</label><input id="user-name" required maxlength="60" autocomplete="off"></div>
+    <div class="field"><label for="user-username">登录账号</label><input id="user-username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9][a-zA-Z0-9_.\-]{2,31}" autocomplete="off"><small>3至32位字母、数字、点、短横线或下划线；创建后不变。</small></div>
+    <div class="field"><label for="user-password" id="user-password-label">初始密码</label><input id="user-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"><small id="password-hint">至少8个字符。</small></div>
+    <div class="field" id="user-active-field" hidden><label class="checkline"><input id="user-active" type="checkbox">允许此用户登录</label><small>停用会退出该用户的现有会话，保留全部学习资料。</small></div>
+    <p class="error" id="user-error" role="alert" hidden></p>
+    <div class="actions"><button class="btn" id="user-cancel" type="button">取消</button><button class="btn primary" id="user-save" type="submit">创建用户</button></div>
+  </form>
+</dialog>
+<dialog id="password-dialog" aria-labelledby="password-title"><h2 id="password-title">修改我的密码</h2><form id="password-form"><div class="field"><label for="old-password">当前密码</label><input id="old-password" type="password" required autocomplete="current-password"></div><div class="field"><label for="new-password">新密码</label><input id="new-password" type="password" required minlength="8" maxlength="256" autocomplete="new-password"></div><p class="muted help">修改后所有设备需要重新登录。</p><p id="password-error" class="error" role="alert" hidden></p><div class="actions"><button type="button" class="btn" id="password-cancel">取消</button><button type="submit" class="btn primary" id="password-save">保存并重新登录</button></div></form></dialog>
+<script src="/learn/assets/home.js"></script>
+</body>
+</html>

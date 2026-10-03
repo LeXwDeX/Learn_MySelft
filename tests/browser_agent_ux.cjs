@@ -27,11 +27,21 @@ const history = Object.fromEntries(['n1', 'n2'].map(id => [id, Array.from({lengt
   await page.route('**/*', route => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('learning-path.html')) return route.fulfill({contentType: 'text/html', body: fs.readFileSync(path.join(root, 'learning-path/learning-path.html'), 'utf8')});
-    return route.fulfill({contentType: url.pathname.endsWith('.css') ? 'text/css' : 'application/javascript', body: ''});
+    let resource = null;
+    if (url.pathname.startsWith('/diagram-design/learning-path/')) resource = path.join(root, 'learning-path', path.basename(url.pathname));
+    if (url.pathname.startsWith('/learn/assets/')) {
+      const relative = url.pathname.slice('/learn/assets/'.length);
+      if (relative.endsWith('.css') || ['ui.js', 'titles.js', 'materials.js', 'markdown.js', 'vendor-markdown-it.js'].includes(relative)) {
+        resource = path.join(root, 'shared', relative);
+      }
+    }
+    const body = resource && fs.existsSync(resource) ? fs.readFileSync(resource, 'utf8') : '';
+    return route.fulfill({contentType: url.pathname.endsWith('.css') ? 'text/css' : 'application/javascript', body});
   });
   await page.addInitScript(({fixture, history}) => {
     const entries = {'u0/learn-path-v1-agent-ux': JSON.stringify(fixture), 'u0/learn-ai-v1-agent-ux': JSON.stringify(history)};
     window.__agentChunks = [];
+    window.LearnJobs = {list: async () => [], supports: () => false, requestId: () => 'agent-fixture-request'};
     window.LearnUser = {apiBase: 'http://agent.invalid/api', userId: 'u0', readOnly: false, ready: Promise.resolve(), link: p => p, fetch: async (url, options) => {
       if (url.endsWith('/ask')) {
         return new Response(new ReadableStream({start(controller) { window.__agentChunks.push(controller); }}), {status: 200});

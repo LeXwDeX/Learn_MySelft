@@ -10,7 +10,7 @@ function environment(saved) {
     localStorage: {getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key)},
     location: {reload() { env.reloaded = true; }}, addEventListener() {},
     LearnUI: {set: (key, ...args) => notices.set(key, args), clear: key => notices.delete(key)},
-    LearnUser: {userId: 'u0', user: {id: 'u0'}, ready: Promise.resolve(), apiBase: 'http://localhost:8101'}, notices, storage};
+    LearnUser: {attachPersistence(port){this.persistence=port}, userId: 'u0', user: {id: 'u0'}, ready: Promise.resolve(), apiBase: 'http://localhost:8101'}, notices, storage};
   env.window = env; vm.createContext(env); return env;
 }
 const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);

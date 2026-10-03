@@ -1,0 +1,8 @@
+/* UI Kit: identity navigation and fatal session view. */
+.user-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 24px; background: var(--learn-surface); border-bottom: 1px solid var(--learn-border); color: var(--learn-muted); font: 13px/1.5 var(--learn-font); }
+.user-bar a { color: var(--learn-accent); text-decoration: none; }
+.user-bar button { padding: 4px 12px; border: 1px solid var(--learn-border); border-radius: var(--learn-radius-control); background: var(--learn-surface); font: inherit; cursor: pointer; }
+.user-bar .user-end { margin-left: auto; }
+.user-bar strong { color: var(--learn-ink); }
+.user-readonly { padding: 3px 8px; border-radius: 4px; background: #fff3dc; color: #7a4c00; }
+.learn-session-error { position: fixed; inset: 0; z-index: 10000; display: grid; place-content: center; gap: 16px; padding: 32px; background: var(--learn-paper); }

@@ -4,11 +4,12 @@ const elements={};function element(id){return elements[id]||(elements[id]={textC
 const requests=[];const storage=new Map();const context={console,setTimeout,clearTimeout,AbortController,Blob,
  localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
  window:{LearnUser:{fetch:(url,options)=>new Promise((resolve,reject)=>requests.push({url,body:JSON.parse(options.body),resolve,reject}))}}};
-vm.createContext(context);vm.runInContext(fs.readFileSync('learning-path/quiz_dialog.js','utf8').replace('  window.QuizDialog = {',`  globalThis.testApi={transmit,retrySave,flushCurrent,flushAll,renderSaveState,localKey,records,
- setView(value){view=value;dialog={open:true,querySelector:s=>globalThis.getElement(s.slice(1))}},closeDialog(){dialog.open=false}};
- window.QuizDialog = {`),Object.assign(context,{getElement:element}));
-const t=context.testApi,config={key:'u0/learn-path-v1-test',api:'http://localhost',nodeId:'n1'};
-function makeRecord(id='r1'){const issued={id,questions:[],draft:null};const key=t.localKey(config,id);const r={key,config,roundId:id,round:issued,version:1,answers:['a'],saved:false,localSaved:true,syncState:'failed'};t.records[key]=r;return r;}
+vm.createContext(context);require('./load_uikit.cjs')(context);vm.runInContext(fs.readFileSync('learning-path/quiz_dialog.js','utf8'),context);
+const get=context.window.LearnQuizDialog.get,session=get('quiz-dialog.model').session;
+const t={...get('quiz-dialog.drafts'),...get('quiz-dialog.view'),...get('quiz-dialog.question'),
+ setView(value){session.view=value;session.dialog={open:true,querySelector:s=>element(s.slice(1))}},closeDialog(){session.dialog.open=false}};
+const config={key:'u0/learn-path-v1-test',api:'http://localhost',nodeId:'n1'};
+function makeRecord(id='r1'){const issued={id,questions:[],draft:null};const key=t.localKey(config,id);const r={key,config,roundId:id,round:issued,version:1,answers:['a'],saved:false,localSaved:true,syncState:'failed'};t.storeRecord(r);return r;}
 function show(r,extra={}){t.setView({config,quiz:{rounds:[r.round]},index:0,busy:false,readOnly:false,...extra});t.renderSaveState();}
 async function tick(){for(let i=0;i<8;i++)await Promise.resolve();}
 function respond(req){req.resolve({ok:true,json:async()=>({draft:{answers:req.body.answers}})});}

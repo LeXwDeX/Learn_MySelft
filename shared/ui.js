@@ -2,6 +2,30 @@
 (function () {
   'use strict';
   var items = new Map();
+  function escapeHTML(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
+      return {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[character];
+    });
+  }
+  function byId(id) { return document.getElementById(id); }
+  function showError(id, message) {
+    var element = typeof id === 'string' ? byId(id) : id;
+    element.textContent = message || '';
+    element.hidden = !message;
+  }
+  function ready(callback) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', callback);
+    else callback();
+  }
+  function openDialog(element, focus) {
+    if (!element.open) element.showModal();
+    if (focus) focus.focus();
+  }
+  function closeDialog(element) { if (element.open) element.close(); }
+  function bindDialog(element, cancel, onClose) {
+    if (cancel) cancel.addEventListener('click', function () { closeDialog(element); });
+    if (onClose) element.addEventListener('close', onClose);
+  }
   function render() {
     if (!document.body) return;
     var area = document.getElementById('learn-status-area');
@@ -63,7 +87,9 @@
       render();
     },
     clear: function (key) { items.delete(key); render(); },
-    ready: render
+    ready: render,
+    dom: Object.freeze({byId: byId, escapeHTML: escapeHTML, showError: showError, ready: ready}),
+    dialog: Object.freeze({open: openDialog, close: closeDialog, bind: bindDialog})
   };
   document.addEventListener('DOMContentLoaded', render);
 })();

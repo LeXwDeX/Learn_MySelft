@@ -161,6 +161,7 @@
       if (!Object.keys(pending).length && window.LearnUI) window.LearnUI.clear('state-save');
     }
   };
+  context.attachPersistence(window.LearnSaves);
   function canonical(value) {
     if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
     if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(function (key) {

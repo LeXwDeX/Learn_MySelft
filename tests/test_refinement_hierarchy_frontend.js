@@ -1,14 +1,13 @@
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
-const source = fs.readFileSync('learning-path/path_app.js', 'utf8').replace("  if (document.readyState === 'loading')", `
-  globalThis.testApi = {state, planHierarchy, normalizePlan, dispId, canRefine, refineNode, nodeCard, isUnlocked};
-  if (document.readyState === 'loading')`);
+const source = fs.readFileSync('learning-path/path_app.js', 'utf8');
 const alerts = [];
 function element() { return {dataset:{}, style:{setProperty(key,value){this[key]=value;}},addEventListener(){}, querySelector(){return {addEventListener(){}};},querySelectorAll(){return [];}}; }
 const context = {console, setTimeout, clearTimeout, alert: value=>alerts.push(value), location:{search:''},
  document:{readyState:'loading',addEventListener(){},createElement:element}, window:{addEventListener(){},LearnUser:{apiBase:'',userId:'u0'}}};
-vm.createContext(context); vm.runInContext(source,context);
-const api=context.testApi;
+vm.createContext(context);require('./load_uikit.cjs')(context); vm.runInContext(source,context);
+const get=context.window.LearnPathApp.get;
+const api={...get('path.domain'),...get('path.cards'),...get('path.assessment'),state:get('path.model').state};
 const root={id:'n1',deps:[]}, second={id:'n2',deps:['n1']};
 const children=Array.from({length:12},(_,index)=>({id:'n'+(index+3),deps:index?['n'+(index+2)]:[],remediation:{parent:'n1'}}));
 const nested={id:'n15',deps:[],remediation:{parent:'n3'}}, deepest={id:'n16',deps:[],remediation:{parent:'n15'}};
@@ -30,6 +29,6 @@ const bad={nodes:[{id:'a',deps:['b'],remediation:{parent:'b'}},{id:'b',deps:['a'
 api.normalizePlan(bad);
 assert.deepEqual(Array.from(api.planHierarchy(bad.nodes),entry=>entry.label),['L1','L1.1','L2','L3']);
 assert.deepEqual(Array.from(bad.nodes[1].deps),[]);assert.deepEqual(Array.from(bad.nodes[2].deps),[]);
-const css=fs.readFileSync('learning-path/path_template.html','utf8');
+const css=fs.readFileSync('learning-path/path.css','utf8');
 assert.match(css,/border-left:4px solid var\(--group-color/);assert.doesNotMatch(css,/\.node\.(?:done|failed|unlocked)\{border-left-color/);
 console.log('PASS hierarchy ordering, numeric siblings, cycles, group colors, prerequisite preservation and depth guard');

@@ -1,0 +1,36 @@
+/* UI Kit: semantic tokens shared by every page. */
+:root {
+  --learn-paper: #f5f5f5;
+  --learn-surface: #fff;
+  --learn-ink: #2d3142;
+  --learn-muted: #667085;
+  --learn-border: #dce1e8;
+  --learn-accent: #c74f20;
+  --learn-success: #2f7d5d;
+  --learn-danger: #b42318;
+  --learn-accent-tint: #fff1e9;
+  --learn-radius: 8px;
+  --learn-radius-control: 6px;
+  --learn-space-1: 4px;
+  --learn-space-2: 8px;
+  --learn-space-3: 12px;
+  --learn-space-4: 16px;
+  --learn-space-6: 24px;
+  --learn-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --learn-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --learn-serif: Georgia, "Songti SC", SimSun, serif;
+  --learn-focus: 0 0 0 3px #eb6c3640;
+  --paper: var(--learn-paper);
+  --paper2: var(--learn-surface);
+  --ink: var(--learn-ink);
+  --muted: var(--learn-muted);
+  --soft: var(--learn-muted);
+  --rule: var(--learn-border);
+  --accent: var(--learn-accent);
+  --accent-tint: var(--learn-accent-tint);
+  --green: var(--learn-success);
+  --ok: var(--learn-success);
+  --sans: var(--learn-font);
+  --mono: var(--learn-mono);
+  --serif: var(--learn-serif);
+}
