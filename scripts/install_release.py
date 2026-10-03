@@ -7,6 +7,7 @@ Rollback restores code/assets and retains subsequent learning writes.
 """
 from __future__ import annotations
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -96,6 +97,31 @@ def running_environment(target):
     if not (state / 'state.sqlite3').is_file():
         raise RuntimeError('Expected existing authoritative SQLite data')
     return pid, environment, state
+
+
+def verify_existing_backend(target, manifest):
+    """Reject an incomplete rollback source before stopping its running process."""
+    modules = {Path(name).stem: name for name in manifest['files']['backend'] if name.endswith('.py')}
+    for name in ('study_assistant.py', 'backup_state.py'):
+        if not destination(target, 'backend', name).is_file():
+            raise RuntimeError('Current backend is missing required source: ' + name)
+    for name in modules.values():
+        path = destination(target, 'backend', name)
+        if not path.is_file():
+            continue  # Modules newly introduced by this release need no old snapshot.
+        try:
+            tree = ast.parse(path.read_text(), filename=name)
+        except (OSError, UnicodeError, SyntaxError):
+            raise RuntimeError('Current backend has unreadable or invalid source: ' + name) from None
+        imports = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name.split('.')[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imports.add(node.module.split('.')[0])
+        for dependency in sorted(imports & modules.keys()):
+            if not destination(target, 'backend', modules[dependency]).is_file():
+                raise RuntimeError('Current backend dependency is missing: ' + name + ' -> ' + modules[dependency])
 
 
 def wait_for_idle(state, seconds=300):
@@ -195,6 +221,7 @@ def install(environment, release_directory):
     with tempfile.TemporaryDirectory(prefix='learn-release-') as temporary:
         staging = Path(temporary)
         manifest = verified_payload(release_directory, staging)
+        verify_existing_backend(target, manifest)
         pid, settings, state = running_environment(target)
         production_state = Path('/opt/study-assistant/state').resolve()
         if (environment == 'test' and state.resolve() == production_state) or (environment == 'production' and state.resolve() != production_state):
