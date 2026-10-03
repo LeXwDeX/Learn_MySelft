@@ -25,6 +25,38 @@ from application import create_application
 
 
 class ReleaseInstallTest(unittest.TestCase):
+    def test_incomplete_old_backend_is_rejected_before_process_or_files_are_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = {'backend': directory, 'site': directory}
+            (Path(directory) / 'study_assistant.py').write_text('import app_config\n')
+            manifest = {'files': {'backend': {'study_assistant.py': '', 'backup_state.py': '', 'app_config.py': ''}}}
+            with (patch.object(installer, 'TARGETS', {'test': target}),
+                  patch.object(installer, 'verified_payload', return_value=manifest),
+                  patch.object(installer, 'running_environment') as environment,
+                  patch.object(installer, 'stop_backend') as stop,
+                  patch.object(installer, 'apply_files') as apply):
+                with self.assertRaisesRegex(RuntimeError, 'missing required source: backup_state.py'):
+                    installer.install('test', Path(directory) / 'release')
+                environment.assert_not_called()
+                stop.assert_not_called()
+                apply.assert_not_called()
+            (Path(directory) / 'backup_state.py').write_text('# backup\n')
+            with self.assertRaisesRegex(RuntimeError, 'study_assistant.py -> app_config.py'):
+                installer.verify_existing_backend(target, manifest)
+
+    def test_complete_old_backend_is_checked_without_executing_business_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = {'backend': directory, 'site': directory}
+            sources = {'study_assistant.py': 'import app_config\n', 'backup_state.py': '# backup\n',
+                       'app_config.py': 'raise RuntimeError("Business code must not run in preflight")\n'}
+            for name, text in sources.items():
+                (Path(directory) / name).write_text(text)
+            manifest = {'files': {'backend': {**sources, 'new_module.py': ''}}}
+            installer.verify_existing_backend(target, manifest)
+            (Path(directory) / 'app_config.py').write_text('invalid python (\n')
+            with self.assertRaisesRegex(RuntimeError, 'invalid source: app_config.py'):
+                installer.verify_existing_backend(target, manifest)
+
     def test_health_uses_actual_http_status_and_exact_revision(self):
         with tempfile.TemporaryDirectory() as directory:
             app = create_application({'STATE_DIR': directory, 'DELETE_PASSWORD': 'test-password'})
