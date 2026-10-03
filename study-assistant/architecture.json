@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "modules": {
+    "account_routes.py": "http",
+    "app_config.py": "domain",
+    "application.py": "composition",
+    "background_jobs.py": "infrastructure",
+    "backup_state.py": "tools",
+    "flywheel.py": "domain",
+    "flywheel_service.py": "services",
+    "generation_cache.py": "infrastructure",
+    "generation_contracts.py": "domain",
+    "http_handler.py": "http",
+    "http_io.py": "http",
+    "job_routes.py": "http",
+    "learning_service.py": "services",
+    "material_parser.py": "infrastructure",
+    "material_repository.py": "infrastructure",
+    "material_routes.py": "http",
+    "material_titles.py": "domain",
+    "material_worker.py": "tools",
+    "migrate_quiz_v2.py": "tools",
+    "model_client.py": "infrastructure",
+    "path_hierarchy.py": "domain",
+    "path_routes.py": "http",
+    "prompts.py": "domain",
+    "quiz_generation.py": "services",
+    "quiz_harness.py": "domain",
+    "quiz_service.py": "services",
+    "render_review.py": "infrastructure",
+    "render_worker.py": "tools",
+    "request_auth.py": "services",
+    "research_sources.py": "domain",
+    "service_limits.py": "domain",
+    "state_routes.py": "http",
+    "state_schema.py": "infrastructure",
+    "state_store.py": "infrastructure",
+    "study_assistant.py": "composition",
+    "text_utils.py": "domain",
+    "tutor_routes.py": "http",
+    "user_accounts.py": "infrastructure",
+    "web_server.py": "tools"
+  },
+  "allowed_dependencies": {
+    "domain": [
+      "domain"
+    ],
+    "infrastructure": [
+      "domain",
+      "infrastructure"
+    ],
+    "services": [
+      "domain",
+      "infrastructure",
+      "services"
+    ],
+    "http": [
+      "domain",
+      "infrastructure",
+      "services",
+      "http"
+    ],
+    "composition": [
+      "domain",
+      "infrastructure",
+      "services",
+      "http",
+      "composition"
+    ],
+    "tools": [
+      "domain",
+      "infrastructure",
+      "services",
+      "http",
+      "tools"
+    ]
+  },
+  "entrypoint": "study_assistant.py",
+  "notes": [
+    "Services receive repositories, model clients, generation caches and verification explicitly.",
+    "HTTP controllers receive only their needed dependencies.",
+    "Only the composition layer creates the application and registers operations.",
+    "Background jobs call application.run_job and never instantiate HTTP handlers."
+  ],
+  "external_imports": {
+    "render_worker.py": [
+      "playwright"
+    ],
+    "material_worker.py": [
+      "py7zr",
+      "PIL",
+      "pypdf",
+      "defusedxml",
+      "olefile",
+      "xlrd",
+      "openpyxl"
+    ]
+  }
+}

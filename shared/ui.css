@@ -1,11 +1,85 @@
+/* Generated UI Kit. Edit shared/uikit sources and run scripts/build_frontend.py. */
+/* UI Kit: semantic tokens shared by every page. */
 :root {
-  --learn-accent: #c74f20;
+  --learn-paper: #f5f5f5;
+  --learn-surface: #fff;
   --learn-ink: #2d3142;
   --learn-muted: #667085;
   --learn-border: #dce1e8;
+  --learn-accent: #c74f20;
+  --learn-success: #2f7d5d;
+  --learn-danger: #b42318;
+  --learn-accent-tint: #fff1e9;
   --learn-radius: 8px;
+  --learn-radius-control: 6px;
+  --learn-space-1: 4px;
+  --learn-space-2: 8px;
+  --learn-space-3: 12px;
+  --learn-space-4: 16px;
+  --learn-space-6: 24px;
+  --learn-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --learn-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --learn-serif: Georgia, "Songti SC", SimSun, serif;
   --learn-focus: 0 0 0 3px #eb6c3640;
+  --paper: var(--learn-paper);
+  --paper2: var(--learn-surface);
+  --ink: var(--learn-ink);
+  --muted: var(--learn-muted);
+  --soft: var(--learn-muted);
+  --rule: var(--learn-border);
+  --accent: var(--learn-accent);
+  --accent-tint: var(--learn-accent-tint);
+  --green: var(--learn-success);
+  --ok: var(--learn-success);
+  --sans: var(--learn-font);
+  --mono: var(--learn-mono);
+  --serif: var(--learn-serif);
 }
+/* UI Kit: document baseline and common controls. */
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--learn-paper); color: var(--learn-ink); font: 15px/1.65 var(--learn-font); }
+[hidden] { display: none !important; }
+.muted { color: var(--learn-muted); }
+.btn, .learn-action {
+  display: inline-flex; justify-content: center; align-items: center; gap: 6px;
+  min-height: 36px; padding: 7px 15px; border: 1px solid var(--learn-border);
+  border-radius: var(--learn-radius-control); background: var(--learn-surface);
+  color: var(--learn-ink); font: 14px var(--learn-font); text-decoration: none; cursor: pointer;
+}
+.btn:hover { border-color: var(--learn-accent); }
+.btn.primary { background: var(--learn-accent); border-color: var(--learn-accent); color: #fff; }
+.btn:disabled, .learn-action:disabled { opacity: .55; cursor: default; }
+.learn-action { border-color: currentColor; background: transparent; color: inherit; font: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--learn-accent); outline-offset: 3px;
+}
+input, textarea, select { max-width: 100%; font: inherit; color: var(--learn-ink); }
+input:not([type=checkbox]):not([type=radio]):not([type=file]), textarea, select {
+  padding: 10px 12px; border: 1px solid var(--learn-border); border-radius: var(--learn-radius-control); background: var(--learn-surface);
+}
+label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+.field { margin: 18px 0; }
+.field input:not([type=checkbox]) { width: 100%; }
+.field small { display: block; margin-top: 5px; color: var(--learn-muted); font-weight: 400; }
+.card { padding: var(--learn-space-6); border: 1px solid var(--learn-border); border-radius: var(--learn-radius); background: var(--learn-surface); }
+.error { color: var(--learn-danger); white-space: pre-wrap; margin: 12px 0; }
+.success { color: var(--learn-success); }
+dialog {
+  width: min(470px, calc(100vw - 32px)); max-height: calc(100dvh - 24px); overflow: auto;
+  padding: 26px; border: 1px solid var(--learn-border); border-radius: 10px;
+  background: var(--learn-surface); color: var(--learn-ink);
+}
+dialog::backdrop { background: #28314266; }
+@media (max-width: 580px) { dialog { max-width: calc(100vw - 20px); } }
+/* UI Kit: identity navigation and fatal session view. */
+.user-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 24px; background: var(--learn-surface); border-bottom: 1px solid var(--learn-border); color: var(--learn-muted); font: 13px/1.5 var(--learn-font); }
+.user-bar a { color: var(--learn-accent); text-decoration: none; }
+.user-bar button { padding: 4px 12px; border: 1px solid var(--learn-border); border-radius: var(--learn-radius-control); background: var(--learn-surface); font: inherit; cursor: pointer; }
+.user-bar .user-end { margin-left: auto; }
+.user-bar strong { color: var(--learn-ink); }
+.user-readonly { padding: 3px 8px; border-radius: 4px; background: #fff3dc; color: #7a4c00; }
+.learn-session-error { position: fixed; inset: 0; z-index: 10000; display: grid; place-content: center; gap: 16px; padding: 32px; background: var(--learn-paper); }
+/* UI Kit: save state, task feedback and notification placement. */
 .learn-status-area { max-width: 1240px; margin: 10px auto; padding: 0 20px; }
 .learn-status-area:empty { display: none; }
 .learn-toast-area { position:fixed; top:64px; right:20px; width:min(430px,calc(100vw - 24px)); max-height:calc(100dvh - 88px); overflow:auto; z-index:1000; pointer-events:none; }
@@ -17,9 +91,6 @@
 .learn-status[data-kind="error"] { border-color: #f2c0b7; color: #9e291c; background: #fff7f5; }
 .learn-status[data-kind="success"] { color: #276644; background: #f5fbf7; }
 .learn-status-text { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
-.learn-action { border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; padding: 5px 12px; cursor: pointer; font: inherit; }
-.learn-action:disabled { opacity: .6; cursor: wait; }
-button:focus-visible, .btn:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--learn-accent); outline-offset: 3px; }
 .learn-task-list { display: grid; gap: 8px; }
 .learn-task { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--learn-border); }
 .learn-task small { display: block; color: var(--learn-muted); }

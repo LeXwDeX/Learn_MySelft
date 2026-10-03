@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "bundles": [
+    {
+      "output": "home.js",
+      "entry": "home.entry",
+      "namespace": "LearnHomeModules",
+      "modules": [
+        {
+          "id": "home.platform",
+          "source": "modules/platform.js",
+          "dependencies": []
+        },
+        {
+          "id": "home.admin",
+          "source": "modules/admin.js",
+          "dependencies": [
+            "home.platform"
+          ]
+        },
+        {
+          "id": "home.library",
+          "source": "modules/library.js",
+          "dependencies": [
+            "home.platform"
+          ]
+        },
+        {
+          "id": "home.tasks",
+          "source": "modules/tasks.js",
+          "dependencies": [
+            "home.platform",
+            "home.library"
+          ]
+        },
+        {
+          "id": "home.account",
+          "source": "modules/account.js",
+          "dependencies": [
+            "home.platform"
+          ]
+        },
+        {
+          "id": "home.entry",
+          "source": "modules/entry.js",
+          "dependencies": [
+            "home.platform",
+            "home.admin",
+            "home.tasks",
+            "home.account"
+          ]
+        }
+      ]
+    }
+  ]
+}

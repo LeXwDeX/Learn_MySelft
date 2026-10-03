@@ -1,12 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
-const template = fs.readFileSync('learning-path/quiz_map_template.html', 'utf8');
-let code = template.slice(template.indexOf('/* 测验地图'), template.lastIndexOf('</script>'));
-code = code.replace('  function init() {', `
-  globalThis.flywheelTest = {runGaps, runRefine, attemptIdentity, currentDiagnosis, syncQuiz,
-    set: function (quiz) {currentD = quiz; currentSlug = 'exam'; currentQs = quiz.questions; currentRes = quiz.lastResult;},
-    current: function () {return currentD;}};
-  function init() {`);
+const code = fs.readFileSync('learning-path/quiz-map-app.js', 'utf8');
 const elements = new Map(), calls = [], alerts = [];
 const element = id => { if (!elements.has(id)) elements.set(id, {textContent:'', innerHTML:'', disabled:false, addEventListener(){}}); return elements.get(id); };
 let finishDiagnosis;
@@ -15,8 +9,12 @@ const env = {console, setTimeout, clearTimeout, AbortController, URLSearchParams
   document:{readyState:'loading',addEventListener(){},getElementById:element},
   window:{LearnUser:{userId:'u0',apiBase:'http://localhost',fetch:async()=>({json:async()=>({ok:true,entries:{'u0/learn-path-v1-map':JSON.stringify({plan:{nodes:[{id:'n1',title:'Basics'}]}})}})})},
     LearnJobs:{supports:()=>true,run:(path,body,options)=>{calls.push({path,body,options});if(path==='/path/gaps')return new Promise(resolve=>finishDiagnosis=resolve);return Promise.resolve({added:1});}}}};
-vm.createContext(env);vm.runInContext(code,env);
-const api=env.flywheelTest;
+vm.createContext(env);require('./load_uikit.cjs')(env);vm.runInContext(code,env);
+const get=env.window.LearnQuizMapApp.get;
+const session=get('quiz-map.model').session;
+const api={...get('quiz-map.diagnosis'),...get('quiz-map.identity'),...get('quiz-map.view'),
+ set(quiz){session.currentD=quiz;session.currentSlug='exam';session.currentQs=quiz.questions;session.currentRes=quiz.lastResult;},
+ current(){return session.currentD;}};
 function quiz(id,score=0){return {sourceKey:'u0/learn-path-v1-map',sourceSlug:'map',round_id:'r1',lastAttemptId:id,questions:[{q:'1+1?',point:'L1 Basics'}],rounds:[{id:'r1',attempts:[{id}]}],lastAnswers:[''],lastResult:{score,per_question:[{earned:score,max_points:100,ok:score===100}]}};}
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{

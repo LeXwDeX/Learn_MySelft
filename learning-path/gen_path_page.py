@@ -1,43 +1,42 @@
 # -*- coding: utf-8 -*-
-"""生成《学习路径》单页应用（采集 → 研究 → 路径图 + 解锁门控）。
+"""Build learning and quiz pages from markup, styles and explicit module graphs."""
+from __future__ import annotations
+import argparse
+import hashlib
+from pathlib import Path
+from bundle_builder import build_bundle, load_manifest
 
-读模板，用占位符替换内联 JS，避免 f-string 花括号转义问题。
-"""
-import os
-import datetime
+HERE = Path(__file__).resolve().parent
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-TPL = os.path.join(HERE, "path_template.html")
-APP = os.path.join(HERE, "path_app.js")
-OUT = os.path.join(HERE, "learning-path.html")
+
+def generated_files() -> dict[str, str]:
+    manifest = load_manifest(HERE / 'manifest.json')
+    files = {bundle['output']: build_bundle(HERE, bundle) for bundle in manifest['bundles']}
+    fingerprint = hashlib.sha256(''.join(files[name] for name in sorted(files)).encode()).hexdigest()[:12]
+    for template, output in [('path_template.html', 'learning-path.html'), ('quiz_map_template.html', 'quiz-map.html')]:
+        document = (HERE / template).read_text(encoding='utf-8')
+        if '<style' in document or '__APP_JS__' in document or '__QUIZ_DIALOG_JS__' in document:
+            raise ValueError(f'Template must contain only markup and resource links: {template}')
+        files[output] = document.replace('__BUILD__', fingerprint)
+    return files
 
 
 def main():
-    with open(TPL, "r", encoding="utf-8") as f:
-        doc = f.read()
-    with open(APP, "r", encoding="utf-8") as f:
-        app_js = f.read()
-
-    if "__APP_JS__" not in doc:
-        raise SystemExit("模板缺少 __APP_JS__ 占位符")
-
-    with open(os.path.join(HERE, "quiz_dialog.js"), encoding="utf-8") as f:
-        dialog_js = f.read()
-    doc = doc.replace("__QUIZ_DIALOG_JS__", dialog_js)
-    doc = doc.replace("__APP_JS__", app_js)
-    with open(os.path.join(HERE, "quiz_map_template.html"), encoding="utf-8") as f:
-        quiz_page = f.read().replace("__QUIZ_DIALOG_JS__", dialog_js)
-    with open(os.path.join(HERE, "quiz-map.html"), "w", encoding="utf-8") as f:
-        f.write(quiz_page)
-    doc = doc.replace("__BUILD__", datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
-
-    with open(OUT, "w", encoding="utf-8") as f:
-        f.write(doc)
-
-    print("生成完成:", OUT)
-    print("大小:", os.path.getsize(OUT), "bytes")
-    print("模板:", len(doc.splitlines()), "行 | JS:", len(app_js.splitlines()), "行")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check', action='store_true', help='Check generated files without modifying them')
+    arguments = parser.parse_args()
+    stale = []
+    for name, content in generated_files().items():
+        target = HERE / name
+        if arguments.check:
+            if not target.exists() or target.read_text(encoding='utf-8') != content:
+                stale.append(name)
+        else:
+            target.write_text(content, encoding='utf-8')
+    if stale:
+        raise SystemExit('Stale generated files: ' + ', '.join(stale))
+    print('Learning and quiz bundles: ' + ('verified' if arguments.check else 'generated'))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

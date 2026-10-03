@@ -1,0 +1,304 @@
+{
+  "version": 1,
+  "bundles": [
+    {
+      "output": "path_app.js",
+      "entry": "path.entry",
+      "namespace": "LearnPathApp",
+      "modules": [
+        {
+          "id": "path.model",
+          "source": "modules/path-model.js",
+          "dependencies": []
+        },
+        {
+          "id": "path.format",
+          "source": "modules/path-format.js",
+          "dependencies": [
+            "path.model",
+            "page.format"
+          ]
+        },
+        {
+          "id": "path.domain",
+          "source": "modules/path-domain.js",
+          "dependencies": [
+            "path.model"
+          ]
+        },
+        {
+          "id": "path.persistence",
+          "source": "modules/path-persistence.js",
+          "dependencies": [
+            "path.model",
+            "path.format",
+            "path.hooks"
+          ]
+        },
+        {
+          "id": "path.shell",
+          "source": "modules/path-shell.js",
+          "dependencies": [
+            "path.model",
+            "path.format",
+            "path.persistence",
+            "path.domain",
+            "path.hooks"
+          ]
+        },
+        {
+          "id": "path.workflow",
+          "source": "modules/path-workflow.js",
+          "dependencies": [
+            "path.format",
+            "path.model",
+            "path.persistence",
+            "path.shell",
+            "path.hooks",
+            "path.domain"
+          ]
+        },
+        {
+          "id": "path.cards",
+          "source": "modules/path-cards.js",
+          "dependencies": [
+            "path.model",
+            "path.format",
+            "path.shell",
+            "path.domain",
+            "path.hooks",
+            "path.persistence",
+            "path.workflow",
+            "path.generation"
+          ]
+        },
+        {
+          "id": "path.generation",
+          "source": "modules/path-generation.js",
+          "dependencies": [
+            "path.model",
+            "path.format",
+            "path.persistence",
+            "path.domain",
+            "path.workflow",
+            "path.hooks"
+          ]
+        },
+        {
+          "id": "path.assistant",
+          "source": "modules/path-assistant.js",
+          "dependencies": [
+            "path.format",
+            "path.model",
+            "path.domain",
+            "path.persistence"
+          ]
+        },
+        {
+          "id": "path.assessment",
+          "source": "modules/path-assessment.js",
+          "dependencies": [
+            "path.format",
+            "path.model",
+            "path.domain",
+            "path.cards",
+            "path.assistant",
+            "path.persistence",
+            "path.shell"
+          ]
+        },
+        {
+          "id": "path.library",
+          "source": "modules/path-library.js",
+          "dependencies": [
+            "path.persistence",
+            "path.shell",
+            "path.model",
+            "path.format"
+          ]
+        },
+        {
+          "id": "path.entry",
+          "source": "modules/path-entry.js",
+          "dependencies": [
+            "path.model",
+            "path.format",
+            "path.persistence",
+            "path.shell",
+            "path.workflow",
+            "path.cards",
+            "path.assistant",
+            "path.generation",
+            "path.assessment",
+            "path.library",
+            "path.hooks"
+          ]
+        },
+        {
+          "id": "path.hooks",
+          "source": "modules/path-hooks.js",
+          "dependencies": []
+        },
+        {
+          "id": "page.format",
+          "source": "modules/page-format.js",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "output": "quiz-map-app.js",
+      "entry": "quiz-map.entry",
+      "namespace": "LearnQuizMapApp",
+      "modules": [
+        {
+          "id": "quiz-map.model",
+          "source": "modules/quiz-map-model.js",
+          "dependencies": []
+        },
+        {
+          "id": "quiz-map.format",
+          "source": "modules/quiz-map-format.js",
+          "dependencies": [
+            "quiz-map.model",
+            "page.format"
+          ]
+        },
+        {
+          "id": "quiz-map.network",
+          "source": "modules/quiz-map-network.js",
+          "dependencies": [
+            "quiz-map.model"
+          ]
+        },
+        {
+          "id": "quiz-map.identity",
+          "source": "modules/quiz-map-identity.js",
+          "dependencies": [
+            "quiz-map.model"
+          ]
+        },
+        {
+          "id": "quiz-map.view",
+          "source": "modules/quiz-map-view.js",
+          "dependencies": [
+            "quiz-map.model",
+            "quiz-map.format",
+            "quiz-map.network",
+            "quiz-map.identity",
+            "quiz-map.hooks"
+          ]
+        },
+        {
+          "id": "quiz-map.diagnosis",
+          "source": "modules/quiz-map-diagnosis.js",
+          "dependencies": [
+            "quiz-map.format",
+            "quiz-map.model",
+            "quiz-map.network",
+            "quiz-map.identity"
+          ]
+        },
+        {
+          "id": "quiz-map.catalog",
+          "source": "modules/quiz-map-catalog.js",
+          "dependencies": [
+            "quiz-map.model",
+            "quiz-map.format",
+            "quiz-map.network"
+          ]
+        },
+        {
+          "id": "quiz-map.entry",
+          "source": "modules/quiz-map-entry.js",
+          "dependencies": [
+            "quiz-map.format",
+            "quiz-map.view",
+            "quiz-map.catalog",
+            "quiz-map.hooks",
+            "quiz-map.diagnosis"
+          ]
+        },
+        {
+          "id": "quiz-map.hooks",
+          "source": "modules/quiz-map-hooks.js",
+          "dependencies": []
+        },
+        {
+          "id": "page.format",
+          "source": "modules/page-format.js",
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "output": "quiz_dialog.js",
+      "entry": "quiz-dialog.entry",
+      "namespace": "LearnQuizDialog",
+      "modules": [
+        {
+          "id": "quiz-dialog.question",
+          "source": "modules/quiz-dialog-question.js",
+          "dependencies": []
+        },
+        {
+          "id": "quiz-dialog.model",
+          "source": "modules/quiz-dialog-model.js",
+          "dependencies": []
+        },
+        {
+          "id": "quiz-dialog.network",
+          "source": "modules/quiz-dialog-network.js",
+          "dependencies": [
+            "quiz-dialog.model",
+            "quiz-dialog.hooks"
+          ]
+        },
+        {
+          "id": "quiz-dialog.drafts",
+          "source": "modules/quiz-dialog-drafts.js",
+          "dependencies": [
+            "quiz-dialog.model",
+            "quiz-dialog.question",
+            "quiz-dialog.hooks",
+            "quiz-dialog.network"
+          ]
+        },
+        {
+          "id": "quiz-dialog.view",
+          "source": "modules/quiz-dialog-view.js",
+          "dependencies": [
+            "quiz-dialog.model",
+            "quiz-dialog.drafts",
+            "quiz-dialog.question"
+          ]
+        },
+        {
+          "id": "quiz-dialog.controller",
+          "source": "modules/quiz-dialog-controller.js",
+          "dependencies": [
+            "quiz-dialog.model",
+            "quiz-dialog.drafts",
+            "quiz-dialog.view",
+            "quiz-dialog.question",
+            "quiz-dialog.network"
+          ]
+        },
+        {
+          "id": "quiz-dialog.entry",
+          "source": "modules/quiz-dialog-entry.js",
+          "dependencies": [
+            "quiz-dialog.controller",
+            "quiz-dialog.hooks",
+            "quiz-dialog.view"
+          ]
+        },
+        {
+          "id": "quiz-dialog.hooks",
+          "source": "modules/quiz-dialog-hooks.js",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}

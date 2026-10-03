@@ -12,10 +12,13 @@
 
 | 目录 | 组件 | 说明 |
 |------|------|------|
-| `learning-path/` | 学习路径 | 输入主题 → 对话式采集需求 → 主动研究（SearXNG 检索）→ 生成依赖路径图。节点按依赖解锁（前置全部完成才可学），自测通过（≥60 分）标记完成 |
-| `study-assistant/` | AI 后端 | 两个页面共用的 AI 服务（SSE 流式）。端点：`/ask` `/suggest` `/compress` `/health` `/path/intake` `/path/research` `/path/plan` `/path/node` `/path/quiz` `/path/requiz` `/state/all` `/state/put` `/state/del` |
-| `home/` | 固定首页 | 登录、账号管理与个人资料库（部署为 `<站点>/learn/`）；公共身份脚本位于 `shared/user-session.js` |
+| `learning-path/` | 学习路径与测验前端 | 页面使用原生 JavaScript 工厂模块。Manifest 声明学习路径、测验地图和测验窗口的依赖，再构建为独立脚本。 |
+| `study-assistant/` | AI 后端 | Python 标准库 HTTP 服务。组合根装配账号、存储、资料、模型、任务队列和业务服务。端点由路由控制器分派。 |
+| `home/` | 固定首页 | 首页使用原生 JavaScript 工厂模块；共享身份和 UI 代码位于 `shared/`。入口部署为 `<站点>/learn/`。 |
+| `shared/` | 浏览器公共模块和 UI Kit | 提供身份、保存、任务、资料、Markdown 与共享样式。UI Kit 源文件见 `shared/uikit/`。 |
 | `deploy/` | 部署 | systemd 单元文件（`zixueshe-web.service`、`study-assistant.service`、`static-pages.service`） |
+
+更多模块职责、依赖方向和数据流见 [系统架构](docs/ARCHITECTURE.md)。tokens、共享控件、DOM API 和 CSS 归属见 [前端 UI Kit](docs/UIKIT.md)。
 
 ## 多用户
 
@@ -30,8 +33,8 @@
 ```
 浏览器                                 服务器
 ┌────────────────────┐   SSE / JSON  ┌─────────────────────┐         ┌──────────────────┐
-│ 静态页面（无框架）    │ ────────────▶ │ study-assistant     │ ──────▶ │ OpenAI 兼容 LLM   │
-│ 学习路径 / 测验 / 首页 │ ◀──────────── │ :8101（纯标准库）     │         │ 网关（模型 deepseek）│
+│ 页面模块包（无框架）    │ ────────────▶ │ study-assistant     │ ──────▶ │ OpenAI 兼容 LLM   │
+│ 首页 / 学习路径 / 测验  │ ◀──────────── │ :8101（标准库 HTTP）  │         │ 网关                │
 └────────────────────┘               │                     │         └──────────────────┘
          │ localStorage              │ /state/*            │
          └─── 写入即推 / 加载即拉 ─────▶ │ SQLite 文档与任务表   │
@@ -46,42 +49,45 @@
 - （可选）SearXNG 检索服务（「主动研究」阶段用；没有也能生成路径、只是无外部来源）
 - 使用随仓库提供的 `study-assistant/web_server.py` 静态服务，以支持用户独立路径
 
-### 1. AI 后端
+### 1. 构建发布包
 
 ```bash
-sudo mkdir -p /opt/study-assistant
-sudo cp study-assistant/*.py /opt/study-assistant/
-# 编辑 deploy/study-assistant.service：把 LLM_KEY 改为实际密钥（按需调整 LLM_BASE 等，见下表）
-sudo cp deploy/study-assistant.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now study-assistant
-curl -s http://127.0.0.1:8101/health   # 验证
+python3 scripts/build_frontend.py
+python3 learning-path/gen_path_page.py
+sh scripts/check-local.sh
+python3 scripts/package_release.py --output /path/to/release
 ```
 
-### 2. 静态页面
+打包命令要求源码已提交且 worktree 干净。它按发布清单生成 `backend.tar.gz`、`site.tar.gz` 和含文件及归档 SHA-256 的 `release.json`。部署时使用同一个归档版本，不从源码目录临时挑文件。不要用 `study-assistant/*.py` 复制后端：它会漏掉新增子包，也不会包含静态 JavaScript 和 CSS。
+
+发布包包含生成后的首页、学习路径、测验地图、测验窗口脚本和 HTML，以及共享脚本与样式。后端文件按明示清单打包。第三方资源由单独清单和部署环境管理。
+
+部署步骤见 [可靠性设计](docs/RELIABILITY.md)。测试环境验证通过后，才将同一归档版本用于正式环境。账号、运行配置和学习数据与代码包隔离。
+
+在部署主机上以 root 安装已构建的归档。先部署测试环境并完成功能回归，再用同一路径的发布包部署正式环境：
 
 ```bash
-# R = 静态根目录（当前部署：/DATA/AppData/zixueshe-web，由 deploy/zixueshe-web.service 以 :8100 服务）
-R=/path/to/static-root
-mkdir -p $R/learn/assets $R/diagram-design/learning-path
-cp home/index.html                     $R/learn/index.html
-cp home/home.js                       $R/learn/assets/home.js
-cp shared/*.js shared/*.css           $R/learn/assets/
-cp learning-path/learning-path.html learning-path/quiz-map.html $R/diagram-design/learning-path/
-sudo cp deploy/zixueshe-web.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl restart zixueshe-web
-# KaTeX（公式渲染，第三方 0.18.7，未收录本仓库）：从 npm 镜像取 dist 解压到：
-#   $R/diagram-design/learning-path/katex/
-#   npm pack katex@0.18.7 --registry=https://registry.npmmirror.com && tar xf katex-0.18.7.tgz
+python3 scripts/install_release.py --environment test --release-dir /path/to/release
+python3 scripts/install_release.py --environment production --release-dir /path/to/release
+```
+
+安装器在停止后端后备份状态数据和现有代码文件。它按归档清单校验文件，再原子替换允许的代码和静态资源。发生安装失败时会恢复代码文件并重启原配置。手动回滚使用该环境安装记录返回的备份目录：
+
+```bash
+python3 scripts/install_release.py --environment test --rollback /path/to/backup
+python3 scripts/install_release.py --environment production --rollback /path/to/backup
 ```
 
 固定入口：`http://<站点>:<端口>/learn/`
 
-### 3. 生成器（页面内容改动后重新生成）
+### 2. 页面生成器
 
 ```bash
-cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js → learning-path.html
+python3 scripts/build_frontend.py
+python3 learning-path/gen_path_page.py
 ```
+
+`build_frontend.py` 构建首页模块包、UI Kit 样式和首页依赖区。`gen_path_page.py` 按页面 manifest 构建学习路径、测验地图、测验窗口脚本及静态 HTML。源码与生成文件不一致时，`sh scripts/check-local.sh` 会在门禁中报告。
 
 ### 当前部署实例
 
@@ -113,12 +119,13 @@ cd learning-path && python3 gen_path_page.py  # path_template.html + path_app.js
 
 学习数据使用 `STATE_DIR/state.sqlite3`，首次运行自动事务导入旧 JSON 文件并保留其原始内容。迁移后的 SQLite 是权威数据源，旧 JSON 仅为升级快照。备份必须包含 WAL 已提交数据及配套账号；停服后使用 `study-assistant/backup_state.py`。
 
-Schema、事务边界、队列恢复、运行参数、UI 组件和回滚规则详见 [可靠性设计](docs/RELIABILITY.md)。
+Schema、事务边界、队列恢复、运行参数和回滚规则详见 [可靠性设计](docs/RELIABILITY.md)。UI 组件见 [前端 UI Kit](docs/UIKIT.md)。
 
 ## 硬性约定
 
 - 首页、身份管理、任务状态和测验弹窗支持手机
-- 生成页面内嵌业务代码，共用身份、保存和任务组件；无 CDN 依赖，公式走自托管 KaTeX
+- 页面业务代码由 manifest 声明并构建为独立脚本；共享身份、保存、任务和 UI Kit 按依赖顺序加载
+- 第一方前端无框架；Markdown-it、Mermaid、KaTeX 和代码高亮由独立 vendor 文件提供
 - 每单元 = 每对话；数据实时同步到服务端，浏览器 localStorage 作为本机缓存
 - 学习路径门控：节点依赖全部完成后才解锁；自测 ≥60 分标记完成
 - AI 纪律：引导式学习——不主动给答案，学习者提交后再评估；明确索要才给解答

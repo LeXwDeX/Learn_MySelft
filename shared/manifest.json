@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "externals": {
+    "LearnConfig": "/learn/config.js"
+  },
+  "styles": {
+    "output": "ui.css",
+    "sources": [
+      "uikit/tokens.css",
+      "uikit/controls.css",
+      "uikit/navigation.css",
+      "uikit/feedback.css"
+    ]
+  },
+  "scripts": [
+    {
+      "source": "ui.js",
+      "global": "LearnUI",
+      "dependencies": []
+    },
+    {
+      "source": "user-shell.js",
+      "global": "LearnUserShell",
+      "dependencies": [
+        "LearnUI"
+      ]
+    },
+    {
+      "source": "user-session.js",
+      "global": "LearnUser",
+      "dependencies": [
+        "LearnConfig",
+        "LearnUserShell"
+      ]
+    },
+    {
+      "source": "saves.js",
+      "global": "LearnSaves",
+      "dependencies": [
+        "LearnUser",
+        "LearnUI"
+      ]
+    },
+    {
+      "source": "jobs.js",
+      "global": "LearnJobs",
+      "dependencies": [
+        "LearnUser",
+        "LearnUI"
+      ]
+    },
+    {
+      "source": "titles.js",
+      "global": "LearnTitles",
+      "dependencies": []
+    },
+    {
+      "source": "materials.js",
+      "global": "LearnMaterials",
+      "dependencies": [
+        "LearnUser"
+      ]
+    },
+    {
+      "source": "vendor-markdown-it.js",
+      "global": "markdownit",
+      "dependencies": [],
+      "vendor": true
+    },
+    {
+      "source": "markdown.js",
+      "global": "LearnMarkdown",
+      "dependencies": [
+        "markdownit"
+      ]
+    }
+  ]
+}

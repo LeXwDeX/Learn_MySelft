@@ -1,6 +1,14 @@
 # 持久化、后台任务与恢复
 
-本轮按入口、身份、资料库、学习阶段、出题/评分、同步、静态路由、配置和发布路径审查。业务处理仍由标准库 HTTP 服务承载，评分协议在 `quiz_harness.py`；将配置、文档 Schema、存储、任务队列拆成独立模块。没有引入额外数据库服务或前端框架。
+## 当前模块结构
+
+后端仍使用 Python 标准库 HTTP 服务。`study-assistant/application.py` 是组合根：它创建账号、SQLite、资料仓库、模型客户端、业务服务和路由，并将依赖传给各对象。HTTP 控制器负责请求适配。学习、测验、辅导和飞轮服务负责业务流程。`quiz_harness.py` 定义评分协议。后台任务调用应用操作分派，不创建 HTTP handler。
+
+Python 文件由 `study-assistant/architecture.json` 声明为 domain、infrastructure、services、http、composition 或 tools。架构门禁检查每个文件的归属及导入方向。资料解析和渲染检查继续在单独 worker 进程中运行，并沿用各自的隔离边界。
+
+浏览器仍使用原生 JavaScript，不引入前端框架。首页、学习路径、测验地图和测验窗口由 manifest 声明工厂依赖，构建为独立脚本。共享身份、保存、任务、资料和 UI Kit 通过清单声明依赖并按顺序加载。页面模块通过入口连接具名 hooks，不读取其他模块的内部状态。目录职责、调用流和 UI Kit 接口分别见 [系统架构](ARCHITECTURE.md) 与 [前端 UI Kit](UIKIT.md)。
+
+下文保留持久化、队列、Schema、配置、备份和回滚约束。模块拆分没有改变这些数据恢复边界。
 
 ## 决策及影响
 

@@ -5,7 +5,7 @@ function savesEnvironment(saved,entries){
  const env={console,Response,AbortController,setTimeout,clearTimeout,location:{reload(){}},
  localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k),key:i=>Array.from(storage.keys())[i],get length(){return storage.size}},
  addEventListener:(k,f)=>events[k]=f,LearnUI:{set:(k,...v)=>notices.set(k,v),clear:k=>notices.delete(k)},
- LearnUser:{userId:'u0',user:{id:'u0'},ready:Promise.resolve(),apiBase:'http://localhost:8101',fetch:async()=>Response.json({entries})}};
+ LearnUser:{attachPersistence(port){this.persistence=port},userId:'u0',user:{id:'u0'},ready:Promise.resolve(),apiBase:'http://localhost:8101',fetch:async()=>Response.json({entries})}};
  env.window=env;vm.createContext(env);vm.runInContext(fs.readFileSync('shared/saves.js','utf8'),env);return {env,storage,notices,events};
 }
 (async()=>{
@@ -23,8 +23,8 @@ function savesEnvironment(saved,entries){
  async function logoutCase(alive,pending,confirmValue){
   const calls=[],events=[],env={console,URL,Headers,Response,AbortController,Event,setTimeout,clearTimeout,location:{href:'http://localhost/learn/',pathname:'/learn/',protocol:'http:',hostname:'localhost'},document:{readyState:'loading',addEventListener(){}},addEventListener(){},dispatchEvent:e=>events.push(e.type),confirm:()=>confirmValue};
   let initial=true;env.fetch=async(url)=>{calls.push(url);if(url.endsWith('/auth/session')){const user=initial?null:alive?{id:'u0'}:null;initial=false;return Response.json({ok:true,user})}return Response.json({ok:true})};
-  env.window=env;vm.createContext(env);vm.runInContext(fs.readFileSync('shared/user-session.js','utf8'),env);await env.LearnUser.ready;
-  let prepared=0;env.LearnSaves={pending:()=>pending,refresh:async()=>{},prepareExit:()=>prepared++,cancelExit(){}};
+  env.LearnUserShell={mount(){},errorView(){}};env.window=env;vm.createContext(env);vm.runInContext(fs.readFileSync('shared/user-session.js','utf8'),env);await env.LearnUser.ready;
+  let prepared=0;env.LearnUser.attachPersistence({pending:()=>pending,refresh:async()=>{},prepareExit:()=>prepared++,cancelExit(){}});
   const one=env.LearnUser.logout(),two=env.LearnUser.logout();assert.equal(one,two);await one;return {calls,events,env,prepared};
  }
  const logged=await logoutCase(false,true,false);assert.equal(logged.prepared,1);assert.equal(logged.env.location.href,'/learn/');assert(!logged.events.includes('pagehide'));assert.equal(logged.calls.filter(x=>x.endsWith('/auth/logout')).length,1);

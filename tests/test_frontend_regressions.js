@@ -6,10 +6,7 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '..');
 const events = [];
 let finishSave;
-const src = fs.readFileSync(path.join(root, 'learning-path/path_app.js'), 'utf8')
-  .replace("  if (document.readyState === 'loading')", `
-  globalThis.testApi = { state, isUnlocked, putState, deleteState, save, flushBeacon, restart };
-  if (document.readyState === 'loading')`);
+const src = fs.readFileSync(path.join(root, 'learning-path/path_app.js'), 'utf8');
 const context = {
   location: {protocol: 'http:', hostname: 'localhost'},
   document: {readyState: 'loading', addEventListener() {}},
@@ -24,10 +21,11 @@ const context = {
   }
 };
 context.window.LearnUser = {userId: 'u0', apiBase: 'http://localhost:8101', readOnly: false, fetch: context.fetch};
-vm.createContext(context);
+vm.createContext(context);require('./load_uikit.cjs')(context);
 vm.runInContext(src, context);
 (async () => {
-  const api = context.testApi;
+  const get = context.window.LearnPathApp.get;
+  const api = {...get('path.domain'), ...get('path.persistence'), ...get('path.library'), state: get('path.model').state};
   const key = 'u0/learn-path-v1-test';
   api.state.topic = 'test';
   api.state.plan = {nodes: [{id: 'n1', deps: []}, {id: 'n2', deps: []}, {id: 'n3', deps: ['n2']}]};
