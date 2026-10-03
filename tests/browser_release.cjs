@@ -82,11 +82,35 @@ fs.mkdirSync(output, {recursive:true});
     await page.locator('#node-' + node.id + ' button[data-mat="quiz"]').click();
     await page.getByRole('button', {name:/^(打开测验|查看作答与批改)$/}).click();
     await page.locator('#qd-submit').waitFor();
-    const radios = page.locator('.qd-option input');
-    if (await radios.count()) await radios.first().check();
-    const blanks = page.locator('.qd-blank-input');
-    for (let i=0; i<await blanks.count(); i++) await blanks.nth(i).fill('7');
+    await page.waitForFunction(() => {
+      const questions = Array.from(document.querySelectorAll('#qd-body fieldset.qd-question'));
+      if (questions.length !== 6) return false;
+      const choice = questions.filter(fieldset => fieldset.querySelector('.qd-option input[type="radio"]')).length;
+      const fill = questions.filter(fieldset => fieldset.querySelector('.qd-blank-input')).length;
+      const short = questions.filter(fieldset => fieldset.querySelector('textarea:not(.qd-blank-input)')).length;
+      return choice === 4 && fill === 1 && short === 1;
+    }, {}, {timeout:120000});
+    const questionFields = page.locator('#qd-body fieldset.qd-question');
+    const layout = await questionFields.evaluateAll(fields => ({
+      questions:fields.length,
+      choice:fields.filter(field => field.querySelector('.qd-option input[type="radio"]')).length,
+      fill:fields.filter(field => field.querySelector('.qd-blank-input')).length,
+      short:fields.filter(field => field.querySelector('textarea:not(.qd-blank-input)')).length
+    }));
+    assert.deepEqual(layout, {questions:6,choice:4,fill:1,short:1});
+    for (let i=0; i<await questionFields.count(); i++) {
+      const question = questionFields.nth(i), radios = question.locator('.qd-option input[type="radio"]');
+      if (await radios.count()) await radios.first().check();
+      const blanks = question.locator('.qd-blank-input');
+      for (let j=0; j<await blanks.count(); j++) await blanks.nth(j).fill('7');
+      const freeResponse = question.locator('textarea:not(.qd-blank-input)');
+      if (await freeResponse.count()) await freeResponse.fill('按协议规则核对，并说明判断依据。');
+    }
     await page.locator('#qd-submit').click();
+    await page.locator('.qd-result, #qd-error:not([hidden])').waitFor({timeout:240000});
+    if (await page.locator('#qd-error').isVisible()) {
+      throw new Error('Quiz submission failed: ' + await page.locator('#qd-error').innerText());
+    }
     await page.locator('.qd-result').waitFor({timeout:240000});
     const saved = await material();
     assert(saved.nodeDetail[node.id].quiz.rounds.some(round => round.attempts.length > 0));
