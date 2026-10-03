@@ -89,7 +89,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
     for (let round=0; round<5; round++) {
       await page.locator('#chat-input').fill('我已确认：零基础，只学习上传星桥协议的全部八项规则，达到能准确应用的深度，偏好例子和练习。不增加外部知识，请直接输出需求单并生成地图。');
       await page.locator('#chat-send').click();
-      await page.waitForFunction(()=>document.getElementById('stage-intake').hidden || !document.getElementById('chat-input').disabled, {}, {timeout:240000});
+      await page.waitForFunction(()=>document.getElementById('stage-intake').hidden || !document.getElementById('chat-send').disabled, {}, {timeout:240000});
       if (await page.locator('#stage-intake').isHidden()) break;
       if (await page.locator('#errbar').isVisible()) throw new Error(await page.locator('#errbar').innerText());
     }
