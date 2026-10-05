@@ -70,7 +70,7 @@ async function main() {
       body:{key, node, spec, dep_titles:[]},
       request_id:randomBytes(16).toString('hex')
     }});
-    assert.equal(response.status(), 200, 'node-generation job was not accepted');
+    assert.equal(response.status(), 202, 'node-generation job was not accepted');
     return pollJob((await response.json()).job);
   }
   async function readMaterial(key) {
@@ -80,6 +80,26 @@ async function main() {
   }
   async function writeMaterial(key, material) {
     await post('/state/put', {entries:{[key]:JSON.stringify(material)}});
+  }
+  async function waitForSaved() {
+    const deadline = Date.now() + 60000;
+    let idleSince = null;
+    while (Date.now() < deadline) {
+      const pending = await page.evaluate(() => {
+        if (!window.LearnSaves || typeof window.LearnSaves.pending !== 'function') throw new Error('save queue unavailable');
+        return window.LearnSaves.pending();
+      });
+      if (pending) idleSince = null;
+      else if (idleSince === null) idleSince = Date.now();
+      else if (Date.now() - idleSince >= 500) break;
+      await page.waitForTimeout(50);
+    }
+    assert(idleSince !== null && Date.now() - idleSince >= 500, 'save queue did not remain idle for 500ms');
+    await page.evaluate(async () => {
+      if (!window.LearnSaves || typeof window.LearnSaves.drain !== 'function') throw new Error('save queue unavailable');
+      await window.LearnSaves.drain();
+    });
+    await page.waitForFunction(() => window.LearnSaves && !window.LearnSaves.pending(), null, {timeout:60000});
   }
   function scenesIn(markdown) {
     const matches = [];
@@ -286,8 +306,12 @@ async function main() {
     // Obtain the condition through the issued quiz; never forge server-owned grades.
     await card.locator('[data-mat="quiz"]').click();
     await card.getByRole('button', {name:'打开测验', exact:true}).click();
-    await page.locator('#qd-submit').waitFor();
     const questions = page.locator('#qd-body fieldset.qd-question');
+    await questions.first().waitFor({state:'visible', timeout:120000});
+    await page.waitForFunction(() => {
+      const submit = document.querySelector('#qd-submit');
+      return submit && !submit.disabled;
+    }, null, {timeout:120000});
     assert.equal(await questions.count(), 6);
     for (let i = 0; i < await questions.count(); i++) {
       const question = questions.nth(i), choices = question.locator('.qd-option input[type="radio"]');
@@ -303,6 +327,7 @@ async function main() {
     const withResult = await readMaterial(key);
     assert(withResult.nodeState[generatedNode.id].lastResult, 'quiz did not persist its server result');
     await page.locator('#qd-close').click();
+    await waitForSaved();
     await page.reload();
     const reopened = page.locator('#node-' + generatedNode.id);
     await reopened.locator('.node-head').click();
@@ -321,12 +346,12 @@ async function main() {
     await page.locator('#ai-input').fill(ask);
     await page.locator('#ai-send').click();
     await page.waitForFunction(() => { const button=document.querySelector('#ai-send'); return button && !button.disabled; }, null, {timeout:480000});
-    let aiScene = page.locator('#ai-msgs .ai-msg.assistant [data-scene="ready"]').last();
+    let aiScene = page.locator('#ai-msgs .ai-msg.assistant').last().locator('[data-scene="ready"]').last();
     if (!(await aiScene.count())) {
       await page.locator('#ai-input').fill(ask + ' 请确保 JSON 有效，所有字段和数值符合 learn-scene v1。');
       await page.locator('#ai-send').click();
       await page.waitForFunction(() => { const button=document.querySelector('#ai-send'); return button && !button.disabled; }, null, {timeout:480000});
-      aiScene = page.locator('#ai-msgs .ai-msg.assistant [data-scene="ready"]').last();
+      aiScene = page.locator('#ai-msgs .ai-msg.assistant').last().locator('[data-scene="ready"]').last();
     }
     await aiScene.waitFor({state:'visible', timeout:30000});
     assert.equal(await aiScene.getAttribute('data-scene'), 'ready', 'explicit AI diagram request must render a valid scene');
@@ -335,11 +360,15 @@ async function main() {
     assert(aiExport.includes('```learn-scene'), 'AI Markdown export must preserve the original scene fence');
     report.cases.push('explicit_ai_request_streams_and_renders_linear_scene');
 
+    await waitForSaved();
+    const aiKey = expectedUser + '/learn-ai-v1-' + slug;
+    const aiBeforeReload = (await get('/state/all')).entries[aiKey];
+    assert(aiBeforeReload && aiBeforeReload.includes('```learn-scene'), 'AI scene fence was not acknowledged by the server before reload');
     await page.reload();
     await page.locator('#node-' + generatedNode.id + ' .node-head').click();
     await page.locator('#node-' + generatedNode.id + ' [data-mat="material"]').click();
-    await page.locator('#ai-msgs .ai-msg.assistant [data-scene="ready"]').first().waitFor({timeout:30000});
-    const aiSaved = (await get('/state/all')).entries[expectedUser + '/learn-ai-v1-' + slug];
+    await page.locator('#ai-msgs .ai-msg.assistant').last().locator('[data-scene="ready"]').waitFor({timeout:30000});
+    const aiSaved = (await get('/state/all')).entries[aiKey];
     assert(aiSaved && aiSaved.includes('```learn-scene'), 'AI history must persist the original scene fence');
     report.cases.push('ai_scene_history_survives_page_reopen');
 

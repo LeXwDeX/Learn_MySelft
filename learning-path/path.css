@@ -81,13 +81,16 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 /* .layer + .layer 的 margin 与 #graph-layer 的 flex gap 重复叠加（52px vs 26px 不齐），故移除 */
 .node{width:100%;background:#fff;border:1px solid var(--rule);border-left:4px solid var(--group-color,var(--lock));border-radius:8px;padding:18px 20px;cursor:pointer;position:relative;transition:box-shadow .15s,border-color .15s}
 .node:hover{box-shadow:0 6px 18px -12px rgba(45,49,66,.5)}
-.node-head{display:flex;align-items:flex-start;gap:12px}
-.node-head .node-no,.node-head .status,.node-head .ai-mini{height:26px;display:inline-flex;align-items:center;justify-content:center;padding-top:0;padding-bottom:0;line-height:1}
+.node-head{display:flex;align-items:flex-start;gap:var(--learn-space-3);min-width:0}
+.node-head .node-no,.node .status{height:26px;display:inline-flex;align-items:center;justify-content:center;padding-top:0;padding-bottom:0;line-height:1}
 .node-head .node-caret{line-height:26px}
 .node-head .node-title{line-height:26px}
 .node-no{font-family:var(--mono);font-size:11px;color:var(--soft);border:1px solid var(--rule);border-radius:4px;padding:2px 7px;flex:none}
-.node-title{flex:1;font-size:15.5px;font-weight:600;margin:0}
-.node-ess{margin:6px 0 0;color:var(--muted);font-size:13px;min-height:42px}
+.node-title{flex:1;min-width:0;font-size:15.5px;font-weight:600;margin:0;overflow-wrap:anywhere}
+.node-description{display:grid;gap:var(--learn-space-2);margin-top:var(--learn-space-2);min-width:0}
+.node-ess{margin:0;color:var(--learn-muted);font-size:13px;overflow-wrap:anywhere}
+.node-ess:empty{display:none}
+.node-state{display:flex;flex-wrap:wrap;gap:var(--learn-space-2);align-items:center}
 .status{font-size:11.5px;border-radius:12px;padding:3px 10px;flex:none;white-space:nowrap;border:1px solid var(--rule);color:var(--muted);background:#fff}
 .status.locked{color:var(--lock)}
 .status.unlocked{color:var(--accent);border-color:rgba(235,108,54,.4);background:var(--accent-tint)}
@@ -99,12 +102,13 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .empty-note{color:var(--soft);font-size:13.5px}
 /* 单元状态标记（卡片） */
 .node-caret{font-family:var(--mono);font-size:11px;color:var(--soft);flex:none;width:12px;text-align:center}
-.node-head .ai-mini{margin-left:auto;font-size:11px;padding:3px 10px;border-color:rgba(235,108,54,.45);color:var(--accent);flex:none}
+.node-foot .ai-mini{border-color:var(--learn-accent);color:var(--learn-accent);flex:none}
 .node.selected{border-color:var(--soft);border-left-color:var(--group-color,var(--lock));box-shadow:0 0 0 2px var(--accent-tint)}
 .node.expanded{box-shadow:0 10px 26px -18px rgba(45,49,66,.45)}
-.node-foot{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:9px;border-top:1px dashed var(--rule)}
-.node-foot .marks{display:flex;gap:5px;flex-wrap:wrap}
-.mark-btn{font-family:var(--sans);border:1px solid var(--rule);background:#fff;border-radius:5px;color:var(--soft);cursor:pointer;padding:2px 8px;line-height:1.6;flex:none}
+.node-foot{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:var(--learn-space-2);margin-top:var(--learn-space-3);padding-top:var(--learn-space-3);border-top:1px dashed var(--learn-border)}
+.node-foot .marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--learn-space-2);min-width:0}
+.node-foot .btn{min-width:0;padding-left:var(--learn-space-2);padding-right:var(--learn-space-2);overflow-wrap:anywhere}
+.mark-btn:not(.btn){font-family:var(--sans);border:1px solid var(--rule);background:#fff;border-radius:5px;color:var(--soft);cursor:pointer;padding:2px 8px;line-height:1.6;flex:none}
 .mark-btn.mini{font-size:11px}
 .mark-btn.big{font-size:12.5px;padding:4px 11px}
 .mark-btn:hover{border-color:var(--accent);color:var(--accent)}
@@ -271,10 +275,12 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   .agent-dialog .panel-head{padding-top:4px}
   .graph-wrap{padding:16px}
   .node{padding:14px}
-  .node-head{flex-wrap:wrap;gap:8px}
-  .node-title{flex-basis:calc(100% - 70px);min-width:0;overflow-wrap:anywhere}
+  .node-head{gap:var(--learn-space-2)}
   .node-head .node-title{line-height:26px}
   .node-ess{overflow-wrap:anywhere}
+  .node-foot{grid-template-columns:minmax(0,1fr)}
+  .node-foot .marks{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .node-foot .ai-mini{width:100%}
   .panel-head,.panel-body{padding:14px 16px}
   .legend{gap:8px 14px}
   .spec-table th{width:78px}
