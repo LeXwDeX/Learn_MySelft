@@ -101,6 +101,7 @@ function renderNodeDetail(id) {
         var mp = scope.querySelector('.mat-pane-material'), qp = scope.querySelector('.mat-pane-quiz');
         if (mp) mp.hidden = session.matTab !== 'material';
         if (qp) qp.hidden = session.matTab !== 'quiz';
+        if (mp && !mp.hidden) format.renderMathIn(mp);
       });
     }
     assistant.setFoot('');

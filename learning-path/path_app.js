@@ -1693,6 +1693,7 @@ function syncAiBusy() {
 
 function aiRenderInto(el, text, streaming) {
     if (!el) return;
+    if (window.LearnMarkdown && window.LearnMarkdown.dispose) window.LearnMarkdown.dispose(el);
     el.innerHTML = format.mdRender(text, {streaming:!!streaming});
     if (!streaming && window.LearnMarkdown) window.LearnMarkdown.exportButton(el, text, "AI讲解.md");
     format.renderMathIn(el);
@@ -1952,6 +1953,7 @@ function renderNodeDetail(id) {
         var mp = scope.querySelector('.mat-pane-material'), qp = scope.querySelector('.mat-pane-quiz');
         if (mp) mp.hidden = session.matTab !== 'material';
         if (qp) qp.hidden = session.matTab !== 'quiz';
+        if (mp && !mp.hidden) format.renderMathIn(mp);
       });
     }
     assistant.setFoot('');

@@ -43,6 +43,15 @@ class RenderReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(review.ReviewIssue, '公式'):
             self.run_review({'complete': True, 'images': ['data:image/jpeg;base64,AA=='], 'errors': ['公式无效']}, {})
 
+    def test_learning_scene_alone_requires_visual_review(self):
+        for fence in ('```', '~~~', '````'):
+            with self.subTest(fence=fence):
+                self.candidate = {'study_notes': fence + 'learn-scene\n{}\n' + fence}
+                self.assertEqual(self.run_review({'complete': True, 'images': ['data:image/jpeg;base64,AA=='], 'errors': []},
+                                                {'ok': True, 'issues': []})['status'], 'passed')
+                with self.assertRaisesRegex(review.ReviewIssue, '场景'):
+                    self.run_review({'complete': True, 'images': ['data:image/jpeg;base64,AA=='], 'errors': ['场景参数无效']}, {})
+
     def test_model_failures_keep_distinct_diagnostics(self):
         captured = {'complete': True, 'images': ['data:image/jpeg;base64,AA=='], 'errors': []}
         for error, reason in [(TimeoutError(), 'model_timeout'), (ValueError(), 'model_reply_invalid'),

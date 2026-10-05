@@ -227,6 +227,7 @@ function syncAiBusy() {
 
 function aiRenderInto(el, text, streaming) {
     if (!el) return;
+    if (window.LearnMarkdown && window.LearnMarkdown.dispose) window.LearnMarkdown.dispose(el);
     el.innerHTML = format.mdRender(text, {streaming:!!streaming});
     if (!streaming && window.LearnMarkdown) window.LearnMarkdown.exportButton(el, text, "AI讲解.md");
     format.renderMathIn(el);

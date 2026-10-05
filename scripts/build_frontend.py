@@ -17,6 +17,7 @@ def shared_head(manifest: dict) -> str:
     for module in manifest['scripts']:
         lines.append(f'<script src="/learn/assets/{module["source"]}"></script>')
     lines.extend(['<link rel="stylesheet" href="/learn/assets/markdown.css">',
+                  '<link rel="stylesheet" href="/learn/assets/learning-scenes.css">',
                   '<link rel="stylesheet" href="/learn/assets/materials.css">'])
     return '\n'.join(lines)
 
