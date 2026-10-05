@@ -55,7 +55,9 @@ SPEC 的 JSON 字段（全部必填）：
     "node": """你在为一个学习节点写学习材料。
 
 只输出一个 JSON 对象字面量，不要解释、不要把整个 JSON 包进代码围栏，格式：
-{"study_notes":"...","key_points":["..."],"examples":["..."],"misconceptions":["..."],"quiz":{"questions":[{"type":"choice","q":"...","options":["...","...","...","..."],"answer":"A","explain":"...","points":40},{"type":"fill","q":"...","answer":"...","explain":"...","points":30},{"type":"short","q":"...","answer":"...","explain":"...","points":30}]}}
+{"study_notes":"...","key_points":["..."],"examples":["..."],"misconceptions":["..."],"quiz":{"questions":[{"type":"choice","q":"示例一：请在四个符号中选出正确占位项。","options":["占位选项A","占位选项B","占位选项C","占位选项D"],"answer":"A","explain":"示例解析。","points":10,"scoring":{"mode":"single_choice"}},{"type":"choice","q":"示例二：本题请选择一项标记作为答案。","options":["占位选项A","占位选项B","占位选项C","占位选项D"],"answer":"B","explain":"示例解析。","points":10,"scoring":{"mode":"single_choice"}},{"type":"choice","q":"示例三：从下列四个占位答案中选一个。","options":["占位选项A","占位选项B","占位选项C","占位选项D"],"answer":"C","explain":"示例解析。","points":10,"scoring":{"mode":"single_choice"}},{"type":"choice","q":"示例四：以下哪一项对应本题考查的定义？","options":["占位选项A","占位选项B","占位选项C","占位选项D"],"answer":"D","explain":"示例解析。","points":10,"scoring":{"mode":"single_choice"}},{"type":"fill","q":"示例填空题：填入 ____。","answer":"占位答案","explain":"示例解析。","points":30,"scoring":{"mode":"per_blank"},"blanks":[{"id":"b1","answer":"占位答案","accepted_answers":["占位答案"],"match":"text","points":30}]},{"type":"short","q":"示例简答题：请写出你的思路和答案。","answer":"思路：示例。答案：示例。","explain":"示例解析。","points":30,"scoring":{"mode":"rubric"},"rubric":[{"description":"示例评分要求。","points":30}]}]}}
+
+示例只说明字段与评分结构。题干、选项、答案、解析和评分点须按本节点知识重新编写，不得复制占位文本。
 
 规则：
 1. study_notes 为正文，≤1200 字，可用 `## ` 小标题与行内 $...$ 公式；只写纯文本/markdown，禁止输出 HTML 标签。
