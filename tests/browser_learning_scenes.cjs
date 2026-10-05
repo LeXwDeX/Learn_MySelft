@@ -70,7 +70,7 @@ async function main() {
       body:{key, node, spec, dep_titles:[]},
       request_id:randomBytes(16).toString('hex')
     }});
-    assert.equal(response.status(), 200, 'node-generation job was not accepted');
+    assert.equal(response.status(), 202, 'node-generation job was not accepted');
     return pollJob((await response.json()).job);
   }
   async function readMaterial(key) {
