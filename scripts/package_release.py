@@ -31,7 +31,7 @@ def collect_files(root: Path) -> dict[str, dict[str, bytes]]:
     backend['architecture.json'] = checked_source(root, 'study-assistant/architecture.json').read_bytes()
     shared = json.loads((root / 'shared/manifest.json').read_text())
     names = [module['source'] for module in shared['scripts']]
-    names += ['ui.css', 'markdown.css', 'materials.css', 'vendor-mermaid.js', 'vendor-manifest.json']
+    names += ['ui.css', 'markdown.css', 'learning-scenes.css', 'materials.css', 'vendor-mermaid.js', 'vendor-manifest.json']
     for name in names:
         if not re.fullmatch(r'[a-zA-Z0-9_.-]+\.(js|css|json)', name):
             raise ValueError(f'Invalid shared release asset: {name}')

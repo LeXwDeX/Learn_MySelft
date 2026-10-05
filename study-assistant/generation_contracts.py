@@ -234,7 +234,11 @@ def _norm_node_detail(obj):
     """归一 NodeDetail：study_notes + 三个清单 + 最多 6 题自测（4 选择+1 填空+1 简答契约，兼容旧格式）。"""
     if not isinstance(obj, dict):
         return None
-    notes = clip(obj.get("study_notes") or obj.get("notes"), 3000)
+    notes_source = obj.get("study_notes") or obj.get("notes")
+    # Four bounded JSON scenes must survive normalization as complete Markdown.
+    # This marker selects a text budget; it does not validate or execute content.
+    notes_limit = 50000 if isinstance(notes_source, str) and re.search(r'(?:`{3,}|~{3,})learn-scene\b', notes_source) else 3000
+    notes = clip(notes_source, notes_limit)
     quiz = obj.get("quiz") if isinstance(obj.get("quiz"), dict) else {}
     qs = []
     for q in quiz.get("questions") if isinstance(quiz.get("questions"), list) else []:

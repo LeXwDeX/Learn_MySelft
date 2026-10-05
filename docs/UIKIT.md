@@ -61,6 +61,7 @@ UI Kit 为首页、学习路径、测验地图和测验窗口提供共享样式�
 | `shared/uikit/navigation.css` | 共享 | 用户导航、只读标记和会话失效覆盖页。 |
 | `shared/uikit/feedback.css` | 共享 | 状态栏、toast、任务摘要和响应式反馈。 |
 | `shared/markdown.css` | 共享功能 | Markdown、代码、表格和引用内容。 |
+| `shared/learning-scenes.css` | 共享功能 | 学习图形、动画、参数与视角控件；使用 UI Kit tokens。 |
 | `shared/materials.css` | 共享功能 | 上传资料组件。 |
 | `home/home.css` | 首页 | 登录、账号管理、资料库和首页布局。 |
 | `learning-path/path.css` | 学习路径 | 学习阶段、路径图、节点卡片和学习面板。 |
@@ -83,10 +84,13 @@ UI Kit 为首页、学习路径、测验地图和测验窗口提供共享样式�
 <script src="/learn/assets/titles.js"></script>
 <script src="/learn/assets/materials.js"></script>
 <script src="/learn/assets/vendor-markdown-it.js"></script>
+<script src="/learn/assets/learning-scenes.js"></script>
 <script src="/learn/assets/markdown.js"></script>
 ```
 
 页面自身的生成脚本在共享依赖之后加载。页面需要 Markdown、KaTeX 和代码高亮时，先加载所需的 vendor 脚本，再启动页面包。CSS 同样先加载 `ui.css`，然后加载 Markdown、资料和页面专属 CSS。`scripts/check_architecture.py` 会检查共享脚本依赖和 HTML 中的顺序。
+
+`learning-scenes.js` 提供 `LearnScenes`，由 Markdown 的 `enhance` 挂载 `learn-scene` JSON 场景。配套加载 `/learn/assets/learning-scenes.css`。场景按需使用线性变换、割线或 3D 曲面切片，默认不自动播放。协议与学习约束见 [学习正文交互场景](LEARNING_SCENES.md)。
 
 ## 第三方资源
 

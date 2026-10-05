@@ -12,6 +12,7 @@ node tests/test_quiz_frontend.js
 node tests/test_quiz_save_state.js
 node tests/test_flywheel_frontend.js
 node tests/test_markdown.js
+node tests/test_learning_scenes.js
 node tests/test_logout_recovery.js
 node tests/test_ui_kit.js
 node tests/test_page_module_contracts.js

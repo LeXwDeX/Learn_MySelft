@@ -151,6 +151,34 @@ flowchart TD
 """
 
 
+SCENE_TEACHING = r"""
+交互场景（只用于学习节点正文 study_notes 与 AI 辅导讲解；不要用于测验题、答案/解析、重出题、测验地图、评分、建议问题或资料采集）
+按需选择场景。普通文字、公式或 Mermaid 已足够时不要加场景。一个回答或单元通常最多 1 个，最多 4 个。默认由学习者点击开始，不自动播放。场景前写必要的引导，summary 提供脱离图形也能理解的简要说明。自然语言沿用原限制：节点正文不超过 1200 字，辅导单条回答默认不超过 250 字；learn-scene JSON 块不计入字数。
+learn-scene 围栏内只输出下面定义的 JSON 对象；生成节点材料时，把围栏作为 study_notes 正文内容并保持外层材料 JSON 合同。不要输出 HTML、JavaScript、CSS、URL、脚本或可执行表达式。不要声称已经运行浏览器或验证渲染。未知字段、未知 type/version 或字段越界会被拒绝；不要增加自定义字段。
+
+围栏格式为 ```learn-scene，内部只放一个 JSON 对象；每种类型的完整示例见下方。
+
+通用规则：唯一顶层对象；version 必须是数字 1；type/title/summary 必填。title 去除首尾空白后非空且最多 80 个字符；summary 去除首尾空白后非空且最多 500 个字符。JSON 原文最多 12000 个字符。拒绝未知字段、非有限数、NaN/Infinity 和布尔值冒充数字。每个字段只输出一次。
+
+type=linear_transform：允许字段为 version、type、title、summary、matrix、vector。matrix 必填，格式为行顺序的 2×2 数组；每项是 [-4,4] 内的有限数字。vector 可省略，默认 [1,1]；给出时必须是两个 [-3,3] 内的有限数字。显示列向量 Ae₁、Ae₂，并展示 Av=v₁·Ae₁+v₂·Ae₂。不要把列误读成矩阵的行。
+```learn-scene
+{"version":1,"type":"linear_transform","title":"列向量变换","summary":"A 的两列是 Ae₁、Ae₂；v=(1,1) 的像为 Av=(3,3)。","matrix":[[2,1],[1,2]],"vector":[1,1]}
+```
+
+type=secant：允许字段为 version、type、title、summary、coefficients、domain、baseX、gap。coefficients 必填，升幂排列，1~5 项，每项是 [-20,20] 内有限数字；例如 [0,0,1] 表示 x²。domain 必填为两个 [-5,5] 内有限数字，且左端小于右端。baseX 必填并在 domain 内。gap 必填为对象 {"min":数,"max":数,"value":数}，满足 0.01≤min≤value≤max≤3 且 baseX+max≤domain 右端。允许 min=max；此时滑块禁用。
+```learn-scene
+{"version":1,"type":"secant","title":"割线趋近切线","summary":"比较固定点和右侧邻近点连线的斜率。","coefficients":[0,0,1],"domain":[-0.25,2.7],"baseX":1,"gap":{"min":0.02,"max":1.5,"value":1.2}}
+```
+
+type=surface_slice：允许字段为 version、type、title、summary、coefficient、radius、height。coefficient 必填且在 [0.2,5]；radius 必填且在 [0.5,3]。height 必填为 {"min":数,"max":数,"value":数}，满足 0<min≤value≤max≤coefficient·radius²。允许 min=max；此时滑块禁用。模型为 z=coefficient·(x²+y²)，水平截面半径为 sqrt(height/coefficient)。
+```learn-scene
+{"version":1,"type":"surface_slice","title":"曲面水平截面","summary":"改变高度，观察圆形交线半径的变化。","coefficient":1,"radius":1.5,"height":{"min":0.16,"max":2,"value":1.44}}
+```
+
+场景配置只是数据。受信任的前端 renderer 负责校验并绘制支持的场景。不得把用户文本当 HTML 插入；场景不得执行代码、访问网络或创建考试答案。讲解遵守引导式学习纪律，不能借图泄露正在作答题目的答案。
+"""
+
+
 SYSTEM_TMPL = """你是一位严谨、耐心的学习辅导老师，正在辅导一位成年学习者系统学习当前主题、打牢基础。
 
 学生此刻正在学习的单元：
@@ -218,6 +246,8 @@ def _path_system(kind):
     prompt = _PATH_SYSTEM.get(kind, "")
     if kind in ("node", "requiz", "quizmap"):
         prompt += MARKDOWN_TEACHING
+    if kind == "node":
+        prompt += SCENE_TEACHING
     if kind in ("node", "requiz", "quizmap"):
         prompt += """
 评分契约：每道简答题必须附 rubric 数组，每项为 {"description":"一个可独立检查的具体评分要求","points":整数分值}，1~8项，总和等于本题 points；参考答案必须完整覆盖全部评分点。
@@ -268,6 +298,7 @@ def build_system(ctx):
         quizzes=_block("自测", ctx.get("quizzes"), 4),
     )
     prompt += MARKDOWN_TEACHING
+    prompt += SCENE_TEACHING
     prompt += "\n个人薄弱点必须有学生实际作答证据；常见误区不等于这位学生已经犯的错误。"
     if ctx.get("material_status") in ("missing", "generating", "failed"):
         prompt += (

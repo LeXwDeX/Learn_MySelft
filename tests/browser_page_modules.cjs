@@ -11,8 +11,10 @@ const questions = [
 ];
 const issued = {id:'fixture-round', questions, attempts:[], draft:null};
 const quiz = {title:'模块回归测验',round_id:issued.id,questions,rounds:[issued],sourceSlug:'module-fixture',sourceKey:'u0/learn-path-v1-module-fixture'};
+const scene = {version:1,type:'linear_transform',title:'列向量',summary:'观察标准基底如何变换。',matrix:[[2,1],[1,2]]};
 const learning = {title:'模块回归学习',topic:'基础计算',stage:'learning',plan:{title:'基础计算',nodes:[{id:'n1',title:'基础单元',deps:[]}]},
-  nodeDetail:{n1:{study_notes:'学习正文',quiz}},nodeState:{}};
+  nodeDetail:{n1:{study_notes:'学习正文\n\n```learn-scene\n'+JSON.stringify(scene)+'\n```',quiz}},
+  nodeState:{n1:{lastResult:{round_id:issued.id,score:80,pass:true}}}};
 (async () => {
   const browser = await chromium.launch({headless:true, executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
   const page = await browser.newPage({viewport:{width:1440,height:1000}});
@@ -23,7 +25,7 @@ const learning = {title:'模块回归学习',topic:'基础计算',stage:'learnin
     if (url.pathname.startsWith('/diagram-design/learning-path/')) file=path.join(root,'learning-path',path.basename(url.pathname));
     if (url.pathname.startsWith('/learn/assets/')) {
       const relative=url.pathname.slice('/learn/assets/'.length);
-      if (relative.endsWith('.css') || ['ui.js','titles.js','materials.js','markdown.js','vendor-markdown-it.js'].includes(relative)) file=path.join(root,'shared',relative);
+      if (relative.endsWith('.css') || ['ui.js','titles.js','materials.js','learning-scenes.js','markdown.js','vendor-markdown-it.js'].includes(relative)) file=path.join(root,'shared',relative);
     }
     return route.fulfill({contentType:url.pathname.endsWith('.html')?'text/html':url.pathname.endsWith('.css')?'text/css':'application/javascript',body:file&&fs.existsSync(file)?fs.readFileSync(file,'utf8'):''});
   });
@@ -47,6 +49,14 @@ const learning = {title:'模块回归学习',topic:'基础计算',stage:'learnin
       await page.goto('http://fixture.invalid/learn/u/u0/'+kind+'.html?t=module-fixture');
       if(kind==='learning-path'){
         await page.locator('#node-n1 .node-head').click();
+        assert(await page.locator('#node-n1 .mat-pane-material').evaluate(el=>el.hidden), 'existing result initially opens the quiz tab');
+        assert.equal(await page.locator('#node-n1 [data-scene="pending"]').count(),1);
+        assert.equal(await page.locator('#node-n1 .learn-scene').count(),0,'hidden lesson does not mount a scene');
+        await page.locator('#node-n1 [data-mat="material"]').click();
+        await page.locator('#node-n1 [data-scene="ready"]').waitFor();
+        assert.equal(await page.locator('#node-n1 .learn-scene').count(),1,'switching from quiz mounts the previously hidden lesson');
+        await page.locator('#node-n1 [data-mat="material"]').click();
+        assert.equal(await page.locator('#node-n1 .learn-scene').count(),1,'repeated lesson selection does not duplicate its scene');
         await page.locator('#node-n1 [data-mat="quiz"]').click();
       }
       await page.getByRole('button',{name:'打开测验',exact:true}).click();
@@ -74,6 +84,6 @@ const learning = {title:'模块回归学习',topic:'基础计算',stage:'learnin
     await page.getByRole('button',{name:'生成测验',exact:true}).waitFor();
     assert.equal(await page.locator('.lrow').count(),2,'catalog includes learning source and saved exam');
     assert.deepEqual(errors,[]);
-    console.log('PASS generated learning/quiz page resource loading, real modal choices/blanks, persisted drafts, Escape, catalog and 1440/390 geometry');
+    console.log('PASS generated pages, existing result quiz-to-lesson scene reveal, modal drafts, Escape, catalog and 1440/390 geometry');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

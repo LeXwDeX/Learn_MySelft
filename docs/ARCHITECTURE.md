@@ -102,7 +102,9 @@ flowchart LR
 
 学习页面的 `path.hooks` 由入口连接 `renderDocumentTitle`、`renderPlan`、`selectNode`、`genAllStart`、`genQuizMap`、`renderAgentPanel`、`showAgent`、`requestNodeDetail`、`syncAiMaterial` 和 `renderNodeDetail`。测验地图 hooks 连接 `renderGaps`、`runGaps`、`runRefine`。测验窗口 hooks 连接 `status`、`renderSaveState`、`updateProgress`。业务模块通过 hooks 调用这些公开回调，不直接读取高层模块内部状态。
 
-共享脚本使用 `shared/manifest.json` 声明全局接口和依赖。它们按 HTML 顺序加载，不参与页面工厂包：`ui.js`、`user-shell.js`、`user-session.js`、`saves.js`、`jobs.js`、`titles.js`、`materials.js`、Markdown vendor 与 `markdown.js`。第三方文件保留 vendor 来源和独立清单，不改写为本项目模块。
+共享脚本使用 `shared/manifest.json` 声明全局接口和依赖。它们按 HTML 顺序加载，不参与页面工厂包：`ui.js`、`user-shell.js`、`user-session.js`、`saves.js`、`jobs.js`、`titles.js`、`materials.js`、Markdown vendor、`learning-scenes.js` 与 `markdown.js`。第三方文件保留 vendor 来源和独立清单，不改写为本项目模块。
+
+学习节点和辅导 Agent 可在既有 Markdown 中生成 `learn-scene` JSON 围栏。`LearnMarkdown.enhance()` 调用 `LearnScenes.enhance()`，校验固定版本、类型、字段和数值范围，再挂载受信任的图形与控件。场景只描述三种数学图形，不执行模型代码，不访问网络。原始 Markdown 沿用现有保存、同步和导出；动画与参数状态仅存在于页面。场景移除时释放动画、监听器和尺寸观察。隔离渲染检查加载同一模块和样式，并把场景错误作为检查失败。协议见 [学习正文交互场景](LEARNING_SCENES.md)。
 
 ## 构建、门禁与发布包
 

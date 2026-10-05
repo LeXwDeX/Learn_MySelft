@@ -68,10 +68,18 @@
       "vendor": true
     },
     {
+      "source": "learning-scenes.js",
+      "global": "LearnScenes",
+      "dependencies": [
+        "LearnUI"
+      ]
+    },
+    {
       "source": "markdown.js",
       "global": "LearnMarkdown",
       "dependencies": [
-        "markdownit"
+        "markdownit",
+        "LearnScenes"
       ]
     }
   ]

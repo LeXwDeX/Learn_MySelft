@@ -29,12 +29,14 @@ def capture(source, config):
                         return
                     request.fulfill(body=file.read_bytes(), content_type=mimetypes.guess_type(str(file))[0] or 'application/octet-stream')
                 page.route('**/*', route)
-                page.set_content('''<!doctype html><meta charset="utf-8"><base href="http://render.local/"><link rel="stylesheet" href="http://render.local/learn/assets/markdown.css">
+                page.set_content('''<!doctype html><meta charset="utf-8"><base href="http://render.local/"><link rel="stylesheet" href="http://render.local/learn/assets/ui.css">
+<link rel="stylesheet" href="http://render.local/learn/assets/markdown.css"><link rel="stylesheet" href="http://render.local/learn/assets/learning-scenes.css">
 <link rel="stylesheet" href="http://render.local/katex/katex.min.css"><style>body{margin:20px;font:16px sans-serif} .katex-display{overflow-x:auto}</style>
 <script src="http://render.local/learn/assets/vendor-markdown-it.js"></script><script src="http://render.local/katex/katex.min.js"></script>
+<script src="http://render.local/learn/assets/ui.js"></script><script src="http://render.local/learn/assets/learning-scenes.js"></script>
 <script src="http://render.local/learn/assets/markdown.js"></script><main></main>''', wait_until='load')
-                page.evaluate('''async source => {const root=document.querySelector('main');root.innerHTML=LearnMarkdown.render(source);await LearnMarkdown.enhance(root);await document.fonts.ready;}''', source)
-                errors.extend(page.evaluate('''() => Array.from(document.querySelectorAll('.md-math-fallback,[data-diagram="failed"],.md-fallback')).map(el=>el.textContent.slice(0,180))'''))
+                page.evaluate('''async source => {const root=document.querySelector('main');root.innerHTML=LearnMarkdown.render(source);await LearnMarkdown.enhance(root);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}''', source)
+                errors.extend(page.evaluate('''() => Array.from(document.querySelectorAll('.md-math-fallback,[data-diagram="failed"],[data-scene="error"],.md-fallback')).map(el=>el.textContent.slice(0,180))'''))
                 height = page.evaluate('document.documentElement.scrollHeight')
                 if height > 10000:
                     complete = False

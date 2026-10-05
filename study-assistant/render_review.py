@@ -55,7 +55,7 @@ def review(candidate, ask, config_path=None):
     source = markdown(candidate)
     digest = hashlib.sha256(source.encode()).hexdigest()
     report = {'source_sha256': digest, 'status': 'not_needed'}
-    if not re.search(r'\$|\\[([]|```mermaid|~~~mermaid|\|.*\||\[\^|\[!', source):
+    if not re.search(r'\$|\\[([]|(?:`{3,}|~{3,})(?:mermaid|learn-scene)\b|\|.*\||\[\^|\[!', source):
         return report
     path = Path(config_path) if config_path else Path(__file__).with_name('render-review.json')
     if not path.exists():
