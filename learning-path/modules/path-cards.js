@@ -47,7 +47,7 @@ function renderPlan() {
     requestAnimationFrame(drawEdges);
   }
 
-// 卡片结构：卡头（编号+标题+状态+四态+AI） → 卡体（选项卡+内容）
+// 卡片结构：标题行 → 说明与状态 → 操作区 → 卡体（选项卡+内容）
 
 function nodeCard(n, entry) {
     var done = domain.isDone(n.id);
@@ -71,12 +71,16 @@ function nodeCard(n, entry) {
     el.innerHTML = '<div class="node-head">' +
       '<span class="node-caret">▸</span>' +
       '<span class="node-no">' + format.esc(domain.dispId(n.id)) + '</span>' +
-      '<h3 class="node-title">' + format.esc(n.title) + '</h3>' +
-      '<span class="status ' + cls + '">' + label + '</span>' +
+      '<h3 class="node-title">' + format.esc(n.title) + '</h3></div>' +
+      '<div class="node-description"><p class="node-ess">' + format.esc(n.essence || '') + '</p>' +
+      '<div class="node-state"><span class="status ' + cls + '">' + label + '</span></div></div>' +
+      '<div class="node-foot" role="group" aria-label="单元操作"><div class="marks" role="group" aria-label="学习状态">' + shell.markButtonsHtml(n.id, 'mini') + '</div>' +
       '<button class="btn ai-mini" type="button" data-ai="' + format.esc(n.id) + '">AI 辅助</button></div>' +
-      '<p class="node-ess">' + format.esc(n.essence || '') + '</p>' +
-      '<div class="node-foot"><div class="marks">' + shell.markButtonsHtml(n.id, 'mini') + '</div></div>' +
       '<div class="node-content" hidden></div>';
+    el.querySelectorAll('.node-foot .mark-btn').forEach(function (button) {
+      button.classList.remove('mini');
+      button.classList.add('btn');
+    });
     el.addEventListener('click', function () { onCardClick(n.id); });
     shell.bindMarkButtons(el, n.id);
     var aiBtn = el.querySelector('.ai-mini');
