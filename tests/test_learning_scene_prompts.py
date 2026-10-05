@@ -9,6 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'study-assistant'))
 import prompts
+from quiz_harness import validate_questions
 
 
 def scene_examples():
@@ -25,6 +26,29 @@ def number_in(value, low, high):
 
 
 class LearningScenePromptTests(unittest.TestCase):
+    def test_node_format_example_satisfies_current_quiz_contract(self):
+        prompt = prompts._path_system("node")
+        start = prompt.index("{")
+        example, _end = json.JSONDecoder().raw_decode(prompt[start:])
+        questions = example["quiz"]["questions"]
+
+        validate_questions(questions, node=True)
+
+        self.assertEqual(len(questions), 6)
+        self.assertEqual([q["type"] for q in questions], ["choice"] * 4 + ["fill", "short"])
+        self.assertEqual([q["points"] for q in questions], [10, 10, 10, 10, 30, 30])
+        self.assertEqual(sum(q["points"] for q in questions), 100)
+        self.assertEqual([q["answer"] for q in questions[:4]], ["A", "B", "C", "D"])
+        self.assertEqual([q["scoring"]["mode"] for q in questions], [
+            "single_choice", "single_choice", "single_choice", "single_choice", "per_blank", "rubric"
+        ])
+        fill, short = questions[4:]
+        self.assertEqual(fill["blanks"], [{
+            "id": "b1", "answer": "占位答案", "accepted_answers": ["占位答案"],
+            "match": "text", "points": 30
+        }])
+        self.assertEqual(sum(item["points"] for item in short["rubric"]), 30)
+
     def test_only_node_and_tutor_prompts_offer_scenes(self):
         node = prompts._path_system("node")
         tutor = prompts.build_system({"material_status": "ready", "notes": "正文"})
