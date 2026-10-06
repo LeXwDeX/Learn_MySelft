@@ -47,7 +47,7 @@ function renderPlan() {
     requestAnimationFrame(drawEdges);
   }
 
-// 卡片结构：标题行 → 说明与状态 → 操作区 → 卡体（选项卡+内容）
+// 卡片结构：标题与学习状态 → 说明与门控状态 → AI 操作 → 卡体（选项卡+内容）
 
 function nodeCard(n, entry) {
     var done = domain.isDone(n.id);
@@ -66,16 +66,17 @@ function nodeCard(n, entry) {
     el.dataset.group = entry.root_id;
     el.dataset.depth = entry.depth;
     el.style.setProperty('--group-color', 'var(--learn-level-' + Math.min(Math.max(entry.depth, 1), 4) + ')');
-    el.innerHTML = '<div class="node-head">' +
+    el.innerHTML = '<div class="node-header"><div class="node-head">' +
       '<span class="node-caret">▸</span>' +
       '<span class="node-no">' + format.esc(domain.dispId(n.id)) + '</span>' +
       '<h3 class="node-title">' + format.esc(n.title) + '</h3></div>' +
+      '<div class="node-actions"><div class="marks" role="group" aria-label="学习状态">' + shell.markButtonsHtml(n.id, 'mini') + '</div></div></div>' +
       '<div class="node-description"><p class="node-ess">' + format.esc(n.essence || '') + '</p>' +
       '<div class="node-state"><span class="status ' + cls + '">' + label + '</span></div></div>' +
-      '<div class="node-foot" role="group" aria-label="单元操作"><div class="marks" role="group" aria-label="学习状态">' + shell.markButtonsHtml(n.id, 'mini') + '</div>' +
+      '<div class="node-foot" role="group" aria-label="单元操作">' +
       '<button class="btn ai-mini" type="button" data-ai="' + format.esc(n.id) + '">AI 辅助</button></div>' +
       '<div class="node-content" hidden></div>';
-    el.querySelectorAll('.node-foot .mark-btn').forEach(function (button) {
+    el.querySelectorAll('.node-actions .mark-btn').forEach(function (button) {
       button.classList.remove('mini');
       button.classList.add('btn');
     });
