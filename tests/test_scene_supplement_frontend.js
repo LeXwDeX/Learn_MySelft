@@ -19,20 +19,34 @@ function harness({readOnly = false, key = 'u0/topic-a'} = {}) {
   const nodeState = {score: 80, completed: true, lastResult: {score: 80, pass: true, round_id: 'r1'}};
   const detail = {study_notes: '原有正文', sceneSupplement: {version: 1, source_sha256: 'old'}, quiz};
   const model = {
-    state: {plan: {nodes: [{id: 'n1', title: '节点', objectives: []}]}, nodeDetail: {n1: detail}, nodeState: {n1: nodeState}, topic: '测试'},
+    state: {plan: {nodes: [{id: 'n1', title: '节点', objectives: []}, {id: 'n2', title: '另一个节点', objectives: []}]}, nodeDetail: {n1: detail, n2: {study_notes: '另一个正文', quiz: {round_id: 'r2', questions: [{q: 'second'}]}}}, nodeState: {n1: nodeState}, topic: '测试'},
     session: {expandedId: 'n1', materialSlug: 'topic-a'}
   };
   const status = {textContent: ''};
   const button = {disabled: false, listener: null, addEventListener(name, listener) { if (name === 'click') this.listener = listener; }};
+  function tab(value) {
+    return {value, listener: null, on: false, classList: {toggle(name, enabled) { if (name === 'on') this.owner.on = enabled; }, owner: null},
+      getAttribute(name) { return name === 'data-mat' ? value : null; },
+      addEventListener(name, listener) { if (name === 'click') this.listener = listener; },
+      click() { if (this.listener) this.listener.call(this); }};
+  }
+  const tabs = [tab('material'), tab('quiz')];
+  tabs.forEach(item => { item.classList.owner = item; });
+  const materialPane = {hidden: false}, quizPane = {hidden: true};
   const scope = {
-    innerHTML: '',
+    _html: '',
+    get innerHTML() { return this._html; },
+    set innerHTML(value) { this._html = value; tabs[0].on = /class="mat-tab on"[^>]*data-mat="material"/.test(value); tabs[1].on = /class="mat-tab on"[^>]*data-mat="quiz"/.test(value); materialPane.hidden = /mat-pane-material" hidden/.test(value); quizPane.hidden = /mat-pane-quiz" hidden/.test(value); },
     querySelector(selector) {
       if (selector === '.scene-supplement-status') return status;
-      if (selector === '.scene-supplement-btn') return button;
+      if (selector === '.scene-supplement-btn') return /scene-supplement-btn/.test(this._html) ? button : null;
       if (selector === '.notes') return {textContent: ''};
+      if (selector === '.mat-pane-material') return materialPane;
+      if (selector === '.mat-pane-quiz') return quizPane;
+      if (selector === '#quiz-round-select') return {value: 'r1'};
       return null;
     },
-    querySelectorAll() { return []; }
+    querySelectorAll(selector) { return selector === '.mat-tab' ? tabs : []; }
   };
   const calls = {post: [], save: 0, sync: [], errors: []};
   let currentKey = key;
@@ -47,22 +61,98 @@ function harness({readOnly = false, key = 'u0/topic-a'} = {}) {
     dispId: id => id, $: () => null
   };
   const domain = {nodeById: id => model.state.plan.nodes.find(node => node.id === id) || null, isDone: () => false, canRefine: () => false};
-  const cards = {cardContentEl: id => id === 'n1' ? scope : null, drawEdges() {}, renderPlan() {}};
+  let api;
+  const cards = {cardContentEl: id => model.state.nodeDetail[id] ? scope : null, drawEdges() {}, renderPlan() { if (api && model.session.expandedId) api.renderNodeDetail(model.session.expandedId); }};
   const assistant = {setFoot() {}, syncAiMaterial(id) { calls.sync.push(id); }};
   const shell = {showError(message) { calls.errors.push(message); }, hideError() {}};
-  const window = {LearnUser: {readOnly}, LearnTitles: {document: () => '测试资料'}};
+  const window = {LearnUser: {readOnly}, LearnTitles: {document: () => '测试资料'}, QuizDialog: {open(options) { window.quizDialogOptions = options; }}};
   const context = {window, define(name, deps, factory) { context.factory = factory; }, requestAnimationFrame() {}, alert() {}, Promise, console};
   vm.runInNewContext(source, context, {filename: 'path-assessment.js'});
   const deps = {'path.format': format, 'path.model': model, 'path.domain': domain, 'path.cards': cards,
     'path.assistant': assistant, 'path.persistence': persistence, 'path.shell': shell};
-  const api = context.factory(deps);
+  api = context.factory(deps);
   return {api, calls, model, detail, quiz, nodeState, scope, status, button, window, persistence,
+    tabs, materialPane, quizPane,
+    clickTab(value) { tabs.find(item => item.value === value).click(); },
+    expand(id) { model.session.expandedId = id; api.renderNodeDetail(id); },
     setKey(value) { currentKey = value; }, setPost(fn) { postImpl = fn; }};
 }
 
 async function tick() { await Promise.resolve(); await Promise.resolve(); }
 
+function assertMaterialSelected(h, message) {
+  assert.equal(h.tabs[0].on, true, message + ': material tab remains selected');
+  assert.equal(h.tabs[1].on, false, message + ': quiz tab remains unselected');
+}
+
 (async function main() {
+  {
+    const h = harness();
+    h.api.renderNodeDetail('n1');
+    assert.equal(h.tabs[1].on, true, 'a scored node opens on its existing quiz result');
+    h.clickTab('material');
+    const pending = deferred();
+    h.setPost(() => pending.promise);
+    const work = h.api.supplementScene('n1');
+    assertMaterialSelected(h, 'supplement start rerender');
+    pending.resolve({node_id: 'n1', source_notes: '原有正文', study_notes: sceneNotes, sceneSupplement: marker});
+    await work;
+    assertMaterialSelected(h, 'supplement success rerender');
+  }
+
+  {
+    const h = harness();
+    h.api.renderNodeDetail('n1');
+    h.clickTab('material');
+    h.setPost(() => Promise.reject(new Error('network down')));
+    await h.api.supplementScene('n1');
+    assertMaterialSelected(h, 'supplement failure rerender');
+  }
+
+  {
+    const h = harness();
+    h.api.renderNodeDetail('n1');
+    h.clickTab('material');
+    h.window.LearnJobs = {list: () => Promise.resolve([{id: 'cancelled', operation: '/path/node/scene', node_id: 'n1', created_ms: 1, status: 'cancelled'}])};
+    await h.api.restoreSceneSupplement();
+    assertMaterialSelected(h, 'cancelled restore rerender');
+  }
+
+  {
+    const h = harness();
+    h.api.renderNodeDetail('n1');
+    h.clickTab('material');
+    h.window.LearnJobs = {list: () => Promise.resolve([{id: 'restored', operation: '/path/node/scene', node_id: 'n1', created_ms: 1, status: 'succeeded',
+      result: {node_id: 'n1', source_notes: '原有正文', study_notes: sceneNotes, sceneSupplement: marker}}])};
+    await h.api.restoreSceneSupplement();
+    assertMaterialSelected(h, 'successful restore rerender');
+  }
+
+  {
+    const h = harness();
+    h.api.renderNodeDetail('n1');
+    h.clickTab('material');
+    h.window.LearnJobs = {
+      list: () => Promise.resolve([{id: 'running', operation: '/path/node/scene', node_id: 'n1', created_ms: 1, status: 'running'}]),
+      get: () => Promise.resolve({id: 'running', status: 'cancelled'})
+    };
+    await h.api.restoreSceneSupplement();
+    assertMaterialSelected(h, 'running job cancelled during restore');
+  }
+
+  {
+    const h = harness();
+    h.api.renderNodeDetail('n1');
+    h.clickTab('material');
+    h.api.openQuizModal('n1', 'r1');
+    h.window.quizDialogOptions.onResult({quiz: {round_id: 'r1', questions: [{q: 'new'}]}, round_id: 'r1', score: 90, pass: true});
+    assert.equal(h.tabs[1].on, true, 'a new quiz result switches the view to the quiz tab');
+    h.expand('n2');
+    assert.equal(h.tabs[0].on, true, 'switching to another node resets to study material');
+    h.expand('n1');
+    assert.equal(h.tabs[1].on, true, 'returning to a node with a result shows its quiz');
+  }
+
   {
     const h = harness(), pending = deferred();
     h.setPost((url, body, options) => { assert.equal(url, '/path/node/scene'); assert.equal(JSON.stringify(body), JSON.stringify({key: 'u0/topic-a', node: {id: 'n1'}})); assert.equal(options.newOperation, true); return pending.promise; });
