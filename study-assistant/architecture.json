@@ -31,6 +31,8 @@
     "render_worker.py": "tools",
     "request_auth.py": "services",
     "research_sources.py": "domain",
+    "scene_contracts.py": "domain",
+    "scene_service.py": "services",
     "service_limits.py": "domain",
     "state_routes.py": "http",
     "state_schema.py": "infrastructure",

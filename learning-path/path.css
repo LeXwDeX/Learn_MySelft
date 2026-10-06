@@ -175,6 +175,9 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .panel-body .katex{font-size:1.02em}
 .notes .katex,.brief .katex{font-size:1.03em}
 .panel-sec{margin:0 0 18px}
+.scene-supplement{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-8px 0 18px}
+.scene-supplement .btn{min-height:36px}
+.scene-supplement-status{color:var(--soft);font-size:12px}
 .panel-sec>h4{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--soft);margin:0 0 7px}
 .panel-sec ul{margin:0;padding-left:18px}
 .panel-sec li{font-size:13.5px;margin:3px 0}

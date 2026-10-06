@@ -10,6 +10,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'study-assistant'))
 import prompts
 from quiz_harness import validate_questions
+from scene_contracts import validate_scene
 
 
 def scene_examples():
@@ -76,7 +77,7 @@ class LearningScenePromptTests(unittest.TestCase):
     def test_examples_are_complete_v1_scenes_with_valid_numeric_ranges(self):
         examples = scene_examples()
         self.assertEqual([item["type"] for item in examples], [
-            "linear_transform", "secant", "surface_slice"
+            "diagram", "linear_transform", "secant", "surface_slice"
         ])
         for scene in examples:
             with self.subTest(scene_type=scene["type"]):
@@ -89,8 +90,11 @@ class LearningScenePromptTests(unittest.TestCase):
                     len(json.dumps(scene, ensure_ascii=False, separators=(",", ":"))),
                     12000,
                 )
+                validate_scene(scene)
 
-        linear, secant, surface = examples
+        diagram, linear, secant, surface = examples
+        self.assertGreater(len(diagram["elements"]), 1)
+        self.assertGreater(len(diagram["steps"]), 1)
         self.assertEqual(set(linear), {"version", "type", "title", "summary", "matrix", "vector"})
         self.assertEqual(len(linear["matrix"]), 2)
         self.assertTrue(all(len(row) == 2 for row in linear["matrix"]))
@@ -122,6 +126,15 @@ class LearningScenePromptTests(unittest.TestCase):
         self.assertEqual(set(height), {"min", "max", "value"})
         self.assertTrue(0 < height["min"] <= height["value"] <= height["max"])
         self.assertLessEqual(height["max"], surface["coefficient"] * surface["radius"] ** 2)
+
+    def test_natural_learning_requests_have_generic_graphic_capability(self):
+        for prompt in (prompts._path_system("node"), prompts.build_system({"unit_title": "概念"})):
+            self.assertIn("Manim / 3Blue1Brown", prompt)
+            self.assertIn("用户无需提出画图要求", prompt)
+            self.assertIn("不限于数学或固定课程", prompt)
+            self.assertIn("type=diagram", prompt)
+            self.assertIn("实际高维嵌入", prompt)
+        self.assertIn("字段只有 needed、reason、markdown", prompts.SCENE_SUPPLEMENT)
 
     def test_scene_contract_keeps_unready_material_and_answer_boundaries(self):
         for status in ("missing", "generating", "failed"):

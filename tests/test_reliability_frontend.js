@@ -55,6 +55,15 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   assert((await recoveryCheck(materialKey, {...base,materials:[{name:'notes.txt',text:'unsaved edit'}]}, {...base,quizMaterials:extra})).LearnSaves.pending(), 'real reference edits remain recoverable');
   assert((await recoveryCheck(materialKey, {...base,topic:'unsaved title'}, {...base,quizMaterials:extra})).LearnSaves.pending(), 'other user fields remain strict');
   assert((await recoveryCheck('u0/quiz-map-v1-example', base, {...base,quizMaterials:extra})).LearnSaves.pending(), 'other document kinds remain strict');
+  const lesson = {...base,nodeDetail:{n1:{study_notes:'original notes',extra:'keep'}}};
+  const supplemented = {...base,nodeDetail:{n1:{study_notes:'original notes and diagram',extra:'keep',
+    sceneSupplement:{version:1,source_sha256:'a'.repeat(64),notes_sha256:'b'.repeat(64)}}}};
+  assert(!(await recoveryCheck(materialKey, lesson, supplemented)).LearnSaves.pending(), 'server-protected notes reconcile an abandoned browser acknowledgement');
+  assert((await recoveryCheck(materialKey, {...lesson,materials:[{name:'notes.txt',text:'real edit'}]}, supplemented)).LearnSaves.pending(), 'protected notes do not hide reference edits');
+  assert((await recoveryCheck(materialKey, {...lesson,nodeDetail:{n1:{...lesson.nodeDetail.n1,extra:'real edit'}}}, supplemented)).LearnSaves.pending(), 'other node fields remain strict');
+  assert((await recoveryCheck(materialKey, lesson, {...base,nodeDetail:{n1:{study_notes:'different notes',extra:'keep'}}})).LearnSaves.pending(), 'unprotected notes remain recoverable');
+  assert((await recoveryCheck(materialKey, lesson, {...base,nodeDetail:{n1:{...supplemented.nodeDetail.n1,sceneSupplement:{version:1}}}})).LearnSaves.pending(), 'invalid provenance must not suppress recovery');
+  assert((await recoveryCheck('u0/quiz-map-v1-example', lesson, supplemented)).LearnSaves.pending(), 'scene reconciliation applies only to learning materials');
   // The server commits before navigation, but the old page never handles its
   // acknowledgement. Reload must compare browser fields, not server receipts.
   async function committedBeforeAcknowledgement(local, receipts) {

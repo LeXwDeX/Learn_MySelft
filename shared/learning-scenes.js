@@ -30,6 +30,15 @@
     }
     return out;
   }
+  function dataList(value, minLength, maxLength, name) {
+    if (!Array.isArray(value) || value.length < minLength || value.length > maxLength) fail(name + ' 数组长度不正确');
+    Reflect.ownKeys(value).forEach(function (key) {
+      var descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (typeof key !== 'string' || (key !== 'length' && !/^(0|[1-9][0-9]*)$/.test(key)) || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) fail(name + ' 含不允许的字段');
+    });
+    for (var i = 0; i < value.length; i++) if (!Object.prototype.hasOwnProperty.call(value, String(i))) fail(name + ' 不允许空缺或继承元素');
+    return value;
+  }
   function text(value, max, name) {
     if (typeof value !== 'string' || !value.trim() || value.length > max) fail(name + ' 必须是非空文本，最多 ' + max + ' 字符');
     return value.trim();
@@ -40,9 +49,9 @@
     return {min: lo, max: hi, value: number(value.value, lo, hi, name + '.value')};
   }
   function validate(spec) {
-    object(spec, ['version', 'type', 'title', 'summary', 'matrix', 'vector', 'coefficients', 'domain', 'baseX', 'gap', 'coefficient', 'radius', 'height'], '场景');
+    object(spec, ['version', 'type', 'title', 'summary', 'matrix', 'vector', 'dimension', 'elements', 'steps', 'coefficients', 'domain', 'baseX', 'gap', 'coefficient', 'radius', 'height'], '场景');
     if (spec.version !== 1) fail('不支持的场景版本');
-    var fields = {linear_transform: ['matrix', 'vector'], secant: ['coefficients', 'domain', 'baseX', 'gap'], surface_slice: ['coefficient', 'radius', 'height']};
+    var fields = {linear_transform: ['matrix', 'vector'], diagram: ['dimension', 'elements', 'steps'], secant: ['coefficients', 'domain', 'baseX', 'gap'], surface_slice: ['coefficient', 'radius', 'height']};
     if (typeof spec.type !== 'string' || !Object.prototype.hasOwnProperty.call(fields, spec.type)) fail('不支持的场景类型');
     object(spec, ['version', 'type', 'title', 'summary'].concat(fields[spec.type]), '场景');
     var out = {version: 1, type: spec.type, title: text(spec.title, 80, 'title'), summary: text(spec.summary, 500, 'summary')};
@@ -56,6 +65,54 @@
       if (!Object.prototype.hasOwnProperty.call(spec.matrix, '0') || !Object.prototype.hasOwnProperty.call(spec.matrix, '1')) fail('matrix 不允许空缺或继承元素');
       out.matrix = [array(spec.matrix[0], 2, 2, -4, 4, 'matrix'), array(spec.matrix[1], 2, 2, -4, 4, 'matrix')];
       out.vector = spec.vector === undefined ? [1, 1] : array(spec.vector, 2, 2, -3, 3, 'vector');
+    } else if (spec.type === 'diagram') {
+      out.dimension = spec.dimension === undefined ? 2 : number(spec.dimension, 2, 3, 'dimension');
+      if (!Number.isInteger(out.dimension)) fail('dimension 必须是 2 或 3');
+      dataList(spec.elements, 1, 40, 'elements');
+      var ids = new Set(), limits = {point: [1, 1], label: [1, 1], circle: [1, 1], line: [2, 2], arrow: [2, 2], polyline: [2, 16], polygon: [3, 16]};
+      out.elements = spec.elements.map(function (element) {
+        object(element, ['id', 'kind', 'color', 'label', 'points', 'radius', 'opacity'], 'element');
+        if (typeof element.id !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]{0,31}$/.test(element.id) || ids.has(element.id)) fail('element.id 格式错误或重复');
+        ids.add(element.id);
+        if (typeof element.kind !== 'string' || !Object.prototype.hasOwnProperty.call(limits, element.kind)) fail('不支持的 element.kind');
+        var color = element.color === undefined ? 'accent' : element.color;
+        if (typeof color !== 'string' || !['accent', 'secondary', 'muted', 'positive', 'warning'].includes(color)) fail('不支持的 element.color');
+        var item = {id: element.id, kind: element.kind, color: color, points: diagramPoints(element.points, out.dimension, limits[element.kind], 'element.points'), opacity: element.opacity === undefined ? 1 : number(element.opacity, 0, 1, 'element.opacity')};
+        if (element.label !== undefined) {
+          if (typeof element.label !== 'string' || element.label.length > 80) fail('element.label 最多 80 字符');
+          item.label = element.label;
+        }
+        if (element.kind === 'circle') item.radius = number(element.radius, Number.MIN_VALUE, 10, 'element.radius');
+        else if (element.radius !== undefined) fail('radius 仅用于 circle');
+        return item;
+      });
+      if (spec.steps !== undefined) {
+        dataList(spec.steps, 0, 8, 'steps');
+        out.steps = spec.steps.map(function (step) {
+          object(step, ['caption', 'changes'], 'step');
+          dataList(step.changes, 0, 40, 'changes');
+          var changed = new Set();
+          if (typeof step.caption !== 'string' || !step.caption.trim() || step.caption.length > 300) fail('step.caption 必须是非空文本，最多 300 字符');
+          return {caption: step.caption.trim(), changes: step.changes.map(function (change) {
+            object(change, ['id', 'points', 'radius', 'opacity'], 'change');
+            if (typeof change.id !== 'string' || !ids.has(change.id) || changed.has(change.id)) fail('change.id 不存在或重复');
+            changed.add(change.id);
+            if (change.points === undefined && change.radius === undefined && change.opacity === undefined) fail('change 至少修改一个字段');
+            var base = out.elements.find(function (item) { return item.id === change.id; });
+            var result = {id: change.id};
+            if (change.points !== undefined) {
+              result.points = diagramPoints(change.points, out.dimension, limits[base.kind], 'change.points');
+              if (result.points.length !== base.points.length) fail('change.points 点数必须与初始图元相同');
+            }
+            if (change.radius !== undefined) {
+              if (base.kind !== 'circle') fail('radius 仅用于 circle');
+              result.radius = number(change.radius, Number.MIN_VALUE, 10, 'change.radius');
+            }
+            if (change.opacity !== undefined) result.opacity = number(change.opacity, 0, 1, 'change.opacity');
+            return result;
+          })};
+        });
+      }
     } else if (spec.type === 'secant') {
       out.coefficients = array(spec.coefficients, 1, 5, -20, 20, 'coefficients');
       out.domain = array(spec.domain, 2, 2, -5, 5, 'domain');
@@ -69,6 +126,15 @@
       out.height = interval(spec.height, Number.MIN_VALUE, out.coefficient * out.radius * out.radius, 'height');
     }
     return out;
+  }
+  function diagramPoints(value, dimension, limits, name) {
+    dataList(value, limits[0], limits[1], name);
+    var points = [];
+    for (var i = 0; i < value.length; i++) {
+      if (!Object.prototype.hasOwnProperty.call(value, String(i))) fail(name + ' 不允许空缺或继承元素');
+      points.push(array(value[i], dimension, dimension, -10, 10, name));
+    }
+    return points;
   }
   function el(parent, tag, attrs, content) {
     var node = parent.ownerDocument.createElement(tag);
@@ -227,6 +293,211 @@
     if (reduced && reduced.addEventListener) { var reduce = function () { if (reduced.matches) { pause(); progress = 1; render(1); reflect(); } }; life.on(reduced, 'change', reduce); }
     render(1); reflect();
   }
+  function diagram(root, spec, life, id) {
+    var steps = spec.steps || [], step = 0, progress = 1, running = false, paused = false;
+    var animation = 0, inputFrame = 0, last = 0, speed = 1, view = 'oblique';
+    var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+    function copy(state) { return state.map(function (item) { return {id: item.id, kind: item.kind, color: item.color, label: item.label, points: item.points.map(function (point) { return point.slice(); }), radius: item.radius, opacity: item.opacity}; }); }
+    var states = [copy(spec.elements)];
+    steps.forEach(function (entry) {
+      var next = copy(states[states.length - 1]);
+      entry.changes.forEach(function (change) {
+        var item = next.find(function (candidate) { return candidate.id === change.id; });
+        if (change.points !== undefined) item.points = change.points.map(function (point) { return point.slice(); });
+        if (change.radius !== undefined) item.radius = change.radius;
+        if (change.opacity !== undefined) item.opacity = change.opacity;
+      });
+      states.push(next);
+    });
+    var p = plot(root, spec.dimension === 3 ? '三维图形的投影' : '二维图形');
+    p.svg.classList.add('learn-scene-diagram-plot');
+    var defs = svg(p.svg, 'defs'), markerColors = {accent: 'var(--learn-accent)', secondary: 'var(--learn-ink)', muted: 'var(--learn-muted)', positive: 'var(--learn-success)', warning: 'var(--learn-danger)'};
+    Object.keys(markerColors).forEach(function (color) {
+      var marker = svg(defs, 'marker', {id: id + '-diagram-arrow-' + color, markerWidth: 8, markerHeight: 8, refX: 6, refY: 3, orient: 'auto', markerUnits: 'strokeWidth'});
+      svg(marker, 'path', {d: 'M0 0L6 3L0 6Z', fill: markerColors[color]});
+    });
+    var marks = svg(p.svg, 'g', {class: 'learn-scene-diagram-marks'});
+    var nodes = spec.elements.map(function (item) {
+      var tag = item.kind === 'point' ? 'circle' : item.kind === 'label' ? 'text' : 'path';
+      var group = svg(marks, 'g', {class: 'learn-scene-diagram-item'});
+      var node = svg(group, tag, {class: 'learn-scene-diagram-element learn-scene-diagram-' + item.kind + ' learn-scene-color-' + item.color, 'data-element-id': item.id});
+      if (item.kind === 'arrow') node.setAttribute('marker-end', 'url(#' + id + '-diagram-arrow-' + item.color + ')');
+      if (item.kind === 'point') node.setAttribute('r', 5);
+      if (item.label !== undefined) {
+        node.setAttribute('aria-label', item.label);
+        if (item.kind !== 'label') svg(node, 'title', {}, item.label);
+      }
+      var label = item.kind !== 'label' && item.label ? svg(group, 'text', {class: 'learn-scene-diagram-label learn-scene-color-' + item.color, 'data-element-label': item.id, 'aria-label': item.label}) : null;
+      return {group: group, shape: node, label: label};
+    });
+    var caption = el(root, 'p', {class: 'learn-scene-caption', 'aria-live': 'polite'});
+    var labeled = spec.elements.filter(function (item) { return item.label; });
+    if (labeled.length) {
+      var legend = el(root, 'div', {class: 'learn-scene-diagram-legend'});
+      el(legend, 'p', {}, '图中标签');
+      var labels = el(legend, 'ul');
+      labeled.forEach(function (item) { el(labels, 'li', {}, item.label); });
+    }
+    var controls, prev, next, play, slider, viewSelect;
+    if (spec.dimension === 3) {
+      var viewWrap = el(root, 'label', {class: 'learn-scene-diagram-view'}, '视角 ');
+      viewSelect = el(viewWrap, 'select', {'aria-label': '图形视角'});
+      [['oblique', '斜视'], ['top', '俯视']].forEach(function (option) { el(viewSelect, 'option', {value: option[0]}, option[1]); });
+      life.on(viewSelect, 'change', function () { view = viewSelect.value; metrics(); render(); });
+    }
+    if (steps.length) {
+      var controlBox = el(root, 'div', {class: 'learn-scene-diagram-controls'});
+      controls = el(controlBox, 'div', {class: 'learn-scene-controls'});
+      prev = button(controls, '上一步', function () { go(Math.max(0, step - 1)); }, life);
+      next = button(controls, '下一步', function () { go(Math.min(steps.length, step + 1)); }, life);
+      play = button(controls, '开始', function () {
+        if (running) { pause(true); return; }
+        if (paused && progress < 1) { start(); return; }
+        if (step === steps.length && progress === 1) go(0);
+        if (progress === 1) { step++; progress = 0; }
+        start();
+      }, life, true);
+      button(controls, '重播', function () { go(0); step = 1; progress = 0; start(); }, life);
+      var speedWrap = el(controls, 'label', {class: 'learn-scene-speed'}, '速度 '), speedSelect = el(speedWrap, 'select', {'aria-label': '动画速度'});
+      [['0.5', '慢速'], ['1', '正常']].forEach(function (option) { el(speedSelect, 'option', {value: option[0]}, option[1]); });
+      speedSelect.value = '1';
+      life.on(speedSelect, 'change', function () { speed = Number(speedSelect.value); });
+      slider = range(controlBox, '本步进度', {min: 0, max: 1, value: 1}, id + '-progress', life, function (value) {
+        pause(false); progress = value; schedule(); reflect();
+      });
+      slider.step = '0.01';
+    }
+    var width = 0, height = 0, scale = 1, offsetX = 0, offsetY = 0;
+    function project(point) {
+      var x = point[0], y = point[1], z = point[2] || 0;
+      if (spec.dimension === 2 || view === 'top') return [x, -y, z];
+      return [x + 0.5 * y, -0.35 * x + 0.55 * y - z, 0.3 * x - 0.5 * y + 0.5 * z];
+    }
+    function projectedCircle(item, count) {
+      var center = item.points[0], result = [];
+      for (var i = 0; i < count; i++) {
+        var angle = 2 * Math.PI * i / count;
+        result.push(project([center[0] + item.radius * Math.cos(angle), center[1] + item.radius * Math.sin(angle), center[2] || 0]));
+      }
+      return result;
+    }
+    function metrics() {
+      width = Math.max(180, p.box.clientWidth); height = width < 420 ? 300 : 380;
+      p.svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height); p.svg.style.height = height + 'px';
+      var left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+      states.forEach(function (state) { state.forEach(function (item) {
+        var points = item.kind === 'circle' ? projectedCircle(item, 32) : item.points.map(project);
+        points.forEach(function (point) { left = Math.min(left, point[0]); right = Math.max(right, point[0]); top = Math.min(top, point[1]); bottom = Math.max(bottom, point[1]); });
+      }); });
+      var spanX = Math.max(1, right - left), spanY = Math.max(1, bottom - top);
+      scale = Math.min((width - 48) / spanX, (height - 48) / spanY);
+      offsetX = width / 2 - (left + right) * scale / 2; offsetY = height / 2 - (top + bottom) * scale / 2;
+    }
+    function screen(point) { return [offsetX + point[0] * scale, offsetY + point[1] * scale]; }
+    function interpolate(a, b, t) {
+      var length = Math.max(a.length, b.length), points = [];
+      for (var i = 0; i < length; i++) {
+        var before = a[Math.min(i, a.length - 1)], after = b[Math.min(i, b.length - 1)];
+        points.push(before.map(function (value, index) { return value + (after[index] - value) * t; }));
+      }
+      return points;
+    }
+    function placeLabel(node, full, anchor, occupied, reserve) {
+      if (node._sceneLabelWidth !== width || node._sceneLabelSource !== full) {
+        var letters = Array.from(full), visible = full, maximum = width - 24;
+        node.textContent = visible;
+        while (node.getComputedTextLength() > maximum && letters.length > 1) {
+          letters.pop(); visible = letters.join('') + '…'; node.textContent = visible;
+        }
+        node._sceneLabelWidth = width; node._sceneLabelSource = full;
+        node._sceneTextWidth = Math.min(maximum, node.getComputedTextLength());
+      }
+      var textWidth = node._sceneTextWidth, x = anchor[0], y = anchor[1];
+      var candidates = [[8, -8], [8, 18], [-textWidth - 8, -8], [-textWidth - 8, 18], [8, 36], [-textWidth - 8, 36]];
+      var box;
+      for (var c = 0; c < candidates.length; c++) {
+        var bx = clamp(x + candidates[c][0], 12, width - textWidth - 12), by = clamp(y + candidates[c][1], 18, height - 12);
+        box = [bx, by - 15, bx + textWidth, by + 3];
+        if (!occupied.some(function (other) { return box[0] < other[2] && box[2] > other[0] && box[1] < other[3] && box[3] > other[1]; })) break;
+      }
+      if (reserve) occupied.push(box);
+      node.setAttribute('x', box[0]); node.setAttribute('y', box[3] - 3);
+    }
+    function render() {
+      if (!live(root)) return;
+      var before = states[step ? step - 1 : 0], after = states[step], t = step ? progress : 1, occupied = [];
+      var order = nodes.map(function (entry, index) {
+        var node = entry.shape;
+        var start = before[index], end = after[index], points = interpolate(start.points, end.points, t);
+        var radius = start.radius === undefined ? undefined : start.radius + (end.radius - start.radius) * t;
+        var opacity = start.opacity + (end.opacity - start.opacity) * t;
+        var item = {kind: end.kind, points: points, radius: radius};
+        var projected = item.kind === 'circle' ? projectedCircle(item, 48) : points.map(project);
+        var onScreen = projected.map(screen);
+        node.setAttribute('opacity', opacity);
+        if (item.kind === 'point') { node.setAttribute('cx', onScreen[0][0]); node.setAttribute('cy', onScreen[0][1]); }
+        else if (item.kind === 'label') {
+          placeLabel(node, end.label || end.id, onScreen[0], occupied, opacity >= 0.05);
+        } else {
+          var isZeroArrow = item.kind === 'arrow' && Math.hypot(onScreen[1][0] - onScreen[0][0], onScreen[1][1] - onScreen[0][1]) < 0.01;
+          if (item.kind === 'arrow') {
+            node.setAttribute('data-zero', isZeroArrow ? 'true' : 'false');
+            node.setAttribute('marker-end', isZeroArrow ? 'none' : 'url(#' + id + '-diagram-arrow-' + end.color + ')');
+            node.style.strokeWidth = isZeroArrow ? '6px' : '';
+          }
+          node.setAttribute('d', isZeroArrow ? 'M' + onScreen[0][0].toFixed(2) + ' ' + onScreen[0][1].toFixed(2) + 'l0.01 0' :
+            onScreen.map(function (point, i) { return (i ? 'L' : 'M') + point[0].toFixed(2) + ' ' + point[1].toFixed(2); }).join('') + (item.kind === 'polygon' || item.kind === 'circle' ? 'Z' : ''));
+        }
+        if (entry.label) {
+          var anchor = [0, 0];
+          onScreen.forEach(function (point) { anchor[0] += point[0] / onScreen.length; anchor[1] += point[1] / onScreen.length; });
+          entry.label.setAttribute('opacity', opacity);
+          placeLabel(entry.label, end.label, anchor, occupied, opacity >= 0.05);
+        }
+        var depth = projected.reduce(function (sum, point) { return sum + point[2]; }, 0) / projected.length;
+        return {node: entry.group, depth: depth, index: index};
+      });
+      if (spec.dimension === 3) order.sort(function (a, b) { return a.depth - b.depth || a.index - b.index; }).forEach(function (item, index) {
+        if (marks.children[index] !== item.node) marks.insertBefore(item.node, marks.children[index] || null);
+      });
+      p.svg.dataset.step = String(step); p.svg.dataset.progress = String(progress); p.svg.dataset.view = spec.dimension === 3 ? view : 'plane';
+    }
+    function reflect() {
+      caption.textContent = '步骤 ' + (step + 1) + ' / ' + (steps.length + 1) + '：' + (step ? steps[step - 1].caption : '观察初始图形。');
+      if (!steps.length) return;
+      prev.disabled = step === 0; next.disabled = step === steps.length;
+      play.textContent = running ? '暂停' : step === steps.length && progress === 1 ? '重播' : paused || (step > 0 && progress < 1) ? '继续' : '开始';
+      slider.disabled = step === 0; slider.value = String(progress);
+    }
+    function pause(keepPosition) { if (animation) life.cancel(animation); animation = 0; running = false; paused = !!keepPosition; reflect(); }
+    function tick(now) {
+      animation = 0; if (!live(root)) { pause(false); return; }
+      progress = Math.min(1, progress + Math.max(0, now - last) * speed / 1000); last = now;
+      render(); reflect();
+      if (progress < 1) animation = life.frame(tick);
+      else if (step < steps.length) { step++; progress = 0; render(); reflect(); animation = life.frame(tick); }
+      else { running = false; paused = false; reflect(); }
+    }
+    function start() {
+      if (!live(root)) return;
+      if (reduced && reduced.matches) { progress = 1; running = false; paused = false; render(); reflect(); return; }
+      running = true; paused = false; last = window.performance.now(); reflect(); animation = life.frame(tick);
+    }
+    function go(target) { pause(false); step = target; progress = 1; render(); reflect(); }
+    function schedule() { if (!inputFrame && live(root)) inputFrame = life.frame(function () { inputFrame = 0; render(); }); }
+    life.resize(function () { if (live(root)) { metrics(); render(); } });
+    if (reduced && reduced.addEventListener) life.on(reduced, 'change', function () {
+      if (reduced.matches && running) { pause(false); progress = 1; render(); reflect(); }
+    });
+    life.on(root.ownerDocument, 'visibilitychange', function () { if (root.ownerDocument.hidden) { pause(false); if (inputFrame) life.cancel(inputFrame); inputFrame = 0; } });
+    if (window.MutationObserver) {
+      var visibility = new window.MutationObserver(function () { if (!live(root)) { pause(false); if (inputFrame) life.cancel(inputFrame); inputFrame = 0; } });
+      visibility.observe(root.ownerDocument.documentElement, {subtree: true, attributes: true, attributeFilter: ['hidden']});
+      life.cleanup(function () { visibility.disconnect(); });
+    }
+    life.cleanup(function () { animation = 0; inputFrame = 0; running = false; });
+    metrics(); render(); reflect();
+  }
   function polynomial(coefficients, x) {
     var y = 0; for (var i = coefficients.length - 1; i >= 0; i--) y = y * x + coefficients[i]; return y;
   }
@@ -358,7 +629,7 @@
     var root = el(container, 'section', {class: 'learn-scene', 'data-scene-type': spec.type}), id = 'learn-scene-' + (++serial), life = lifecycle(root);
     el(root, 'h4', {}, spec.title); el(root, 'p', {class: 'learn-scene-summary'}, spec.summary);
     var controller = {isConnected: function () { return root.isConnected && container.contains(root); }, dispose: function () { controllers.delete(container); life.dispose(); root.remove(); }};
-    try { if (spec.type === 'linear_transform') linear(root, spec, life, id); else if (spec.type === 'secant') secant(root, spec, life, id); else surface(root, spec, life, id); }
+    try { if (spec.type === 'linear_transform') linear(root, spec, life, id); else if (spec.type === 'diagram') diagram(root, spec, life, id); else if (spec.type === 'secant') secant(root, spec, life, id); else surface(root, spec, life, id); }
     catch (error) { controller.dispose(); throw error; }
     var details = container.querySelector(':scope > details');
     if (details) container.insertBefore(root, details);

@@ -10,6 +10,7 @@ from research_sources import collect_sources, select_sources
 from service_limits import MAX_TOPIC, MAX_QUESTION, PATH_MAX_ROUNDS, GEN_WAIT_MAX
 from text_utils import clip, history_messages
 from prompts import _path_system
+from scene_contracts import SceneContractError
 from generation_contracts import (
     _json_block,
     _json_list,
@@ -22,11 +23,12 @@ from generation_contracts import (
 
 
 class LearningService:
-    def __init__(self, repository, model, cache, verification):
+    def __init__(self, repository, model, cache, verification, *, scenes=None):
         self.repository = repository
         self.model = model
         self.cache = cache
         self.verification = verification
+        self.scenes = scenes
 
     def log_node_failure(self, error, stage):
         """Preserve the original failure location before contract retries replace it."""
@@ -346,6 +348,12 @@ class LearningService:
                     )
                     if not candidate:
                         raise harness.QuizContractError("材料不完整")
+                    if self.scenes:
+                        stage = "scene_generation"
+                        try:
+                            self.scenes.enrich_candidate(candidate, node)
+                        except SceneContractError as error:
+                            raise harness.QuizContractError("学习图示配置未通过检查，请修正字段与数值") from error
                     stage = "verification"
                     qs = self.verification.checked_questions(
                         candidate["quiz"]["questions"], node=True
