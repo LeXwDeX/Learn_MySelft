@@ -4,7 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const os = require('node:os');
-const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const playwright = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const browserName = process.env.AGENT_UX_BROWSER || 'chromium';
+assert(['chromium', 'webkit'].includes(browserName), 'unsupported Agent UX browser');
 const root = path.resolve(__dirname, '..');
 const output = process.env.AGENT_UX_OUTPUT || path.join(os.tmpdir(), 'browser-agent-ux');
 fs.mkdirSync(output, {recursive: true});
@@ -20,7 +22,9 @@ const fixture = {
 const history = Object.fromEntries(['n1', 'n2'].map(id => [id, Array.from({length: 24}, (_, i) => ({role: i % 2 ? 'assistant' : 'user', content: id + ' 历史 ' + i + '：' + '保留阅读位置。'.repeat(18)}))]));
 
 (async () => {
-  const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
+  const launchOptions = {headless: true};
+  if (browserName === 'chromium') launchOptions.executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+  const browser = await playwright[browserName].launch(launchOptions);
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
   const report = {cases: [], errors: []};
   page.on('pageerror', e => report.errors.push(e.message));
