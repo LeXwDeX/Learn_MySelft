@@ -81,7 +81,12 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 /* .layer + .layer 的 margin 与 #graph-layer 的 flex gap 重复叠加（52px vs 26px 不齐），故移除 */
 .node{width:100%;background:#fff;border:1px solid var(--rule);border-left:4px solid var(--group-color,var(--lock));border-radius:8px;padding:18px 20px;cursor:pointer;position:relative;transition:box-shadow .15s,border-color .15s}
 .node:hover{box-shadow:0 6px 18px -12px rgba(45,49,66,.5)}
+.node-header{display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--learn-space-2) var(--learn-space-3);min-width:0}
 .node-head{display:flex;align-items:flex-start;gap:var(--learn-space-3);min-width:0}
+.node-header .node-head{flex:1 1 200px;min-height:36px;align-items:center}
+.node-actions{margin-left:auto;max-width:100%;min-width:0}
+.node-actions .marks{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--learn-space-1)}
+.node-actions .mark-btn{height:36px;min-width:56px;padding:0 var(--learn-space-2);font-size:12px;line-height:1;white-space:nowrap}
 .node-head .node-no,.node .status{height:26px;display:inline-flex;align-items:center;justify-content:center;padding-top:0;padding-bottom:0;line-height:1}
 .node-head .node-caret{line-height:26px}
 .node-head .node-title{line-height:26px}
@@ -105,8 +110,7 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .node-foot .ai-mini{border-color:var(--learn-accent);color:var(--learn-accent);flex:none}
 .node.selected{border-color:var(--soft);border-left-color:var(--group-color,var(--lock));box-shadow:0 0 0 2px var(--accent-tint)}
 .node.expanded{box-shadow:0 10px 26px -18px rgba(45,49,66,.45)}
-.node-foot{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:var(--learn-space-2);margin-top:var(--learn-space-3);padding-top:var(--learn-space-3);border-top:1px dashed var(--learn-border)}
-.node-foot .marks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--learn-space-2);min-width:0}
+.node-foot{display:flex;justify-content:flex-end;align-items:center;gap:var(--learn-space-2);margin-top:var(--learn-space-3);padding-top:var(--learn-space-3);border-top:1px dashed var(--learn-border)}
 .node-foot .btn{min-width:0;padding-left:var(--learn-space-2);padding-right:var(--learn-space-2);overflow-wrap:anywhere}
 .mark-btn:not(.btn){font-family:var(--sans);border:1px solid var(--rule);background:#fff;border-radius:5px;color:var(--soft);cursor:pointer;padding:2px 8px;line-height:1.6;flex:none}
 .mark-btn.mini{font-size:11px}
@@ -160,7 +164,7 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 .q-answer b{color:var(--soft);font-weight:600}
 
 /* ---- 右面板 ---- */
-.panel{position:sticky;top:var(--agent-top,100px);height:var(--agent-height,calc(100dvh - var(--agent-top,100px) - 16px));min-width:0;min-height:0;background:#fff;border:1px solid var(--rule);border-radius:8px;display:flex;flex-direction:column;overflow:hidden}
+.panel{position:sticky;top:var(--agent-top,100px);height:var(--agent-height,calc(100dvh - var(--agent-top,100px)));min-width:0;min-height:0;background:#fff;border:1px solid var(--rule);border-radius:8px;display:flex;flex-direction:column;overflow:hidden}
 .panel-head{padding:16px 20px 12px;border-bottom:1px solid var(--rule);flex:none}
 .panel-head .pid{font-family:var(--mono);font-size:11px;color:var(--accent);margin:0 0 2px}
 .panel-head h3{margin:0;font-size:16px}
@@ -251,6 +255,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 @media(max-width:1100px){
   .learning-workspace{grid-template-columns:minmax(0,1fr) 380px;gap:20px}
   .toolbar-inner{gap:10px}
+  .toolbar-actions{flex-wrap:wrap}
   .progress{min-width:200px}
 }
 .agent-launch{display:none}
@@ -281,8 +286,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   .node-head{gap:var(--learn-space-2)}
   .node-head .node-title{line-height:26px}
   .node-ess{overflow-wrap:anywhere}
-  .node-foot{grid-template-columns:minmax(0,1fr)}
-  .node-foot .marks{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .node-actions .mark-btn{min-width:48px;padding-left:var(--learn-space-1);padding-right:var(--learn-space-1)}
   .node-foot .ai-mini{width:100%}
   .panel-head,.panel-body{padding:14px 16px}
   .legend{gap:8px 14px}

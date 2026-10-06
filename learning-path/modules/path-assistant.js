@@ -57,11 +57,11 @@ function bindAgentLayout() {
       var mobile = window.matchMedia('(max-width:800px)').matches;
       if (!mobile && dialog.open) window.LearnUI.dialog.close(dialog);
       var toolbar = document.querySelector('.toolbar');
-      var top = toolbar.offsetHeight + 16;
+      var top = Math.max(0, toolbar.getBoundingClientRect().bottom);
       document.documentElement.style.setProperty('--agent-top', top + 'px');
       if (!mobile && panel.parentElement === workspace) {
         var visibleTop = Math.max(top, panel.getBoundingClientRect().top);
-        panel.style.setProperty('--agent-height', Math.max(240, window.innerHeight - visibleTop - 16) + 'px');
+        panel.style.setProperty('--agent-height', Math.max(0, window.innerHeight - visibleTop) + 'px');
       }
     }
     session.refreshAgentLayout = updateLayout;
