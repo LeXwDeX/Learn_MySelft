@@ -68,6 +68,8 @@ session.matTabOwner = null;
 
 session.lastQuizShown = null;
 
+session.quizResultSeen = Object.create(null);
+
 // {id, res} 最近一次提交结果（展示在「测验」tab 内）
   // 卡内渲染：所有查询都从卡片内容元素向下查（作用域隔离，避免串卡）
 
@@ -76,11 +78,15 @@ function renderNodeDetail(id) {
     var scope = cards.cardContentEl(id);
     if (!n || !d || !scope) return;
     model.session.activeScope = scope;
-    if (session.matTabOwner !== id) { session.matTab = 'material'; session.lastQuizShown = null; session.matTabOwner = id; }
+    var ownerChanged = session.matTabOwner !== id;
+    if (ownerChanged) { session.matTab = 'material'; session.lastQuizShown = null; session.matTabOwner = id; }
     var shown = (session.lastQuizShown && session.lastQuizShown.id === id) ? session.lastQuizShown.res : null;
     var persisted = (model.state.nodeState[id] || {}).lastResult;
     if (!shown && persisted && persisted.round_id === (d.quiz || {}).round_id) shown = persisted;
-    if (shown) session.matTab = 'quiz';
+    var hasSeenResult = Object.prototype.hasOwnProperty.call(session.quizResultSeen, id);
+    var newResult = hasSeenResult && session.quizResultSeen[id] !== shown;
+    if (shown && (ownerChanged || newResult)) session.matTab = 'quiz';
+    session.quizResultSeen[id] = shown || null;
     var qs = ((d.quiz && d.quiz.questions) || []);
     var prev = model.state.nodeState[id] || {};
     // 自测未过（<60）：按薄弱点细化学习地图
@@ -310,6 +316,7 @@ function openQuizModal(id, roundId) {
           st.lastResult = {score: res.score, pass: res.pass, feedback: res.feedback,
                            per_question: res.per_question, round_id: res.round_id};
           model.state.nodeState[id] = st;
+          session.lastQuizShown = {id: id, res: st.lastResult};
         }
         persistence.save(); cards.renderPlan();
       }

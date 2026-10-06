@@ -77,6 +77,7 @@ async function main() {
     const spec = {topic,level:'入门',goal};
     const value = {title:'通用图形能力回归',topic,stage:'learning',spec,
       plan:{title:topic,nodes:[node],edges:[]},nodeDetail:{},nodeState:{}};
+    fs.appendFileSync(path.join(output,'owned-fixtures.jsonl'),JSON.stringify({slug,key,spec,node}) + '\n',{mode:0o600});
     return {slug,key,spec,value,node,url:root + '/learn/u/' + user + '/learning-path.html?t=' + encodeURIComponent(slug)};
   }
   async function validateInBrowser(source) {
@@ -183,7 +184,17 @@ async function main() {
     const supplement = card.getByRole('button',{name:'补充图示',exact:true});
     assert.equal(await supplement.count(), 1);
     await supplement.click();
+    assert.equal(await card.locator('.mat-pane-material').evaluate(node => node.hidden), false,
+      'starting a supplement must retain the chosen material tab');
+    await page.waitForFunction(() => {
+      const card=document.querySelector('#node-n1');
+      return card.querySelector('.notes [data-scene="ready"]') ||
+        /补充失败|暂未找到/.test(card.querySelector('.scene-supplement-status')?.textContent || '');
+    },null,{timeout:720000});
+    assert(await card.locator('.notes [data-scene="ready"]').count(), 'supplement ended without a usable scene');
     await card.locator('.notes [data-scene="ready"]').first().waitFor({timeout:720000});
+    assert.equal(await card.locator('.mat-pane-material').evaluate(node => node.hidden), false,
+      'successful supplement must retain the chosen material tab');
     await saved();
     const supplemented = await material(first.key);
     assert.equal(JSON.stringify(supplemented.nodeDetail.n1.quiz), oldQuiz);
