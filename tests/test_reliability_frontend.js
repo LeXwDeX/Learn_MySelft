@@ -106,17 +106,42 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   assert((await recoveryCheck(materialKey, {...generated,materials:[{name:'notes.txt',text:'real reference edit'}]}, serverGenerated)).LearnSaves.pending(), 'references stay strict beside a protected generated plan');
   assert((await recoveryCheck(materialKey, {...generated,nodeDetail:{...generated.nodeDetail,localOnly:{study_notes:'real local addition'}}}, serverGenerated)).LearnSaves.pending(), 'local-only content is never discarded');
   assert((await recoveryCheck(materialKey, generated, {...generated,plan:null})).LearnSaves.pending(), 'a missing server plan is not evidence of an acknowledged browser plan');
-  const changed = {...base,materials:[{name:'notes.txt',text:'real unsaved edit'}]};
+  const changed = {...base,materials:[{name:'notes.txt',text:'real unsaved edit'}],
+    nodeDetail:{n1:{study_notes:'recovered lesson notes'}},nodeState:{n1:{mark:'review'}}};
   const protectedRecovery = await recoveryCheck(materialKey, changed, {...base,refinementReceipts:{serverReceipt:{added:1}}});
   assert(protectedRecovery.LearnSaves.pending(), 'real editable differences must survive receipt reconciliation');
   assert.equal(JSON.parse(protectedRecovery.storage.get('learn-unsaved-v1/u0'))[materialKey], JSON.stringify(changed));
-  let recoveryDispatches = 0;
-  protectedRecovery.LearnUser.fetch = (url, options) => protectedRecovery.LearnSaves.send(options, async () => { recoveryDispatches++; return Response.json({ok:true}); });
+  let recoveryDispatches = 0, restoredValue = JSON.stringify(base);
+  protectedRecovery.LearnUser.fetch = (url, options) => protectedRecovery.LearnSaves.send(options, async () => {
+    recoveryDispatches++; restoredValue = JSON.parse(options.body).entries[materialKey];
+    return Response.json({ok:true});
+  });
   assert.equal((await protectedRecovery.LearnUser.fetch('', {body:JSON.stringify({entries:{[materialKey]:JSON.stringify(base)}})})).status, 409);
   assert.equal(recoveryDispatches, 0, 'real unsaved content must still block conflicting new edits');
   assert.throws(() => protectedRecovery.LearnSaves.assertReady(), error => error.code === 'state_recovery_required' && error.message.includes('重试保存'));
   await protectedRecovery.LearnSaves.retry();
-  assert.doesNotThrow(() => protectedRecovery.LearnSaves.assertReady());
+  assert(protectedRecovery.reloaded, 'successful emergency recovery reloads the page');
+  assert(!protectedRecovery.LearnSaves.pending(), 'the restored snapshot is acknowledged before reload');
+  // Reload dispatches pagehide on the old page. Its cached whole-document save
+  // must not overwrite the recovered notes and progress or recreate pending data.
+  const departingSave = await protectedRecovery.LearnUser.fetch('', {
+    body:JSON.stringify({entries:{[materialKey]:JSON.stringify(base)}}),keepalive:true});
+  assert.equal(departingSave.status, 409, 'old-page keepalive remains blocked until replacement');
+  assert.equal(recoveryDispatches, 1, 'only the explicit recovery reaches the server');
+  assert.deepEqual(JSON.parse(restoredValue), changed, 'old-page exit cannot overwrite recovered notes and progress');
+  assert.equal(protectedRecovery.storage.get('learn-unsaved-v1/u0'), undefined, 'blocked old-page saves must not recreate emergency data');
+  assert.throws(() => protectedRecovery.LearnSaves.assertReady(), error => error.code === 'state_recovery_required');
+  const replacement = environment(Object.fromEntries(protectedRecovery.storage));
+  load(replacement, 'shared/saves.js'); await replacement.LearnUser.ready;
+  replacement.LearnUser.fetch = (url, options) => replacement.LearnSaves.send(options, async () => {
+    recoveryDispatches++; restoredValue = JSON.parse(options.body).entries[materialKey];
+    return Response.json({ok:true});
+  });
+  assert.doesNotThrow(() => replacement.LearnSaves.assertReady(), 'the replacement page permits normal edits');
+  const nextEdit = {...changed,nodeState:{n1:{mark:'learning'}}};
+  assert.equal((await replacement.LearnUser.fetch('', {body:JSON.stringify({entries:{[materialKey]:JSON.stringify(nextEdit)}})})).status, 200);
+  assert.equal(recoveryDispatches, 2);
+  assert.deepEqual(JSON.parse(restoredValue), nextEdit, 'normal edits still save after recovery reload');
   assert((await recoveryCheck('u0/quiz-map-v1-example', base, {...base,refinementReceipts:{serverReceipt:{added:1}}})).LearnSaves.pending(), 'receipt exemption applies only to learning material documents');
   const jobs = environment(); let submits = 0, polls = 0, requestId;
   jobs.LearnUser.fetch = async (url, options) => {
