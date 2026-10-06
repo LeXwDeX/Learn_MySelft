@@ -119,9 +119,26 @@ async function main() {
     await page.locator('article.node').nth(7).waitFor();
     const before = await colors();
     report.levelColors = checkColors(before);
-    assert.equal(await page.locator('#node-b1').evaluate(node => node.classList.contains('done')), true);
+    // Completion and scores are server-owned. Client fixture writes must not
+    // forge them. Exercise their CSS states locally without changing grades.
+    const storedFixture = JSON.parse((await get('/state/all')).entries[key]);
+    assert(!storedFixture.nodeState?.b1?.completed);
+    assert.notEqual(storedFixture.nodeState?.a3?.score, 45);
     assert.equal(await page.locator('#node-b2').evaluate(node => node.classList.contains('locked')), true);
+    await page.evaluate(() => {
+      for (const [id, state, label] of [['b1','done','✅ 已完成'],['a3','failed','❌ 自测未过']]) {
+        const node = document.querySelector('#node-' + id);
+        node.classList.remove('unlocked');
+        node.classList.add(state);
+        const badge = node.querySelector('.node-state .status');
+        badge.className = 'status ' + state;
+        badge.textContent = label;
+      }
+    });
+    assert.equal(await page.locator('#node-b1').evaluate(node => node.classList.contains('done')), true);
     assert.equal(await page.locator('#node-a3').evaluate(node => node.classList.contains('failed')), true);
+    assert.deepEqual(await colors(), before);
+    report.cases.push('protected_grades_reject_client_fixture_and_css_states_keep_depth_colors');
     for (const width of [1440,390]) {
       await page.setViewportSize({width,height:900});
       assert.deepEqual(await colors(), before);
@@ -143,7 +160,8 @@ async function main() {
       await lesson.screenshot({path:path.join(output, 'legacy-diagrams-' + width + '.png')});
     }
     await page.setViewportSize({width:1440,height:1000});
-    assert.equal(await downloadText(lesson.locator('.md-export')), notes);
+    const lessonDocument = '# ' + nodes.find(node => node.id === 'a1').title + '\n\n' + notes;
+    assert.equal(await downloadText(lesson.locator('.md-export')), lessonDocument);
     await lesson.getByRole('button',{name:'放大查看'}).first().click();
     await page.getByRole('button',{name:'关闭',exact:true}).click();
     await page.locator('dialog.md-zoom').waitFor({state:'detached'});
@@ -185,7 +203,7 @@ async function main() {
     assert.deepEqual(Object.fromEntries(after.map(row => [row.id,row.color])),Object.fromEntries(before.map(row => [row.id,row.color])));
     report.cases.push('reordering_keeps_depth_colors_across_roots_and_states');
     await page.goto(root + '/learn/u/' + user + '/quiz-map.html');
-    await page.getByRole('button',{name:'生成测验',exact:true}).waitFor();
+    await page.locator('button[data-gen="' + key + '"]').waitFor();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     report.cases.push('shared_uikit_quiz_page_loads');
     assert.deepEqual(pageErrors, []);
