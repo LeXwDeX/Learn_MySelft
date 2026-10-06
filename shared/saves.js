@@ -77,7 +77,9 @@
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entries: entries})
     }).then(function (response) {
       if (!response.ok) throw new Error(lastFailure || '保存失败，内容仍待同步');
-      if (recovering) { recovering = false; location.reload(); }
+      // Keep the old page locked: its pagehide save may contain stale content.
+      // The replacement page starts unlocked after the recovery is acknowledged.
+      if (recovering) location.reload();
     });
     retrying = false;
     return work;
