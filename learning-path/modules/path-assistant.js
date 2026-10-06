@@ -155,6 +155,8 @@ function bindAgentLayout() {
       oldOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
       priorFocus = document.activeElement;
+      // WebKit mouse clicks can leave body focused instead of the opener.
+      if (!priorFocus || priorFocus === document.body) priorFocus = enlarge ? expandButton : format.$('agent-launch');
       expanded = !!enlarge;
       expandButton.hidden = true;
       closeButton.hidden = false;
