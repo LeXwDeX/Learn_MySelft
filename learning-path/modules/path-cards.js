@@ -63,11 +63,9 @@ function nodeCard(n, entry) {
     el.id = 'node-' + n.id;
     el.dataset.id = n.id;
     entry = entry || domain.hierarchyEntry(n.id);
-    var hues = [212, 354, 155, 275, 32, 186];
-    var hue = hues[entry.root_index % hues.length];
     el.dataset.group = entry.root_id;
     el.dataset.depth = entry.depth;
-    el.style.setProperty('--group-color', 'hsl(' + hue + ', 58%, ' + (entry.depth === 1 ? 45 : 66 + Math.min(entry.depth - 2, 2) * 5) + '%)');
+    el.style.setProperty('--group-color', 'var(--learn-level-' + Math.min(Math.max(entry.depth, 1), 4) + ')');
     el.innerHTML = '<div class="node-head">' +
       '<span class="node-caret">▸</span>' +
       '<span class="node-no">' + format.esc(domain.dispId(n.id)) + '</span>' +

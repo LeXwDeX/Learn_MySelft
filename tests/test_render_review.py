@@ -78,5 +78,49 @@ class RenderReviewTests(unittest.TestCase):
         self.assertIn('提交后答案', text)
 
 
+    def test_tutor_check_uses_renderer_contract_without_model_or_images(self):
+        source = 'flowchart TD\n A["向量<br/>坐标"] --> B["表示"]\n'
+        with patch.object(review, '_capture', return_value={'complete': True, 'diagrams': 2, 'errors': []}) as capture:
+            result = review.validate_mermaid(source, self.config)
+        self.assertEqual(result, {'status': 'passed', 'source': source.replace('<br/>', ' ')})
+        self.assertEqual(capture.call_args.kwargs, {'check_only': True})
+        self.assertNotIn('<br/>', capture.call_args.args[2])
+
+    def test_tutor_unavailable_or_partial_capture_never_passes(self):
+        source = 'flowchart TD\n A-->B'
+        for captured in ({'complete': False, 'diagrams': 2, 'errors': []},
+                         {'complete': True, 'diagrams': 1, 'errors': []},
+                         {'complete': True, 'images': ['image'], 'errors': []}):
+            with self.subTest(captured=captured), patch.object(review, '_capture', return_value=captured):
+                self.assertEqual(review.validate_mermaid(source, self.config)['status'], 'unavailable')
+        with patch.object(review, '_capture', return_value={'errors': ['synthetic private source']}):
+            self.assertEqual(review.validate_mermaid(source, self.config), {'status': 'failed', 'reason': 'diagram_render_failed'})
+        with patch.object(review, '_capture', side_effect=TimeoutError('renderer busy')):
+            self.assertEqual(review.validate_mermaid(source, self.config)['status'], 'unavailable')
+        self.assertEqual(review.validate_mermaid(source, self.config.with_name('missing'))['status'], 'unavailable')
+
+    def test_tutor_guards_raw_size_and_unsafe_syntax_before_worker(self):
+        for source in ('flowchart TD\n A["坏<br onclick=x>标签"] --> B',
+                       'flowchart TD\n A<br/> --> B',
+                       'flowchart TD\n click A "https://invalid.example"',
+                       'flowchart TD\n %%{init: {}}',
+                       'pie\n "示例": 1',
+                       'sequenceDiagram\n participant A\n participant B\n' + ' A->>B: 消息\n' * 101,
+                       'flowchart TD\n A["' + 'x<br/>' * 1400 + '"] --> B'):
+            with self.subTest(source=source[:20]), patch.object(review, '_capture') as capture:
+                self.assertEqual(review.validate_mermaid(source, self.config)['status'], 'failed')
+                capture.assert_not_called()
+
+    def test_tutor_sequence_edge_limit_accepts_100_and_rejects_101(self):
+        source = 'sequenceDiagram\n participant A\n participant B\n' + ' A->>B: 消息\n' * 100
+        with patch.object(review, '_capture', return_value={'complete': True, 'diagrams': 2, 'errors': []}) as capture:
+            self.assertEqual(review.validate_mermaid(source, self.config)['status'], 'passed')
+            capture.assert_called_once()
+            capture.reset_mock()
+            self.assertEqual(review.validate_mermaid(source + ' A->>B: 消息\n', self.config),
+                             {'status': 'failed', 'reason': 'diagram_too_many_edges'})
+            capture.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

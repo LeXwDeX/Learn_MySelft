@@ -24,6 +24,8 @@ from state_routes import StateRoutes
 from path_routes import PathRoutes
 from tutor_routes import TutorRoutes
 from http_handler import Handler
+from tutor_rendering import TutorRendering
+from render_review import validate_mermaid
 
 
 class Application:
@@ -45,6 +47,7 @@ class Application:
         self.model = ModelClient(settings, model_key, reasoning_effort, search_engines)
         self.verification = QuizGeneration(self.model)
         self.authorization = RequestAuthorization(self.accounts)
+        self.tutor_rendering = TutorRendering(validate_mermaid)
         dependencies = (self.repository, self.model, self.cache, self.verification)
         self.learning = LearningService(*dependencies)
         self.quizzes = QuizService(*dependencies)

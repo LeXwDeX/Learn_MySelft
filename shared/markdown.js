@@ -226,13 +226,22 @@
     dialog.addEventListener('close', function () { dialog.remove(); if (trigger.isConnected) trigger.focus({preventScroll:true}); });
     document.body.appendChild(dialog); dialog.showModal(); fit(); buttons[2].focus();
   }
+  function normalizeMermaid(source) {
+    // Repair only legacy plain breaks inside quoted labels. Keep the caller's source intact.
+    return String(source).replace(/"(?:\\.|[^"\\])*"/g, function (label) {
+      return label.replace(/<br\s*\/?\s*>/gi, ' ');
+    });
+  }
   async function draw(figure) {
     if (!figure.isConnected) return;
     if (figure.closest('[hidden]')) { figure.dataset.diagram = 'pending'; return; }
     var source = figure.querySelector('code').textContent, caption = figure.querySelector('figcaption');
     try {
       if (source.length > 8000) throw new Error('图示过长，请让 AI 拆成小图');
+      source = normalizeMermaid(source);
       if (!/^\s*(flowchart|graph|sequenceDiagram)\b/.test(source) || /%%\{|^\s*---|\bclick\s|<[^>]*>/m.test(source)) throw new Error('图示含不支持的语法，请使用普通流程图或时序图');
+      // Mermaid's maxEdges does not bound sequence messages. Count supported arrows too.
+      if ((source.match(/--?(?:>>?|[)x])/g) || []).length > 100) throw new Error('图示关系过多，请让 AI 拆成小图');
       var mermaid = await loadMermaid();
       if (!figure.isConnected) return;
       await mermaid.parse(source);
@@ -333,5 +342,5 @@
     } catch (error) { /* Preserve native copy when the browser refuses clipboard data. */ }
   }
   if (typeof document !== 'undefined') document.addEventListener('copy', copyMathSelection);
-  window.LearnMarkdown = {render:render, enhance:enhance, dispose:dispose, exportButton:exportButton, unitFilename:unitFilename};
+  window.LearnMarkdown = {render:render, enhance:enhance, dispose:dispose, exportButton:exportButton, unitFilename:unitFilename, normalizeMermaid:normalizeMermaid};
 })();
