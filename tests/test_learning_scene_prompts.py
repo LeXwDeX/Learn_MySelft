@@ -134,7 +134,7 @@ class LearningScenePromptTests(unittest.TestCase):
             self.assertIn("不限于数学或固定课程", prompt)
             self.assertIn("type=diagram", prompt)
             self.assertIn("实际高维嵌入", prompt)
-        self.assertIn("字段只有 needed、reason、markdown", prompts.SCENE_SUPPLEMENT)
+        self.assertIn("外层字段必须恰好是 needed、reason、scene", prompts.SCENE_SUPPLEMENT)
 
     def test_scene_contract_keeps_unready_material_and_answer_boundaries(self):
         for status in ("missing", "generating", "failed"):

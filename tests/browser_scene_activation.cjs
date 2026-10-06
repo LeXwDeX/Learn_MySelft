@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {execFileSync} = require('node:child_process');
-const {randomBytes} = require('node:crypto');
+const {createHash, randomBytes} = require('node:crypto');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const environment = process.env.RELEASE_ENV;
 const revision = process.env.RELEASE_REVISION;
@@ -20,6 +20,7 @@ const credentials = JSON.parse(execFileSync('ssh', ['-o', 'BatchMode=yes', 'root
   'cat /opt/study-assistant/regression-credentials/' + environment + '.json'], {encoding:'utf8'}));
 const scenePattern = /(?:`{3,}|~{3,})learn-scene[^\n]*\n([\s\S]*?)\n(?:`{3,}|~{3,})/g;
 const sceneSources = source => Array.from(String(source).matchAll(scenePattern), match => match[1]);
+const sha256 = value => createHash('sha256').update(value).digest('hex');
 let phase = 'setup';
 const report = {environment, revision, cases:[]};
 function progress(next) { phase = next; console.log(JSON.stringify({phase})); }
@@ -43,6 +44,51 @@ async function main() {
     assert.equal(response.status(), 200, 'owned fixture write failed');
   }
   async function material(key) { return JSON.parse((await get('/state/all')).entries[key]); }
+  async function sceneJobs(key) {
+    return (await get('/jobs?key=' + encodeURIComponent(key))).jobs.filter(row => row.operation === '/path/node/scene');
+  }
+  async function waitForSceneAttempt(key, baseline) {
+    const previous = new Map(baseline.map(row => [row.id, row]));
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      const rows = await sceneJobs(key);
+      const row = rows.find(current => {
+        const old = previous.get(current.id);
+        return !old || current.updated_ms > old.updated_ms;
+      });
+      if (row) return row;
+      await page.waitForTimeout(500);
+    }
+    throw new Error('supplement job was not observed after the UI action');
+  }
+  async function waitForJobTerminal(id) {
+    const deadline = Date.now() + 720000;
+    let row = (await get('/jobs/' + id)).job;
+    while (row.status === 'queued' || row.status === 'running') {
+      assert(Date.now() < deadline, 'supplement job exceeded its bounded deadline');
+      await page.waitForTimeout(1500);
+      row = (await get('/jobs/' + id)).job;
+    }
+    return row;
+  }
+  async function waitForSceneUiOutcome() {
+    await page.waitForFunction(() => {
+      const card = document.querySelector('#node-n1');
+      if (!card) return false;
+      const ready = card.querySelector('.notes [data-scene="ready"]');
+      const status = card.querySelector('.scene-supplement-status')?.textContent || '';
+      return !!ready || /补充失败|暂未找到/.test(status);
+    }, null, {timeout:30000});
+    return page.evaluate(() => {
+      const card = document.querySelector('#node-n1');
+      const status = card.querySelector('.scene-supplement-status')?.textContent || '';
+      return {
+        hasScene: !!card.querySelector('.notes [data-scene="ready"]'),
+        failed: /补充失败/.test(status),
+        notNeeded: /暂未找到/.test(status)
+      };
+    });
+  }
   async function job(operation, body) {
     const response = await context.request.post(api + '/jobs', {headers,
       data:{operation,body,request_id:randomBytes(16).toString('hex')}});
@@ -170,7 +216,7 @@ async function main() {
     await page.evaluate(() => {LearnScenes.dispose(document.querySelector('#generic-3d-regression'));document.querySelector('#generic-3d-regression').remove();});
     report.cases.push('deployed_generic_3d_views_steps_and_disposal');
 
-    progress('issued_quiz_before_legacy_supplement');
+    progress('quiz_grading');
     await page.setViewportSize({width:1440,height:1000});
     const answers = detail.quiz.questions.map(item => item.type === 'fill' ? item.blanks.map(blank => blank.answer) : item.answer);
     const graded = await job('/path/quiz', {key:first.key,node:{id:first.node.id},round_id:detail.quiz.round_id,answers});
@@ -180,19 +226,79 @@ async function main() {
     assert.equal(sceneSources(legacy.nodeDetail.n1.study_notes).length, 0);
     await put(first.key, legacy);
     const oldQuiz = JSON.stringify(legacy.nodeDetail.n1.quiz), oldState = JSON.stringify(legacy.nodeState);
+    const supplementBaseline = {
+      notes: legacy.nodeDetail.n1.study_notes,
+      quiz: JSON.stringify(legacy.nodeDetail.n1.quiz),
+      nodeState: JSON.stringify(legacy.nodeState)
+    };
+    report.sceneSupplement = {
+      attemptCount: 0,
+      beforeSha256: {
+        studyNotes: sha256(supplementBaseline.notes),
+        quiz: sha256(supplementBaseline.quiz),
+        nodeState: sha256(supplementBaseline.nodeState)
+      },
+      attempts: []
+    };
+    progress('ui_scene_supplement');
     card = await openLesson(first, true);
     const supplement = card.getByRole('button',{name:'补充图示',exact:true});
     assert.equal(await supplement.count(), 1);
-    await supplement.click();
-    assert.equal(await card.locator('.mat-pane-material').evaluate(node => node.hidden), false,
-      'starting a supplement must retain the chosen material tab');
-    await page.waitForFunction(() => {
-      const card=document.querySelector('#node-n1');
-      return card.querySelector('.notes [data-scene="ready"]') ||
-        /补充失败|暂未找到/.test(card.querySelector('.scene-supplement-status')?.textContent || '');
-    },null,{timeout:720000});
-    assert(await card.locator('.notes [data-scene="ready"]').count(), 'supplement ended without a usable scene');
-    await card.locator('.notes [data-scene="ready"]').first().waitFor({timeout:720000});
+    let sceneReady = false;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const baselineJobs = await sceneJobs(first.key);
+      assert(await supplement.isEnabled(), 'supplement button must be enabled before a UI attempt');
+      report.sceneSupplement.attemptCount = attempt;
+      const result = {attempt, jobStatus:'awaiting', outcome:'pending', failureKind:null};
+      report.sceneSupplement.attempts.push(result);
+      await supplement.click();
+      assert.equal(await card.locator('.mat-pane-material').evaluate(node => node.hidden), false,
+        'starting a supplement must retain the chosen material tab');
+      progress('ui_scene_supplement_attempt_' + attempt + '_waiting_for_job');
+      const submitted = await waitForSceneAttempt(first.key, baselineJobs);
+      const submittedState = submitted.status === 'queued' || submitted.status === 'running' ? 'active' : 'terminal';
+      progress('ui_scene_supplement_attempt_' + attempt + '_job_observed_' + submittedState);
+      const terminal = await waitForJobTerminal(submitted.id);
+      const uiOutcome = await waitForSceneUiOutcome();
+      const outcome = uiOutcome.hasScene ? 'scene' : uiOutcome.notNeeded ? 'not_needed' : uiOutcome.failed ? 'failed' : 'unknown';
+      result.jobStatus = ['succeeded','failed','interrupted','cancelled'].includes(terminal.status) ? terminal.status : 'other';
+      result.outcome = outcome;
+      result.failureKind = outcome === 'not_needed' ? 'no_scene_benefit' : outcome === 'failed' ? 'ui_failure' : null;
+      if (outcome === 'scene' && terminal.status === 'succeeded') {
+        sceneReady = true;
+        break;
+      }
+
+      const afterFailure = await material(first.key);
+      const afterNotes = afterFailure.nodeDetail.n1.study_notes;
+      const afterQuiz = JSON.stringify(afterFailure.nodeDetail.n1.quiz);
+      const afterNodeState = JSON.stringify(afterFailure.nodeState);
+      result.afterSha256 = {
+        studyNotes: sha256(afterNotes),
+        quiz: sha256(afterQuiz),
+        nodeState: sha256(afterNodeState)
+      };
+      const unchanged = {
+        studyNotes: afterNotes === supplementBaseline.notes && result.afterSha256.studyNotes === report.sceneSupplement.beforeSha256.studyNotes,
+        quiz: afterQuiz === supplementBaseline.quiz && result.afterSha256.quiz === report.sceneSupplement.beforeSha256.quiz,
+        nodeState: afterNodeState === supplementBaseline.nodeState && result.afterSha256.nodeState === report.sceneSupplement.beforeSha256.nodeState
+      };
+      result.snapshotPreserved = unchanged;
+      assert(unchanged.studyNotes && unchanged.quiz && unchanged.nodeState,
+        'failed supplement must preserve notes, quiz, and node state');
+      if (attempt === 2) break;
+
+      const canRetry = await supplement.isEnabled();
+      result.retryAvailable = canRetry;
+      if (!canRetry) break;
+    }
+    assert(sceneReady, 'bounded UI supplement attempts ended without a usable scene');
+    assert.equal(report.sceneSupplement.attemptCount, report.sceneSupplement.attempts.length);
+    if (report.sceneSupplement.attempts.length > 1) {
+      assert(report.sceneSupplement.attempts[0].retryAvailable,
+        'a second supplement attempt must follow an enabled UI retry');
+    }
+    await card.locator('.notes [data-scene="ready"]').first().waitFor({timeout:30000});
     assert.equal(await card.locator('.mat-pane-material').evaluate(node => node.hidden), false,
       'successful supplement must retain the chosen material tab');
     await saved();
@@ -207,6 +313,7 @@ async function main() {
     const again = await job('/path/node/scene', {key:first.key,node:{id:'n1'}});
     assert.equal(again.reused, true);
     assert.equal(again.study_notes, supplemented.nodeDetail.n1.study_notes);
+    report.sceneSupplement.reuseInfo = {reusedExistingScene: !!again.reused};
     report.cases.push('legacy_ui_supplement_keeps_issued_quiz_grades_progress_and_survives_stale_save');
     report.cases.push('repeated_supplement_reuses_existing_diagram');
 

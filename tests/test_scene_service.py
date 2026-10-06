@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "study-assistant"))
 from application import create_application
 from background_jobs import JobError
 from prompts import SCENE_SUPPLEMENT, SCENE_TEACHING
-from scene_contracts import SceneContractError, scenes_in, validate_scene
+from scene_contracts import MAX_NOTES, MAX_SOURCE, SceneContractError, scenes_in, validate_scene
 from user_accounts import AccountError
 
 
@@ -34,20 +34,24 @@ def addition():
 
 
 def response():
+    return json.dumps({"needed": True, "reason": "位置关系更容易观察", "scene": diagram()}, ensure_ascii=False)
+
+
+def legacy_response():
     return json.dumps({"needed": True, "reason": "位置关系更容易观察", "markdown": addition()}, ensure_ascii=False)
 
 
 class SceneContractTests(unittest.TestCase):
-    def test_supplement_prompt_ends_with_valid_outer_json_examples(self):
-        final_instructions = SCENE_SUPPLEMENT.split(SCENE_TEACHING, 1)[1]
-        examples = [json.loads(line) for line in final_instructions.splitlines()
+    def test_supplement_prompt_uses_valid_native_scene_examples(self):
+        self.assertNotIn(SCENE_TEACHING, SCENE_SUPPLEMENT)
+        examples = [json.loads(line) for line in SCENE_SUPPLEMENT.splitlines()
                     if line.startswith('{"needed":')]
         self.assertEqual(len(examples), 2)
         self.assertEqual([example["needed"] for example in examples], [True, False])
         for example in examples:
-            self.assertEqual(set(example), {"needed", "reason", "markdown"})
-        self.assertEqual(len(scenes_in(examples[0]["markdown"])), 1)
-        self.assertEqual(examples[1]["markdown"], "")
+            self.assertEqual(set(example), {"needed", "reason", "scene"})
+        self.assertEqual(validate_scene(examples[0]["scene"]), examples[0]["scene"])
+        self.assertIsNone(examples[1]["scene"])
 
     def test_generic_shapes_steps_and_dimensions(self):
         for dimension in (2, 3):
@@ -117,6 +121,8 @@ class SceneServiceTests(unittest.TestCase):
             self.assertFalse(result["reused"])
             self.assertEqual(result["source_notes"], self.material["nodeDetail"]["n1"]["study_notes"])
             self.assertTrue(result["study_notes"].startswith(self.material["nodeDetail"]["n1"]["study_notes"]))
+            self.assertIn("请观察图形，再按步骤操作。", result["study_notes"])
+            self.assertEqual(scenes_in(result["study_notes"]), [diagram()])
             saved = self.app.repository.material(self.key)
             self.assertEqual(saved["nodeDetail"]["n1"]["quiz"], self.material["nodeDetail"]["n1"]["quiz"])
             self.assertEqual(saved["nodeDetail"]["n1"]["extra"], {"keep": 1})
@@ -150,11 +156,71 @@ class SceneServiceTests(unittest.TestCase):
             self.assertEqual(enriched["quiz"], original["quiz"])
             self.assertEqual(len(scenes_in(enriched["study_notes"])), 1)
             self.assertIn("集合交集", model.call_args.args[0][1]["content"])
-        declined = {"needed": False, "reason": "本段是简短的学习约定，无结构或动态过程。", "markdown": ""}
+        declined = {"needed": False, "reason": "本段是简短的学习约定，无结构或动态过程。", "scene": None}
         with patch.object(self.app.model, "nonempty", return_value=json.dumps(declined)):
             self.assertEqual(self.app.scenes.enrich_candidate(copy.deepcopy(original), {}), original)
             self.assertFalse(self.invoke()[1]["needed"])
             self.assertEqual(self.app.repository.material(self.key), self.material)
+
+    def test_legacy_valid_markdown_and_decline_remain_compatible(self):
+        with patch.object(self.app.model, "nonempty", return_value=legacy_response()):
+            status, result = self.invoke()
+            self.assertEqual(status, 200)
+            self.assertEqual(len(scenes_in(result["study_notes"])), 1)
+            self.assertIn(addition(), result["study_notes"])
+        self.app.repository.write_key(self.key, json.dumps(self.material))
+        old_decline = json.dumps({"needed": False, "reason": "没有图形收益", "markdown": ""})
+        with patch.object(self.app.model, "nonempty", return_value=old_decline):
+            status, result = self.invoke()
+            self.assertEqual(status, 200)
+            self.assertFalse(result["needed"])
+            self.assertEqual(self.app.repository.material(self.key), self.material)
+
+    def test_native_scene_requires_exact_envelope_and_valid_geometry(self):
+        invalid_scene = diagram()
+        invalid_scene["elements"][0]["code"] = "private-script"
+        invalid = [
+            {"needed": True, "reason": "private-marker", "scene": None},
+            {"needed": True, "reason": "private-marker", "scene": "not-an-object"},
+            {"needed": True, "reason": "private-marker", "scene": invalid_scene},
+            {"needed": False, "reason": "private-marker", "scene": diagram()},
+            {"needed": True, "reason": "private-marker", "scene": diagram(), "markdown": addition()},
+        ]
+        for index, value in enumerate(invalid):
+            with self.subTest(index=index), patch.object(self.app.model, "nonempty", return_value=json.dumps(value, ensure_ascii=False)) as model:
+                with self.assertRaises(JobError) as error:
+                    self.invoke()
+                self.assertEqual(error.exception.status, 502)
+                self.assertEqual(model.call_count, 2)
+                self.assertEqual(self.app.repository.material(self.key), self.material)
+                self.assertNotIn("private-marker", str(error.exception))
+                self.assertNotIn("private-script", model.call_args_list[1].args[0][-1]["content"])
+
+    def test_native_source_and_total_notes_limits_are_kept(self):
+        large_scene = {"version": 1, "type": "diagram", "title": "密集折线", "summary": "只用于检查长度限制。",
+                       "elements": [{"id": "line" + str(index), "kind": "polyline",
+                                     "points": [[1.123456789012345, 2.123456789012345] for _ in range(16)]}
+                                    for index in range(40)]}
+        self.assertEqual(validate_scene(large_scene), large_scene)
+        self.assertGreater(len(json.dumps(large_scene, ensure_ascii=False, separators=(",", ":"))), MAX_SOURCE)
+        oversize = json.dumps({"needed": True, "reason": "检查长度", "scene": large_scene}, ensure_ascii=False)
+        with patch.object(self.app.model, "nonempty", return_value=oversize):
+            with self.assertRaises(JobError) as error:
+                self.invoke()
+            self.assertEqual(error.exception.status, 502)
+            self.assertEqual(self.app.repository.material(self.key), self.material)
+        long_legacy = json.dumps({"needed": True, "reason": "检查长度", "markdown": "x" * 14001 + addition()}, ensure_ascii=False)
+        with patch.object(self.app.model, "nonempty", return_value=long_legacy):
+            with self.assertRaises(JobError) as error:
+                self.invoke()
+            self.assertEqual(error.exception.status, 502)
+            self.assertEqual(self.app.repository.material(self.key), self.material)
+        candidate = {"study_notes": "x" * (MAX_NOTES - 10)}
+        with patch.object(self.app.model, "nonempty", return_value=response()):
+            with self.assertRaises(JobError) as error:
+                self.app.scenes.enrich_candidate(candidate, {"title": "长正文"})
+            self.assertEqual(error.exception.status, 502)
+            self.assertEqual(len(candidate["study_notes"]), MAX_NOTES - 10)
 
     def test_bad_graphics_get_one_retry_and_never_change_notes_on_failure(self):
         bad = json.dumps({"needed": True, "reason": "示意", "markdown": "```learn-scene\n{\"code\":\"private-script\"}\n```"})
@@ -171,7 +237,7 @@ class SceneServiceTests(unittest.TestCase):
             self.assertEqual(model.call_count, 2)
             self.assertEqual(self.app.repository.material(self.key), self.material)
 
-    def test_missing_markdown_outer_field_retries_then_accepts_only_complete_envelope(self):
+    def test_missing_native_outer_field_retries_then_accepts_only_complete_envelope(self):
         missing = json.dumps({"needed": True, "reason": "private-marker"}) + "\n" + addition()
         with patch.object(self.app.model, "nonempty", side_effect=[missing, response()]) as model:
             status, result = self.invoke()
@@ -179,10 +245,10 @@ class SceneServiceTests(unittest.TestCase):
             self.assertEqual(len(scenes_in(result["study_notes"])), 1)
             self.assertEqual(model.call_count, 2)
             feedback = model.call_args_list[1].args[0][-1]["content"]
-            for field in ("needed", "reason", "markdown"):
+            for field in ("needed", "reason", "scene"):
                 self.assertIn(field, feedback)
             self.assertIn("一个完整 JSON 对象", feedback)
-            self.assertIn("外层对象后", feedback)
+            self.assertIn("独立围栏", feedback)
             self.assertNotIn("private-marker", feedback)
         self.app.repository.write_key(self.key, json.dumps(self.material))
         with patch.object(self.app.model, "nonempty", return_value=missing) as model:
@@ -193,15 +259,15 @@ class SceneServiceTests(unittest.TestCase):
             self.assertEqual(model.call_count, 2)
             self.assertEqual(self.app.repository.material(self.key), self.material)
 
-    def test_decline_without_markdown_is_not_accepted(self):
+    def test_decline_without_payload_is_not_accepted(self):
         missing = json.dumps({"needed": False, "reason": "无需图示"})
-        decline = json.dumps({"needed": False, "reason": "没有图形收益", "markdown": ""})
+        decline = json.dumps({"needed": False, "reason": "没有图形收益", "scene": None})
         with patch.object(self.app.model, "nonempty", side_effect=[missing, decline]) as model:
             status, result = self.invoke()
             self.assertEqual(status, 200)
             self.assertFalse(result["needed"])
             self.assertEqual(model.call_count, 2)
-            self.assertIn("markdown", model.call_args_list[1].args[0][-1]["content"])
+            self.assertIn("scene", model.call_args_list[1].args[0][-1]["content"])
             self.assertEqual(self.app.repository.material(self.key), self.material)
         with patch.object(self.app.model, "nonempty", return_value=missing) as model:
             with self.assertRaises(JobError) as error:

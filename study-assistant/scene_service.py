@@ -5,7 +5,7 @@ import json
 from background_jobs import JobError
 from generation_contracts import _json_block
 from prompts import SCENE_SUPPLEMENT
-from scene_contracts import MAX_NOTES, SceneContractError, scenes_in
+from scene_contracts import MAX_NOTES, MAX_SOURCE, SceneContractError, scenes_in, validate_scene
 import quiz_harness as harness
 
 
@@ -20,12 +20,12 @@ class SceneService:
         payload = {"node": {name: node.get(name) for name in ("title", "essence", "objectives")},
                    "study_notes": source[:20000], "requested": requested}
         envelope_retry = ("上次回复的外层格式无效。只输出一个完整 JSON 对象，"
-                          "恰好包含 needed、reason、markdown 三个必填字段。"
-                          "markdown 必须是字符串；不需要图示时也必须是空字符串。"
-                          "把 learn-scene 围栏放在 markdown 字符串内，不能在外层对象后另输出场景或说明。")
-        scene_retry = ("上次图示配置或显示检查未通过。请简化图形并遵守场景字段约束。"
-                       "只输出一个含 needed、reason、markdown 三字段的完整 JSON 外层对象，"
-                       "在 markdown 字符串中放一个有效 learn-scene 围栏。")
+                          "恰好包含 needed、reason、scene 三个必填字段。"
+                          "需要图示时 scene 是图形对象；不需要图示时 scene 是 null。"
+                          "不要输出 markdown、独立围栏、第二个对象或对象外的说明。")
+        scene_retry = ("上次图形配置或显示检查未通过。请简化图形并遵守 v1 场景字段约束。"
+                       "只输出一个含 needed、reason、scene 三字段的完整 JSON 外层对象，"
+                       "scene 是图形对象，不要序列化成字符串或输出独立围栏。")
         retry = scene_retry
         for attempt in range(2):
             messages = [{"role": "system", "content": SCENE_SUPPLEMENT},
@@ -34,20 +34,31 @@ class SceneService:
                 messages.append({"role": "user", "content": retry})
             result = _json_block(self.model.nonempty(
                 messages, max_tokens=self.model.settings.max_output_tokens, temperature=0.3))
-            if (not isinstance(result, dict) or set(result) != {"needed", "reason", "markdown"}
+            native = isinstance(result, dict) and set(result) == {"needed", "reason", "scene"}
+            legacy = isinstance(result, dict) and set(result) == {"needed", "reason", "markdown"}
+            if (not (native or legacy)
                     or type(result["needed"]) is not bool
                     or not isinstance(result["reason"], str) or not result["reason"].strip()
-                    or len(result["reason"]) > 200 or not isinstance(result["markdown"], str)):
+                    or len(result["reason"]) > 200
+                    or (legacy and not isinstance(result["markdown"], str))):
                 retry = envelope_retry
                 continue
             try:
-                addition = result["markdown"].strip()
                 if not result["needed"]:
-                    if addition:
+                    if (native and result["scene"] is not None) or (legacy and result["markdown"].strip()):
                         retry = envelope_retry
                         continue
                     return "", result["reason"]
                 retry = scene_retry
+                if native:
+                    validate_scene(result["scene"])
+                    encoded = json.dumps(result["scene"], ensure_ascii=False, allow_nan=False,
+                                         separators=(",", ":"))
+                    if len(encoded) > MAX_SOURCE:
+                        raise SceneContractError("图示配置过长")
+                    addition = "请观察图形，再按步骤操作。\n\n```learn-scene\n" + encoded + "\n```"
+                else:
+                    addition = result["markdown"].strip()
                 if len(addition) > 14000 or len(scenes_in(addition)) != 1:
                     raise SceneContractError("补充段落必须包含一个有效图示")
                 review = self.verification.review_rendered({"study_notes": addition})
