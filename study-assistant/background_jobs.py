@@ -12,7 +12,7 @@ from quiz_harness import QuizContractError
 from research_sources import SourceSelectionError
 from material_titles import document_title
 
-OPERATIONS = frozenset({'/path/intake', '/path/research', '/path/plan', '/path/node',
+OPERATIONS = frozenset({'/path/intake', '/path/research', '/path/plan', '/path/node', '/path/node/scene',
                         '/path/requiz', '/path/quizmap', '/path/refine', '/path/gaps', '/path/quiz'})
 TERMINAL = frozenset({'succeeded', 'failed', 'interrupted', 'cancelled'})
 REQUEST_ID = re.compile(r'^[A-Za-z0-9:_-]{8,120}$')

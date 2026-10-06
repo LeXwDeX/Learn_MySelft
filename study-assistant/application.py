@@ -26,6 +26,7 @@ from tutor_routes import TutorRoutes
 from http_handler import Handler
 from tutor_rendering import TutorRendering
 from render_review import validate_mermaid
+from scene_service import SceneService
 
 
 class Application:
@@ -48,8 +49,10 @@ class Application:
         self.verification = QuizGeneration(self.model)
         self.authorization = RequestAuthorization(self.accounts)
         self.tutor_rendering = TutorRendering(validate_mermaid)
+        self.scenes = SceneService(self.repository, self.model, self.verification,
+                                   self.authorize_scene)
         dependencies = (self.repository, self.model, self.cache, self.verification)
-        self.learning = LearningService(*dependencies)
+        self.learning = LearningService(*dependencies, scenes=self.scenes)
         self.quizzes = QuizService(*dependencies)
         self.flywheel = FlywheelService(*dependencies)
         self.operations = {
@@ -57,6 +60,7 @@ class Application:
             "/path/research": self.learning.research,
             "/path/plan": self.learning.plan,
             "/path/node": self.learning.node,
+            "/path/node/scene": self.scenes.supplement,
             "/path/requiz": self.quizzes.requiz,
             "/path/quizmap": self.quizzes.quizmap,
             "/path/quiz/state": self.quizzes.quiz_state_or_draft,
@@ -75,6 +79,10 @@ class Application:
         }
         self._queue = None
         self._queue_lock = threading.Lock()
+
+    def authorize_scene(self, actor, key):
+        current = self.accounts.get_user(actor["id"])
+        self.authorization.body(current, current["id"], "/path/node/scene", {"key": key})
 
     def dispatch(self, operation, body, actor):
         handler = self.operations.get(operation)

@@ -178,15 +178,16 @@ function syncAiMaterial(id) {
     var ready = status === 'ready';
     var label = ready ? '学习材料已就绪' : status === 'generating' ? '学习材料正在生成' : status === 'failed' ? '学习材料生成失败，请在左侧重试' : '学习材料尚未生成';
     view.root.querySelector('.ai-intro').textContent = label + (ready ? '，可以结合正文讲解和练习。' : '。可以先聊前置知识和学习目标。');
-    view.root.querySelector('.ai-note').textContent = ready ? 'AI 可参考本单元材料；个人薄弱点需结合你的实际作答判断。' : 'AI 当前仅有单元标题和学习目标，还没有本单元正文。';
+    view.root.querySelector('.ai-note').textContent = ready ? 'AI 可参考本单元材料；个人薄弱点需结合你的实际作答判断。可用图形和动画讲解关系、变化过程与推导。' : 'AI 当前仅有单元标题和学习目标，还没有本单元正文。材料就绪后，可用图形和动画讲解关系、变化过程与推导。';
     view.input.placeholder = ready ? '就本单元提问，Enter 发送 / Shift+Enter 换行' : '可以先问学习目标或前置知识';
     var methods = view.root.querySelector('.ai-methods');
     if (methods && !methods.childNodes.length) {
-      ['画图解释', '用表格对比', '举个例子', '分步推导'].forEach(function (method) {
+      ['画图解释', '动画演示', '用表格对比', '举个例子', '分步推导'].forEach(function (method) {
         var button = document.createElement('button'); button.type = 'button'; button.className = 'ai-method'; button.textContent = method;
         button.onclick = function () {
           var available = aiMaterialStatus(id) === 'ready';
-          sendAi(id, (available ? '结合本单元及当前对话，' : '正文尚未就绪，请仅对前置知识做预习说明：') + method + '，选择适合讲解的内容；不要透露我正在作答题目的答案。');
+          var request = method === '动画演示' ? '用本系统已有的交互动画分步解释本单元最适合观察的概念，让我能操作参数或控制步骤；先讲清概念与图形的关系。' : method + '，选择适合讲解的内容；';
+          sendAi(id, (available ? '结合本单元及当前对话，' : '正文尚未就绪，请仅对前置知识做预习说明：') + request + '不要透露我正在作答题目的答案。');
         };
         methods.appendChild(button);
       });

@@ -98,6 +98,144 @@ async function main() {
     assert.equal(await page.locator('.learn-scene').count(), 1);
     await page.evaluate(() => LearnScenes.dispose(document)); await page.waitForTimeout(50);
     assert.deepEqual(await page.evaluate(() => [window._activeFrames.size, window._activeResize, window._activeMutation]), [0, 0, 0]);
+    const vectorDiagram = {...base, type: 'diagram', title: '二维向量', summary: '仅表示二维分量。', elements: [
+      {id: 'axis_x', kind: 'line', color: 'muted', points: [[-3, 0], [3, 0]]},
+      {id: 'axis_y', kind: 'line', color: 'muted', points: [[0, -3], [0, 3]]},
+      {id: 'e1', kind: 'label', color: 'muted', label: 'e₁', points: [[3, 0]]},
+      {id: 'e2', kind: 'label', color: 'muted', label: 'e₂', points: [[0, 3]]},
+      {id: 'v', kind: 'arrow', points: [[0, 0], [-3, 2]]},
+      {id: 'horizontal', kind: 'arrow', color: 'positive', points: [[0, 0], [-3, 0]], opacity: 0},
+      {id: 'vertical', kind: 'arrow', color: 'secondary', points: [[-3, 0], [-3, 2]], opacity: 0},
+      {id: 'length', kind: 'label', label: '长度 √13', points: [[-3, 2]], opacity: 0}
+    ], steps: [
+      {caption: '显示负向横分量。', changes: [{id: 'horizontal', opacity: 1}]},
+      {caption: '再加纵分量。', changes: [{id: 'vertical', opacity: 1}]},
+      {caption: '长度是 √13。', changes: [{id: 'length', opacity: 1}]}
+    ]};
+    const threeDimensional = {...base, type: 'diagram', dimension: 3, title: '三维截面', elements: [
+      {id: 'plane', kind: 'polygon', points: [[-2, -2, 0], [2, -2, 0], [2, 2, 0], [-2, 2, 0]], color: 'muted'},
+      {id: 'circle', kind: 'circle', points: [[0, 0, 1]], radius: 2, color: 'positive'},
+      {id: 'center', kind: 'point', points: [[0, 0, 1]], color: 'warning'}
+    ]};
+    await fixtures(page, [vectorDiagram, threeDimensional]);
+    const diagram = page.locator('[data-scene-type="diagram"]').first();
+    assert.equal(await diagram.locator('svg').getAttribute('data-step'), '0', 'initial diagram stays still');
+    assert.equal(await diagram.locator('[data-element-id="horizontal"]').getAttribute('opacity'), '0');
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    await diagram.getByRole('button', {name: '下一步'}).click();
+    assert.equal(await diagram.locator('[data-element-id="horizontal"]').getAttribute('opacity'), '1');
+    await diagram.getByRole('button', {name: '下一步'}).click();
+    assert.equal(await diagram.locator('[data-element-id="vertical"]').getAttribute('opacity'), '1');
+    await diagram.getByRole('button', {name: '上一步'}).click();
+    assert.equal(await diagram.locator('[data-element-id="vertical"]').getAttribute('opacity'), '0', 'previous step restores prior state');
+    const queued = await diagram.getByLabel('本步进度').evaluate(input => {
+      for (let i = 0; i < 20; i++) { input.value = String(i / 20); input.dispatchEvent(new Event('input', {bubbles: true})); }
+      return window._activeFrames.size;
+    });
+    assert.equal(queued, 1, 'rapid inputs share one animation frame');
+    await page.waitForFunction(() => document.querySelector('[data-scene-type="diagram"] svg').dataset.progress === '0.95');
+    assert.equal(await diagram.locator('[data-element-id="horizontal"]').getAttribute('opacity'), '0.95', 'latest slider input wins');
+    const threeD = page.locator('[data-scene-type="diagram"]').last();
+    const oblique = await threeD.locator('[data-element-id="circle"]').getAttribute('d');
+    await threeD.getByLabel('图形视角').selectOption('top');
+    assert.notEqual(await threeD.locator('[data-element-id="circle"]').getAttribute('d'), oblique, 'three-dimensional view changes projection');
+    assert.equal(await threeD.getByRole('button').count(), 0, 'static diagram has no animation controls');
+    await page.setViewportSize({width: 320, height: 1000}); await page.waitForTimeout(50);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= 320), 'diagram controls fit 320px');
+    assert(await diagram.locator('.learn-scene-diagram-label').evaluateAll(labels => labels.every(label => { const box = label.getBBox(), svg = label.ownerSVGElement.viewBox.baseVal; return box.x >= 0 && box.x + box.width <= svg.width && getComputedStyle(label).fontSize === '14px'; })), 'diagram labels remain readable and in bounds');
+    await page.screenshot({path: '/tmp/learning-diagram-320.png', fullPage: true});
+    await page.emulateMedia({reducedMotion: 'no-preference'});
+    await diagram.getByRole('button', {name: '下一步'}).click();
+    await diagram.getByRole('button', {name: '下一步'}).click();
+    await diagram.getByLabel('本步进度').evaluate(input => { input.value = '0.65'; input.dispatchEvent(new Event('input', {bubbles: true})); });
+    await page.waitForFunction(() => document.querySelector('[data-scene-type="diagram"] svg').dataset.progress === '0.65');
+    assert.equal(await diagram.locator('svg').getAttribute('data-step'), '3');
+    await diagram.getByRole('button', {name: '继续', exact: true}).click();
+    const resumedLastStep = Number(await diagram.locator('svg').getAttribute('data-progress'));
+    assert(resumedLastStep >= 0.65 && resumedLastStep < 1, 'multi-step final stage resumes without restarting');
+    await page.waitForTimeout(80);
+    assert.equal(await diagram.locator('svg').getAttribute('data-step'), '3');
+    assert(Number(await diagram.locator('svg').getAttribute('data-progress')) > resumedLastStep);
+    await diagram.getByRole('button', {name: '暂停'}).click();
+    await diagram.getByLabel('本步进度').evaluate(input => { input.value = '1'; input.dispatchEvent(new Event('input', {bubbles: true})); });
+    assert.equal(await diagram.getByRole('button', {name: '重播', exact: true}).count(), 2, 'completed final stage offers replay');
+    await diagram.getByRole('button', {name: '重播'}).last().click(); await page.waitForTimeout(80);
+    await diagram.getByRole('button', {name: '暂停'}).click();
+    const pausedDiagram = await diagram.locator('svg').getAttribute('data-progress');
+    await page.waitForTimeout(80);
+    assert.equal(await diagram.locator('svg').getAttribute('data-progress'), pausedDiagram, 'diagram pause freezes progress');
+    await diagram.locator('select[aria-label="动画速度"]').selectOption('0.5');
+    await diagram.getByRole('button', {name: '继续'}).click(); await page.waitForTimeout(80);
+    assert(Number(await diagram.locator('svg').getAttribute('data-progress')) > Number(pausedDiagram));
+    await page.evaluate(() => { document.querySelector('#fixtures').hidden = true; }); await page.waitForTimeout(50);
+    assert.equal(await page.evaluate(() => window._activeFrames.size), 0, 'hiding a scene cancels animation frames');
+    await page.evaluate(() => LearnScenes.dispose(document)); await page.waitForTimeout(50);
+    assert.deepEqual(await page.evaluate(() => [window._activeFrames.size, window._activeResize, window._activeMutation]), [0, 0, 0], 'diagram disposal releases frames and observers');
+    await fixtures(page, [{...base, type: 'diagram', elements: [{id: 'zero', kind: 'arrow', points: [[0, 0], [0, 0]]}]}]);
+    assert.equal(await page.locator('[data-element-id="zero"]').getAttribute('data-zero'), 'true', 'zero vector remains visible as a point');
+    assert(!/NaN|Infinity/.test(await page.locator('[data-element-id="zero"]').getAttribute('d')));
+    await fixtures(page, [{...base, type: 'diagram', elements: [
+      {id: 'moving', kind: 'arrow', points: [[0, 0], [0, 1]]},
+      {id: 'growing', kind: 'circle', points: [[0, 0]], radius: 1}
+    ], steps: [{caption: '移动箭头并扩大圆。', changes: [
+      {id: 'moving', points: [[0, 0], [2, 1]]}, {id: 'growing', radius: 2}
+    ]}]}]);
+    const morph = page.locator('[data-scene-type="diagram"]');
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    await morph.getByRole('button', {name: '下一步'}).click();
+    const samples = [];
+    for (const value of ['0', '0.5', '1']) {
+      await morph.getByLabel('本步进度').evaluate((input, progress) => { input.value = progress; input.dispatchEvent(new Event('input', {bubbles: true})); }, value);
+      await page.waitForFunction(progress => document.querySelector('[data-scene-type="diagram"] svg').dataset.progress === progress, value);
+      samples.push(await morph.evaluate(root => {
+        const arrow = root.querySelector('[data-element-id="moving"]').getAttribute('d');
+        const endpoint = Number(arrow.match(/L([\d.-]+) [\d.-]+$/)[1]);
+        const width = root.querySelector('[data-element-id="growing"]').getBBox().width;
+        return {endpoint, width, nodes: root.querySelectorAll('svg *').length};
+      }));
+    }
+    assert(Math.abs(samples[1].endpoint - (samples[0].endpoint + samples[2].endpoint) / 2) < 0.02, 'points interpolate halfway');
+    assert(Math.abs(samples[1].width - (samples[0].width + samples[2].width) / 2) < 0.5, 'circle radius interpolates halfway');
+    assert.equal(samples[0].nodes, samples[2].nodes, 'dragging progress reuses SVG nodes');
+    await morph.getByLabel('本步进度').evaluate(input => { input.value = '0.65'; input.dispatchEvent(new Event('input', {bubbles: true})); });
+    await page.waitForFunction(() => document.querySelector('[data-scene-type="diagram"] svg').dataset.progress === '0.65');
+    await page.emulateMedia({reducedMotion: 'no-preference'});
+    await morph.getByRole('button', {name: '继续', exact: true}).click();
+    const resumedSingleStep = Number(await morph.locator('svg').getAttribute('data-progress'));
+    assert(resumedSingleStep >= 0.65 && resumedSingleStep < 1, 'single-step final stage resumes without restarting');
+    await page.waitForTimeout(80);
+    assert(Number(await morph.locator('svg').getAttribute('data-progress')) > resumedSingleStep);
+    assert.equal(await morph.locator('svg').getAttribute('data-step'), '1');
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    await page.waitForFunction(() => document.querySelector('[data-scene-type="diagram"] svg').dataset.progress === '1');
+    assert.equal(await morph.getByRole('button', {name: '重播', exact: true}).count(), 2);
+    const promptScene = JSON.parse(fs.readFileSync('study-assistant/prompts.py', 'utf8').match(/^\{"version":1,"type":"diagram".*$/m)[0]);
+    const flowScene = {...base, type: 'diagram', title: '流程移动', elements: [
+      {id: 'start', kind: 'polygon', color: 'muted', label: '准备', points: [[-3, -1], [-1, -1], [-1, 1], [-3, 1]]},
+      {id: 'end', kind: 'polygon', color: 'positive', label: '完成', points: [[1, -1], [3, -1], [3, 1], [1, 1]]},
+      {id: 'handoff', kind: 'arrow', color: 'accent', label: '资料传递', points: [[-1, 0], [0, 0]]}
+    ], steps: [{caption: '资料传递到完成状态。', changes: [{id: 'handoff', points: [[-1, 0], [1, 0]]}]}]};
+    await fixtures(page, [promptScene, flowScene]);
+    const promptDiagram = page.locator('[data-scene-type="diagram"]').first(), flow = page.locator('[data-scene-type="diagram"]').last();
+    for (const label of ['x', 'y', 'v=(3,4)', 'x=3', 'y=4']) {
+      assert.equal(await promptDiagram.locator('.learn-scene-diagram-legend li').filter({hasText: label}).count() > 0, true, 'prompt label remains available in legend');
+    }
+    assert.equal(await promptDiagram.locator('[data-element-label="v"]').count(), 1, 'arrow label is visible on the plot');
+    assert.equal(await flow.locator('[data-element-label="handoff"]').count(), 1, 'flow arrow label is visible on the plot');
+    for (const width of [320, 390]) {
+      await page.setViewportSize({width, height: 1000}); await page.waitForTimeout(50);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'prompt and flow diagrams fit ' + width + 'px');
+      assert(await page.locator('[data-scene-type="diagram"] text').evaluateAll(labels => labels.every(label => {
+        const box = label.getBBox(), svg = label.ownerSVGElement.viewBox.baseVal;
+        return box.x >= 0 && box.x + box.width <= svg.width + 1;
+      })), 'all prompt and flow labels fit ' + width + 'px');
+      await page.screenshot({path: '/tmp/learning-diagram-prompt-flow-' + width + '.png', fullPage: true});
+    }
+    await flow.getByRole('button', {name: '下一步'}).click();
+    const moved = await flow.locator('[data-element-id="handoff"]').getAttribute('d');
+    await flow.getByLabel('本步进度').evaluate(input => { input.value = '0'; input.dispatchEvent(new Event('input', {bubbles: true})); });
+    await page.waitForFunction(() => document.querySelectorAll('[data-scene-type="diagram"]')[1].querySelector('svg').dataset.progress === '0');
+    assert.notEqual(await flow.locator('[data-element-id="handoff"]').getAttribute('d'), moved, 'non-math flow arrow moves through the same step engine');
     await fixtures(page, [{...scenes[0], matrix: [[0, 0], [0, 0]], vector: [0, 0]}, {...scenes[0], matrix: [[1, 1], [2, 2]], vector: [-2, 3]}]);
     await page.emulateMedia({reducedMotion: 'reduce'});
     for (let index = 0; index < 2; index++) {

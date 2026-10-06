@@ -180,6 +180,17 @@
         delete before.quizMaterials; delete after.quizMaterials;
         // Refinement receipts are server-owned replay guards, not browser edits.
         delete before.refinementReceipts; delete after.refinementReceipts;
+        // Protected generated notes can change after a save has been dispatched.
+        // Compare editable fields; keep genuine reference and progress edits.
+        Object.keys(after.nodeDetail || {}).forEach(function (id) {
+          var server = after.nodeDetail[id], local = (before.nodeDetail || {})[id];
+          var marker = server && server.sceneSupplement;
+          if (!local || typeof local !== 'object' || !marker || marker.version !== 1 ||
+              typeof marker.source_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(marker.source_sha256) ||
+              typeof marker.notes_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(marker.notes_sha256)) return;
+          delete local.study_notes; delete server.study_notes;
+          delete local.sceneSupplement; delete server.sceneSupplement;
+        });
         delete before.title; delete after.title;
         if (!Object.prototype.hasOwnProperty.call(before, 'materials')) before.materials = [];
         if (!Object.prototype.hasOwnProperty.call(after, 'materials')) after.materials = [];

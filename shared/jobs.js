@@ -1,10 +1,10 @@
 /* Persistent job receipts contain identifiers, never login credentials. */
 (function () {
   'use strict';
-  var operations = new Set(['/path/intake', '/path/research', '/path/plan', '/path/node',
+  var operations = new Set(['/path/intake', '/path/research', '/path/plan', '/path/node', '/path/node/scene',
     '/path/requiz', '/path/quizmap', '/path/refine', '/path/gaps', '/path/quiz']);
   var labels = {'/path/intake': '确认学习目标', '/path/research': '研究学习资料',
-    '/path/plan': '生成学习路径', '/path/node': '生成单元材料', '/path/requiz': '生成新题',
+    '/path/plan': '生成学习路径', '/path/node': '生成单元材料', '/path/node/scene': '补充图示与动画', '/path/requiz': '生成新题',
     '/path/quizmap': '生成综合测验', '/path/refine': '细化学习路径', '/path/gaps': '分析薄弱点', '/path/quiz': '评分'};
   var context = window.LearnUser;
   var running = new Map();

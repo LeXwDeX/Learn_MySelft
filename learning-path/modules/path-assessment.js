@@ -18,6 +18,44 @@ function listSection(title, arr) {
       arr.map(function (x) { return '<li>' + format.mdRender(x) + '</li>'; }).join('') + '</ul></div>';
   }
 
+function hasLearningScene(notes) {
+    var lines = String(notes || '').split(/\r?\n/), marker = '', length = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (marker) {
+        if (new RegExp('^ {0,3}' + marker + '{' + length + ',}[ \\t]*$').test(line)) { marker = ''; length = 0; }
+        continue;
+      }
+      var opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (!opening) continue;
+      if (/^learn-scene(?:\s|$)/i.test(opening[2].trim())) return true;
+      marker = opening[1][0]; length = opening[1].length;
+    }
+    return false;
+  }
+
+session.sceneWork = Object.create(null);
+
+function sceneWorkKey(key, id) { return key + '#' + id; }
+
+function sceneSupplementSection(id, d) {
+    if (hasLearningScene(d.study_notes)) return '';
+    var key = format.storeKey(), work = session.sceneWork[sceneWorkKey(key, id)];
+    var busy = !!(work && work.status === 'running');
+    var notNeeded = !!(work && work.status === 'not-needed' && work.notes === d.study_notes);
+    return '<div class="scene-supplement" data-scene-supplement="' + format.esc(id) + '">' +
+      '<button class="btn scene-supplement-btn" type="button"' +
+      (window.LearnUser.readOnly || busy || notNeeded ? ' disabled' : '') +
+      '>' + (busy ? '正在补充…' : '补充图示') + '</button>' +
+      '<span class="scene-supplement-status" role="status" aria-live="polite"></span></div>';
+  }
+
+function sceneSupplementMessage(id) {
+    var work = session.sceneWork[sceneWorkKey(format.storeKey(), id)], detail = model.state.nodeDetail[id];
+    if (work && work.status === 'not-needed' && detail && work.notes !== detail.study_notes) return '';
+    return work && work.status === 'running' ? '正在补充图示…' : work && work.status === 'error' ? '补充失败，可以重试。' : work && work.status === 'not-needed' ? work.message : '';
+  }
+
 // ---------- 自测题渲染（选择题点选 / 填空·简答文本作答） ----------
 
 session.matTab = 'material';
@@ -50,6 +88,7 @@ function renderNodeDetail(id) {
       !!(prev.lastResult && typeof prev.lastResult.score === 'number' && prev.lastResult.score < 60);
     var matPane =
       '<div class="panel-sec"><h4>学习正文</h4><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
+      sceneSupplementSection(id, d) +
       listSection('要点', d.key_points) +
       listSection('例子', d.examples) +
       listSection('易错点', d.misconceptions);
@@ -79,6 +118,8 @@ function renderNodeDetail(id) {
       '</div>' +
       '<div class="mat-pane mat-pane-material"' + (session.matTab === 'material' ? '' : ' hidden') + '>' + matPane + '</div>' +
       '<div class="mat-pane mat-pane-quiz"' + (session.matTab === 'quiz' ? '' : ' hidden') + '>' + quizPane + '</div>';
+    var sceneStatus = scope.querySelector('.scene-supplement-status');
+    if (sceneStatus) sceneStatus.textContent = sceneSupplementMessage(id);
     format.renderMathIn(scope);
     var notes = scope.querySelector('.notes');
     if (notes && window.LearnMarkdown) {
@@ -105,6 +146,8 @@ function renderNodeDetail(id) {
       });
     }
     assistant.setFoot('');
+    var sceneButton = scope.querySelector('.scene-supplement-btn');
+    if (sceneButton) sceneButton.addEventListener('click', function () { supplementScene(id); });
     var openQuiz = scope.querySelector('#open-quiz-workspace');
     if (openQuiz) openQuiz.addEventListener('click', function () { openQuizModal(id, scope.querySelector('#quiz-round-select').value); });
     var bRedo = scope.querySelector('#redo-quiz');
@@ -118,6 +161,136 @@ function renderNodeDetail(id) {
     var bRefine = scope.querySelector('#refine-node');
     if (bRefine) bRefine.addEventListener('click', function () { refineNode(id); });
     requestAnimationFrame(cards.drawEdges);
+  }
+
+function applySceneSupplement(id, key, result) {
+    if (format.storeKey() !== key || !result || result.node_id !== id || typeof result.study_notes !== 'string') return false;
+    var node = domain.nodeById(id), detail = model.state.nodeDetail[id];
+    if (!node || !detail || !model.state.plan) return false;
+    if (!hasLearningScene(result.study_notes)) {
+      if (result.needed !== false || result.study_notes !== detail.study_notes) return false;
+      var reason = typeof result.reason === 'string' ? result.reason.slice(0, 300) : '';
+      session.sceneWork[sceneWorkKey(key, id)] = {
+        status: 'not-needed',
+        notes: result.study_notes,
+        message: '本单元暂未找到合适图示。' + (reason ? ' ' + reason : '')
+      };
+      if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+      return true;
+    }
+    if (result.study_notes === detail.study_notes) return true;
+    if (typeof result.source_notes !== 'string' || result.source_notes !== detail.study_notes) return false;
+    detail.study_notes = result.study_notes;
+    if (Object.prototype.hasOwnProperty.call(result, 'sceneSupplement')) detail.sceneSupplement = result.sceneSupplement;
+    persistence.save();
+    assistant.syncAiMaterial(id);
+    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+    return true;
+  }
+
+function consumeSceneSupplement(id, key, result, workKey) {
+    if (format.storeKey() !== key) return;
+    var detail = model.state.nodeDetail[id];
+    if (result && result.needed === false && (!detail || result.study_notes !== detail.study_notes)) {
+      clearSceneSupplementWork(id, key, workKey);
+      return;
+    }
+    if (!applySceneSupplement(id, key, result)) {
+      clearSceneSupplementWork(id, key, workKey);
+      return;
+    }
+    if (result.needed !== false) session.sceneWork[workKey] = {status: 'done'};
+  }
+
+function clearSceneSupplementWork(id, key, workKey) {
+    if (format.storeKey() !== key) return;
+    delete session.sceneWork[workKey || sceneWorkKey(key, id)];
+    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+  }
+
+function markSceneSupplementError(id, key) {
+    if (format.storeKey() !== key) return;
+    session.sceneWork[sceneWorkKey(key, id)] = {status: 'error'};
+    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+  }
+
+function supplementScene(id) {
+    var key = format.storeKey(), node = domain.nodeById(id), detail = model.state.nodeDetail[id];
+    if (!node || !detail || !model.state.plan || window.LearnUser.readOnly || hasLearningScene(detail.study_notes)) return Promise.resolve();
+    var workKey = sceneWorkKey(key, id), current = session.sceneWork[workKey];
+    if (current && current.status === 'running') return current.promise;
+    var work = {status: 'running'};
+    session.sceneWork[workKey] = work;
+    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+    work.promise = persistence.post('/path/node/scene', {key: key, node: {id: id}}, {
+      newOperation: true,
+      onRetry: function () { return format.storeKey() === key ? supplementScene(id) : Promise.resolve(); }
+    }).then(function (result) {
+      if (format.storeKey() !== key) return;
+      consumeSceneSupplement(id, key, result, workKey);
+    }).catch(function (error) {
+      markSceneSupplementError(id, key);
+      if (format.storeKey() === key && !error.jobId) shell.showError('补充图示失败：' + error.message, function () { return supplementScene(id); });
+    });
+    return work.promise;
+  }
+
+function restoreSceneSupplement() {
+    if (!window.LearnJobs || window.LearnUser.readOnly || !model.state.plan) return Promise.resolve();
+    var key = format.storeKey();
+    return window.LearnJobs.list(key).then(function (jobs) {
+      if (key !== format.storeKey()) return;
+      var latest = Object.create(null);
+      jobs.forEach(function (job) {
+        if (job.operation !== '/path/node/scene' || !job.node_id || !model.state.nodeDetail[job.node_id]) return;
+        var previous = latest[job.node_id];
+        if (!previous || job.created_ms > previous.created_ms) latest[job.node_id] = job;
+      });
+      return Promise.all(Object.keys(latest).map(function (id) {
+        var job = latest[id];
+        if (job.status === 'succeeded') {
+          return Promise.resolve(job.result).then(function (result) {
+            return result ? result : window.LearnJobs.get(job.id).then(function (fresh) { return fresh.result; });
+          }).then(function (result) {
+            if (result && key === format.storeKey()) consumeSceneSupplement(id, key, result, sceneWorkKey(key, id));
+          }).catch(function () {});
+        }
+        if (job.status === 'failed' || job.status === 'interrupted') {
+          markSceneSupplementError(id, key);
+          return;
+        }
+        if (job.status === 'cancelled') {
+          clearSceneSupplementWork(id, key);
+          return;
+        }
+        if (job.status !== 'queued' && job.status !== 'running') return;
+        var workKey = sceneWorkKey(key, id), work = {status: 'running'};
+        session.sceneWork[workKey] = work;
+        if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+        work.promise = window.LearnJobs.get(job.id).then(function (fresh) {
+          if (fresh.status === 'succeeded') return fresh.result;
+          if (fresh.status === 'failed' || fresh.status === 'interrupted') {
+            markSceneSupplementError(id, key);
+            return null;
+          }
+          if (fresh.status === 'cancelled') {
+            clearSceneSupplementWork(id, key, workKey);
+            return null;
+          }
+          if (fresh.status !== 'queued' && fresh.status !== 'running') {
+            clearSceneSupplementWork(id, key, workKey);
+            return null;
+          }
+          return window.LearnJobs.watch(fresh, {onRetry: function () { return format.storeKey() === key ? supplementScene(id) : Promise.resolve(); }});
+        }).then(function (result) {
+          if (!result || format.storeKey() !== key) return;
+          consumeSceneSupplement(id, key, result, workKey);
+        }).catch(function () { markSceneSupplementError(id, key); });
+        return work.promise;
+      }));
+    }).catch(function () {
+      // A missing jobs response must not block ordinary path restore.
+    });
   }
 
 // 所有题目、作答和历史批改均由共享弹窗呈现。
@@ -170,6 +343,7 @@ function trackRequiz(id, start) {
 
 function restoreRequiz() {
     if (!window.LearnJobs || window.LearnUser.readOnly || !model.state.plan) return Promise.resolve();
+    restoreSceneSupplement();
     var key = format.storeKey();
     return window.LearnJobs.list(key).then(function (jobs) {
       if (key !== format.storeKey()) return;
@@ -284,5 +458,5 @@ function submitQuizMap() {
     });
   }
 
-  return Object.freeze({renderNotes: renderNotes, listSection: listSection, renderNodeDetail: renderNodeDetail, openQuizModal: openQuizModal, trackRequiz: trackRequiz, restoreRequiz: restoreRequiz, redoQuiz: redoQuiz, completeNode: completeNode, perQuestionSummary: perQuestionSummary, refineNode: refineNode, genQuizMap: genQuizMap, submitQuizMap: submitQuizMap});
+  return Object.freeze({renderNotes: renderNotes, listSection: listSection, renderNodeDetail: renderNodeDetail, openQuizModal: openQuizModal, trackRequiz: trackRequiz, restoreRequiz: restoreRequiz, restoreSceneSupplement: restoreSceneSupplement, supplementScene: supplementScene, redoQuiz: redoQuiz, completeNode: completeNode, perQuestionSummary: perQuestionSummary, refineNode: refineNode, genQuizMap: genQuizMap, submitQuizMap: submitQuizMap});
 });
