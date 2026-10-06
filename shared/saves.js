@@ -82,11 +82,18 @@
     retrying = false;
     return work;
   }
+  function assertReady() {
+    if (!recovering) return;
+    notice('请先恢复上次未保存的内容，再继续编辑。', true);
+    var error = new Error('请先点击页面顶部的“重试保存”恢复内容，再重试生成。');
+    error.code = 'state_recovery_required';
+    throw error;
+  }
   function send(options, dispatch) {
     var entries;
     if (recovering && !retrying) {
       notice('请先恢复上次未保存的内容，再继续编辑。', true);
-      return Promise.resolve(new Response(JSON.stringify({error: '请先恢复上次未保存的内容'}), {status: 409}));
+      return Promise.resolve(new Response(JSON.stringify({error: '请先点击页面顶部的“重试保存”恢复内容，再继续编辑。', code: 'state_recovery_required'}), {status: 409, headers: {'Content-Type': 'application/json'}}));
     }
     try { entries = JSON.parse(options.body).entries; } catch (error) { return dispatch(); }
     if (!entries || typeof entries !== 'object') return dispatch();
@@ -144,6 +151,7 @@
   window.LearnSaves = {
     send: send,
     retry: retry,
+    assertReady: assertReady,
     pending: function () { return Object.keys(pending).length > 0; },
     drain: function () { return queue; },
     refresh: refresh,
@@ -180,6 +188,35 @@
         delete before.quizMaterials; delete after.quizMaterials;
         // Refinement receipts are server-owned replay guards, not browser edits.
         delete before.refinementReceipts; delete after.refinementReceipts;
+        // Match /state/put's protected plan and additive node merge. A stale
+        // acknowledged browser snapshot cannot remove server-generated nodes.
+        // Existing editable notes, marks, references and unknown fields still
+        // have to match; this is not a whole-document "server wins" comparison.
+        if (after.plan && typeof after.plan === 'object' && !Array.isArray(after.plan)) {
+          delete before.plan; delete after.plan;
+        }
+        ['nodeDetail', 'nodeState'].forEach(function (field) {
+          if (!before[field]) before[field] = {};
+          if (!after[field]) after[field] = {};
+          Object.keys(after[field]).forEach(function (id) {
+            if (!Object.prototype.hasOwnProperty.call(before[field], id)) {
+              before[field][id] = JSON.parse(JSON.stringify(after[field][id]));
+            }
+          });
+        });
+        Object.keys(after.nodeDetail).forEach(function (id) {
+          var server = after.nodeDetail[id], local = before.nodeDetail[id];
+          // Once issued, the entire quiz is authoritative at this endpoint.
+          if (local && server && server.quiz && Array.isArray(server.quiz.rounds) && server.quiz.rounds.length) {
+            delete local.quiz; delete server.quiz;
+          }
+        });
+        [before.nodeState, after.nodeState].forEach(function (states) {
+          Object.keys(states).forEach(function (id) {
+            if (!states[id] || typeof states[id] !== 'object') return;
+            ['score', 'lastResult', 'lastAnswers'].forEach(function (field) { delete states[id][field]; });
+          });
+        });
         // Protected generated notes can change after a save has been dispatched.
         // Compare editable fields; keep genuine reference and progress edits.
         Object.keys(after.nodeDetail || {}).forEach(function (id) {

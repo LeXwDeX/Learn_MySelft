@@ -1,11 +1,14 @@
-"""Bounded Mermaid gate for tutor deltas, with no dependency on HTTP framing."""
+"""Bounded diagram gates for tutor deltas, independent of HTTP framing."""
 
+import json
 import re
+from scene_contracts import MAX_SOURCE as MAX_SCENE_SOURCE, MAX_SCENES, validate_animation
 
 MAX_SOURCE = 8000
 MAX_DIAGRAMS = 4
 MAX_OPENING = 256
 _NOTICE = '\n图示暂未显示，已保留源码。请参考周围讲解，或让 AI 用短标签重新画图。\n\n'
+_ANIMATION_NOTICE = '\n动画暂未生成成功，已保留讲解。请重试“动画演示”。\n\n'
 _LIST = re.compile(r'^([-+*]|\d{1,9}[.)])( +)')
 _EMPTY_LIST = re.compile(r'^([-+*]|\d{1,9}[.)]) *\n?$')
 
@@ -52,8 +55,8 @@ class TutorRendering:
     def __init__(self, validate):
         self.validate = validate
 
-    def stream(self):
-        return MermaidStream(self.validate)
+    def stream(self, *, require_animation=False, repair=None):
+        return MermaidStream(self.validate, require_animation=require_animation, repair=repair)
 
 
 class MermaidStream:
@@ -64,8 +67,15 @@ class MermaidStream:
     so Mermaid examples inside them never trigger a renderer.
     """
 
-    def __init__(self, validate):
+    def __init__(self, validate, *, require_animation=False, repair=None):
         self.validate = validate
+        self.require_animation = require_animation
+        self.repair = repair
+        self.animation_passed = False
+        self.scenes = 0
+        self.reply = []
+        self.reply_size = 0
+        self.language = 'mermaid'
         self.mode = 'prose'
         self.line = ''
         self.marker = ''
@@ -140,10 +150,27 @@ class MermaidStream:
         self.mode = 'degraded'
         return output
 
+    def _source_limit(self):
+        # The newline separating a JSON object from its closer is not JSON.
+        return MAX_SCENE_SOURCE + 1 if self.language == 'learn-scene' else MAX_SOURCE
+
+    def _notice(self):
+        return '' if self.language == 'learn-scene' else _NOTICE
+
     def _checked(self):
         source = ''.join(self.body)
         self.body = []
         self.size = 0
+        if self.language == 'learn-scene':
+            try:
+                if len(source.rstrip('\r\n')) > MAX_SCENE_SOURCE:
+                    raise ValueError('oversized scene')
+                validate_animation(json.loads(source))
+            except (ValueError, TypeError, RecursionError):
+                return self.marker * self.length + 'text\n' + source + self.marker * self.length + '\n'
+            self.animation_passed = True
+            fence = self.marker * self.length
+            return fence + 'learn-scene\n' + source.rstrip('\r\n') + '\n' + fence + '\n'
         try:
             report = self.validate(source)
         except Exception:
@@ -157,7 +184,7 @@ class MermaidStream:
         return self.marker * self.length + 'text\n' + source + self.marker * self.length + '\n' + _NOTICE
 
     def _complete_line(self, line):
-        if self.mode == 'graph':
+        if self.mode in ('graph', 'scene'):
             if self._closing(line):
                 self.mode = 'prose'
                 return [self._checked()]
@@ -175,7 +202,7 @@ class MermaidStream:
             output = [line]
             if closed:
                 if self.mode == 'degraded':
-                    output.append(_NOTICE)
+                    output.append(self._notice())
                 self.mode = 'prose'
                 self.prose_containers = self.containers
                 self.containers = []
@@ -206,12 +233,19 @@ class MermaidStream:
             self.mode = 'code'
             self.containers = containers
             self.marker, self.length = fence[0], len(fence)
-            if language == 'mermaid':
+            if language == 'mermaid' or (self.require_animation and language == 'learn-scene'):
                 offset = info_start + len(info) - len(info.lstrip())
-                return [line[:offset] + 'text' + line[offset + len('mermaid'):]]
+                return [line[:offset] + 'text' + line[offset + len(language):]]
             return [line]
         self.marker, self.length = fence[0], len(fence)
         self.containers = []
+        self.language = language
+        if self.require_animation and language == 'learn-scene':
+            self.scenes += 1
+            self.mode = 'scene'
+            if self.scenes > MAX_SCENES:
+                return self._downgrade()
+            return []
         if language != 'mermaid':
             self.mode = 'code'
             return [line]
@@ -229,6 +263,10 @@ class MermaidStream:
         # before detection; a CRLF split across deltas still produces one LF.
         if not piece:
             return output
+        if self.require_animation and self.reply_size < MAX_SCENE_SOURCE:
+            fragment = piece[:MAX_SCENE_SOURCE - self.reply_size]
+            self.reply.append(fragment)
+            self.reply_size += len(fragment)
         original = piece
         if self.after_cr and piece.startswith('\n'):
             piece = piece[1:]
@@ -243,10 +281,10 @@ class MermaidStream:
                     self.line = ''
                 continue
             self.line += part
-            possible_close = (self.mode == 'graph' and len(self.line) <= MAX_OPENING
+            possible_close = (self.mode in ('graph', 'scene') and len(self.line) <= MAX_OPENING
                               and bool(re.fullmatch(r' {0,3}' + re.escape(self.marker)
                                                     + r'*[ \t]*\r?', self.line)))
-            if (self.mode == 'graph' and self.size + len(self.line) > MAX_SOURCE
+            if (self.mode in ('graph', 'scene') and self.size + len(self.line) > self._source_limit()
                     and not possible_close and not (newline and self._closing(self.line))):
                 output.extend(self._downgrade())
                 output.append(self.line)
@@ -255,7 +293,7 @@ class MermaidStream:
             if newline:
                 output.extend(self._complete_line(self.line))
                 self.line = ''
-            elif self.mode != 'graph' and not self._possible(self.line):
+            elif self.mode not in ('graph', 'scene') and not self._possible(self.line):
                 output.append(self.line)
                 self.line = None
             elif self.mode == 'prose' and len(self.line) > MAX_OPENING:
@@ -270,17 +308,35 @@ class MermaidStream:
         self.finished = True
         output = []
         if self.line:
-            if self.mode == 'graph' and self._closing(self.line) and not interrupted:
+            if self.mode in ('graph', 'scene') and self._closing(self.line) and not interrupted:
                 self.mode = 'prose'
                 output.append(self._checked())
-            elif self.mode == 'graph':
+            elif self.mode in ('graph', 'scene'):
                 if not self._closing(self.line):
                     self.body.append(self.line)
             else:
                 output.extend(self._complete_line(self.line))
-        if self.mode == 'graph':
+        if self.mode in ('graph', 'scene'):
             output.extend(self._downgrade())
-            output.extend(['\n' + self.marker * self.length + '\n', _NOTICE])
+            output.extend(['\n' + self.marker * self.length + '\n', self._notice()])
         elif self.mode == 'degraded':
-            output.extend(['\n' + self.marker * self.length + '\n', _NOTICE])
+            output.extend(['\n' + self.marker * self.length + '\n', self._notice()])
+        if self.require_animation and not self.animation_passed and not interrupted:
+            # Do not append the repaired scene inside an unfinished code example.
+            if self.mode == 'code' and not self.containers:
+                output.append('\n' + self.marker * self.length + '\n')
+                self.mode = 'prose'
+            # One bounded repair per complete request. Never repair interruptions.
+            try:
+                source = self.repair(''.join(self.reply)) if self.repair else None
+                if not isinstance(source, str) or len(source) > MAX_SCENE_SOURCE:
+                    raise ValueError('invalid repair')
+                spec = validate_animation(json.loads(source))
+                normalized = json.dumps(spec, ensure_ascii=False, separators=(',', ':'))
+                if len(normalized) > MAX_SCENE_SOURCE:
+                    raise ValueError('oversized repair')
+                self.animation_passed = True
+                output.append('\n\n```learn-scene\n' + normalized + '\n```\n')
+            except Exception:
+                output.append(_ANIMATION_NOTICE)
         return [text for text in output if text]

@@ -29,10 +29,18 @@ function putState(entries) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: body, keepalive: !!keepalive && new Blob([body]).size <= 60000
       }).then(function (r) {
-        if (!r.ok) throw new Error('保存失败（' + r.status + '）');
+        if (r.ok) return;
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          var error = new Error(data.error || '保存失败（' + r.status + '）');
+          error.status = r.status;
+          error.code = data.code;
+          throw error;
+        });
       });
     }
-    var write = send(true).catch(function () {
+    var write = send(true).catch(function (error) {
+      // A conflict or recovery lock needs its own action, not the same request.
+      if (error.status && error.status < 500) throw error;
       return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return send(false); });
     });
     session.stateWrites.push(write);
@@ -187,6 +195,9 @@ function purgeLocalLegacy() {
 // ---------- 网络 ----------
 
 function post(path, body, jobOptions) {
+    try {
+      if (window.LearnSaves && window.LearnSaves.assertReady) window.LearnSaves.assertReady();
+    } catch (error) { return Promise.reject(error); }
     if (window.LearnJobs && window.LearnJobs.supports(path)) {
       if (!body.key) body.key = format.storeKey();
       var expectedKind = {'/path/intake': 'intake', '/path/research': 'research', '/path/plan': 'plan', '/path/node': 'node'}[path];

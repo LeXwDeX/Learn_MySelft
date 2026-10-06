@@ -10,7 +10,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'study-assistant'))
 import prompts
 from quiz_harness import validate_questions
-from scene_contracts import validate_scene
+from scene_contracts import validate_scene, validate_animation, animation_requested, SceneContractError
 
 
 def scene_examples():
@@ -27,6 +27,46 @@ def number_in(value, low, high):
 
 
 class LearningScenePromptTests(unittest.TestCase):
+    def diagram(self, *, dimension=2, opacity=1, steps=None):
+        return {"version": 1, "type": "diagram", "title": "信息传递",
+                "summary": "观察信息点移动。", "dimension": dimension,
+                "elements": [{"id": "packet", "kind": "point", "points": [[0] * dimension], "opacity": opacity}],
+                **({"steps": steps} if steps is not None else {})}
+
+    def test_animation_requires_real_adjacent_visible_change_and_preserves_static_v1(self):
+        invalid = [None, [], [{"caption": "说明。", "changes": []}],
+                   [{"caption": "无变化。", "changes": [{"id": "packet", "points": [[0, 0]]}]}],
+                   [{"caption": "默认透明度。", "changes": [{"id": "packet", "opacity": 1}]}]]
+        for steps in invalid:
+            scene = self.diagram(steps=steps)
+            validate_scene(scene)
+            with self.subTest(steps=steps), self.assertRaises(SceneContractError):
+                validate_animation(scene)
+        scene = self.diagram(opacity=0, steps=[{"caption": "隐藏运动。", "changes": [{"id": "packet", "points": [[2, 1]]}]}])
+        with self.assertRaises(SceneContractError):
+            validate_animation(scene)
+        for dimension in (2, 3):
+            scene = self.diagram(dimension=dimension, opacity=0, steps=[
+                {"caption": "显现信息点。", "changes": [{"id": "packet", "opacity": 1}]},
+                {"caption": "发送信息。", "changes": [{"id": "packet", "points": [[2] * dimension]}]},
+                {"caption": "返回初始位置。", "changes": [{"id": "packet", "points": [[0] * dimension]}]},
+            ])
+            self.assertIs(validate_animation(scene), scene)
+
+    def test_only_playable_specialized_scenes_meet_animation_request(self):
+        _, linear, secant, surface = scene_examples()
+        validate_animation(linear)
+        for scene in (secant, surface, {**linear, "matrix": [[1, 0], [0, 1]], "vector": [0, 0]}):
+            validate_scene(scene)
+            with self.assertRaises(SceneContractError):
+                validate_animation(scene)
+
+    def test_current_question_animation_keywords_and_opt_out(self):
+        for question in ("请做动画演示", "用 Manim 解释变化", "展示动态演示", "Animate this process", "3B1B风格讲解"):
+            self.assertTrue(animation_requested(question), question)
+        for question in ("画静态图", "不要动画，请解释概念", "不用动画", "不要动态展示，请给我静态图", "不需要动态展示，只要文字解释", "普通问题", None):
+            self.assertFalse(animation_requested(question), question)
+
     def test_node_format_example_satisfies_current_quiz_contract(self):
         prompt = prompts._path_system("node")
         start = prompt.index("{")

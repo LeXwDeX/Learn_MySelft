@@ -150,22 +150,23 @@ async function main() {
     await diagram.getByLabel('本步进度').evaluate(input => { input.value = '0.65'; input.dispatchEvent(new Event('input', {bubbles: true})); });
     await page.waitForFunction(() => document.querySelector('[data-scene-type="diagram"] svg').dataset.progress === '0.65');
     assert.equal(await diagram.locator('svg').getAttribute('data-step'), '3');
-    await diagram.getByRole('button', {name: '继续', exact: true}).click();
+    await diagram.getByRole('button', {name: '播放本步', exact: true}).click();
     const resumedLastStep = Number(await diagram.locator('svg').getAttribute('data-progress'));
     assert(resumedLastStep >= 0.65 && resumedLastStep < 1, 'multi-step final stage resumes without restarting');
     await page.waitForTimeout(80);
     assert.equal(await diagram.locator('svg').getAttribute('data-step'), '3');
     assert(Number(await diagram.locator('svg').getAttribute('data-progress')) > resumedLastStep);
-    await diagram.getByRole('button', {name: '暂停'}).click();
+    await diagram.getByRole('button', {name: '暂停本步'}).click();
     await diagram.getByLabel('本步进度').evaluate(input => { input.value = '1'; input.dispatchEvent(new Event('input', {bubbles: true})); });
-    assert.equal(await diagram.getByRole('button', {name: '重播', exact: true}).count(), 2, 'completed final stage offers replay');
-    await diagram.getByRole('button', {name: '重播'}).last().click(); await page.waitForTimeout(80);
-    await diagram.getByRole('button', {name: '暂停'}).click();
+    assert.equal(await diagram.getByRole('button', {name: '重播本步', exact: true}).count(), 1, 'completed final stage offers single-step replay');
+    assert.equal(await diagram.getByRole('button', {name: '重播全部', exact: true}).count(), 1, 'completed final stage offers full replay');
+    await diagram.getByRole('button', {name: '重播全部'}).click(); await page.waitForTimeout(80);
+    await diagram.getByRole('button', {name: '暂停全部'}).click();
     const pausedDiagram = await diagram.locator('svg').getAttribute('data-progress');
     await page.waitForTimeout(80);
     assert.equal(await diagram.locator('svg').getAttribute('data-progress'), pausedDiagram, 'diagram pause freezes progress');
     await diagram.locator('select[aria-label="动画速度"]').selectOption('0.5');
-    await diagram.getByRole('button', {name: '继续'}).click(); await page.waitForTimeout(80);
+    await diagram.getByRole('button', {name: '继续全部'}).click(); await page.waitForTimeout(80);
     assert(Number(await diagram.locator('svg').getAttribute('data-progress')) > Number(pausedDiagram));
     await page.evaluate(() => { document.querySelector('#fixtures').hidden = true; }); await page.waitForTimeout(50);
     assert.equal(await page.evaluate(() => window._activeFrames.size), 0, 'hiding a scene cancels animation frames');
@@ -200,7 +201,7 @@ async function main() {
     await morph.getByLabel('本步进度').evaluate(input => { input.value = '0.65'; input.dispatchEvent(new Event('input', {bubbles: true})); });
     await page.waitForFunction(() => document.querySelector('[data-scene-type="diagram"] svg').dataset.progress === '0.65');
     await page.emulateMedia({reducedMotion: 'no-preference'});
-    await morph.getByRole('button', {name: '继续', exact: true}).click();
+    await morph.getByRole('button', {name: '播放本步', exact: true}).click();
     const resumedSingleStep = Number(await morph.locator('svg').getAttribute('data-progress'));
     assert(resumedSingleStep >= 0.65 && resumedSingleStep < 1, 'single-step final stage resumes without restarting');
     await page.waitForTimeout(80);
@@ -208,7 +209,8 @@ async function main() {
     assert.equal(await morph.locator('svg').getAttribute('data-step'), '1');
     await page.emulateMedia({reducedMotion: 'reduce'});
     await page.waitForFunction(() => document.querySelector('[data-scene-type="diagram"] svg').dataset.progress === '1');
-    assert.equal(await morph.getByRole('button', {name: '重播', exact: true}).count(), 2);
+    assert.equal(await morph.getByRole('button', {name: '重播本步', exact: true}).count(), 1);
+    assert.equal(await morph.getByRole('button', {name: '重播全部', exact: true}).count(), 1);
     const promptScene = JSON.parse(fs.readFileSync('study-assistant/prompts.py', 'utf8').match(/^\{"version":1,"type":"diagram".*$/m)[0]);
     const flowScene = {...base, type: 'diagram', title: '流程移动', elements: [
       {id: 'start', kind: 'polygon', color: 'muted', label: '准备', points: [[-3, -1], [-1, -1], [-1, 1], [-3, 1]]},

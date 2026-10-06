@@ -66,11 +66,11 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   assert((await recoveryCheck('u0/quiz-map-v1-example', lesson, supplemented)).LearnSaves.pending(), 'scene reconciliation applies only to learning materials');
   // The server commits before navigation, but the old page never handles its
   // acknowledgement. Reload must compare browser fields, not server receipts.
-  async function committedBeforeAcknowledgement(local, receipts) {
+  async function committedBeforeAcknowledgement(local, receipts, serverChange = value => value) {
     const original = environment(); load(original, 'shared/saves.js'); await original.LearnUser.ready;
     let serverValue, acknowledge;
     original.LearnUser.fetch = (url, options) => original.LearnSaves.send(options, () => {
-      serverValue = {...JSON.parse(JSON.parse(options.body).entries[materialKey]), refinementReceipts:receipts};
+      serverValue = serverChange({...JSON.parse(JSON.parse(options.body).entries[materialKey]), refinementReceipts:receipts});
       return new Promise(resolve => { acknowledge = () => resolve(Response.json({ok:true})); });
     });
     const saving = original.LearnUser.fetch('', {body:JSON.stringify({entries:{[materialKey]:JSON.stringify(local)}})});
@@ -93,6 +93,19 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   await committedBeforeAcknowledgement(base, {});
   await committedBeforeAcknowledgement({...base,refinementReceipts:{}}, {serverReceipt:{added:1}});
   await committedBeforeAcknowledgement({...base,refinementReceipts:{old:{added:1}}}, {newer:{added:2}});
+  const generated = {...base,plan:{nodes:[{id:'n1'}]},nodeDetail:{n1:{study_notes:'editable notes'}},nodeState:{n1:{mark:'mastered',score:50}}};
+  const serverGenerated = {...generated,plan:{nodes:[{id:'n1'},{id:'n1.1'}]},
+    nodeDetail:{...generated.nodeDetail,'n1.1':{study_notes:'new remedial notes'}},
+    nodeState:{n1:{mark:'mastered',score:80,lastResult:{pass:true},lastAnswers:['server result']},'n1.1':{mark:'unlearned'}}};
+  await committedBeforeAcknowledgement(generated, {newer:{added:1}}, () => serverGenerated);
+  const issued = {...generated,nodeDetail:{n1:{study_notes:'editable notes',quiz:{questions:['old']}}}};
+  const issuedServer = {...serverGenerated,nodeDetail:{...serverGenerated.nodeDetail,n1:{study_notes:'editable notes',quiz:{questions:['new'],round_id:'r2',rounds:[{id:'r2'}]}}}};
+  await committedBeforeAcknowledgement(issued, {}, () => issuedServer);
+  assert((await recoveryCheck(materialKey, {...generated,nodeState:{n1:{mark:'review',score:50}}}, serverGenerated)).LearnSaves.pending(), 'real learner progress stays recoverable beside server grades and generated nodes');
+  assert((await recoveryCheck(materialKey, {...generated,nodeDetail:{n1:{study_notes:'real unsaved notes'}}}, serverGenerated)).LearnSaves.pending(), 'ordinary editable notes stay recoverable beside generated nodes');
+  assert((await recoveryCheck(materialKey, {...generated,materials:[{name:'notes.txt',text:'real reference edit'}]}, serverGenerated)).LearnSaves.pending(), 'references stay strict beside a protected generated plan');
+  assert((await recoveryCheck(materialKey, {...generated,nodeDetail:{...generated.nodeDetail,localOnly:{study_notes:'real local addition'}}}, serverGenerated)).LearnSaves.pending(), 'local-only content is never discarded');
+  assert((await recoveryCheck(materialKey, generated, {...generated,plan:null})).LearnSaves.pending(), 'a missing server plan is not evidence of an acknowledged browser plan');
   const changed = {...base,materials:[{name:'notes.txt',text:'real unsaved edit'}]};
   const protectedRecovery = await recoveryCheck(materialKey, changed, {...base,refinementReceipts:{serverReceipt:{added:1}}});
   assert(protectedRecovery.LearnSaves.pending(), 'real editable differences must survive receipt reconciliation');
@@ -101,6 +114,9 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   protectedRecovery.LearnUser.fetch = (url, options) => protectedRecovery.LearnSaves.send(options, async () => { recoveryDispatches++; return Response.json({ok:true}); });
   assert.equal((await protectedRecovery.LearnUser.fetch('', {body:JSON.stringify({entries:{[materialKey]:JSON.stringify(base)}})})).status, 409);
   assert.equal(recoveryDispatches, 0, 'real unsaved content must still block conflicting new edits');
+  assert.throws(() => protectedRecovery.LearnSaves.assertReady(), error => error.code === 'state_recovery_required' && error.message.includes('重试保存'));
+  await protectedRecovery.LearnSaves.retry();
+  assert.doesNotThrow(() => protectedRecovery.LearnSaves.assertReady());
   assert((await recoveryCheck('u0/quiz-map-v1-example', base, {...base,refinementReceipts:{serverReceipt:{added:1}}})).LearnSaves.pending(), 'receipt exemption applies only to learning material documents');
   const jobs = environment(); let submits = 0, polls = 0, requestId;
   jobs.LearnUser.fetch = async (url, options) => {

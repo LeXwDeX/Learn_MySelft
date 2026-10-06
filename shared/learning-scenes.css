@@ -31,19 +31,19 @@
 .learn-scene-diagram-element { stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linejoin: round; stroke-linecap: round; }
 .learn-scene-diagram-point { fill: currentColor; stroke: var(--learn-surface); stroke-width: 1.5; }
 .learn-scene-diagram-polygon { fill: currentColor; fill-opacity: .13; }
-.learn-scene-diagram-label { fill: currentColor; stroke: none; font: 14px var(--learn-font); }
+.learn-scene-diagram-label { fill: currentColor; stroke: var(--learn-surface); stroke-width: 3px; paint-order: stroke fill; font: 14px var(--learn-font); }
 .learn-scene-diagram-legend { color: var(--learn-muted); font-size: .875rem; overflow-wrap: anywhere; }
 .learn-scene-diagram-legend p { margin-bottom: var(--learn-space-1); }
 .learn-scene-diagram-legend ul { display: flex; flex-wrap: wrap; gap: var(--learn-space-1) var(--learn-space-3); margin: 0; padding: 0; list-style: none; }
 .learn-scene-diagram-legend li { min-width: 0; max-width: 100%; }
+.learn-scene-visibility-note { color: var(--learn-muted); font-size: .875rem; }
 .learn-scene-color-accent { color: var(--learn-accent); }
 .learn-scene-color-secondary { color: var(--learn-ink); }
 .learn-scene-color-muted { color: var(--learn-muted); }
 .learn-scene-color-positive { color: var(--learn-success); }
 .learn-scene-color-warning { color: var(--learn-danger); }
-.learn-scene-diagram-controls .learn-scene-controls { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.learn-scene-diagram-controls .btn { min-width: 0; }
-.learn-scene-diagram-controls .learn-scene-speed { white-space: nowrap; }
+.learn-scene-diagram-controls .learn-scene-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 88px), 1fr)); }
+.learn-scene-diagram-controls .btn { min-width: 0; padding-inline: var(--learn-space-2); }
+.learn-scene-diagram-controls .learn-scene-speed { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--learn-space-2); }
 .learn-scene-diagram-view { display: inline-flex; gap: var(--learn-space-2); align-items: center; margin: var(--learn-space-2) 0; }
-@media (max-width: 520px) { .learn-scene-diagram-controls .learn-scene-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } .learn-scene-diagram-controls .learn-scene-speed { grid-column: 1 / -1; } }
 @media (max-width: 420px) { .learn-scene { padding: var(--learn-space-2); } .learn-scene-controls .btn { flex: 1 1 auto; } }
