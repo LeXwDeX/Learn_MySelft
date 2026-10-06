@@ -12,6 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "study-assistant"))
 from application import create_application
 from background_jobs import JobError
+from prompts import SCENE_SUPPLEMENT, SCENE_TEACHING
 from scene_contracts import SceneContractError, scenes_in, validate_scene
 from user_accounts import AccountError
 
@@ -37,6 +38,17 @@ def response():
 
 
 class SceneContractTests(unittest.TestCase):
+    def test_supplement_prompt_ends_with_valid_outer_json_examples(self):
+        final_instructions = SCENE_SUPPLEMENT.split(SCENE_TEACHING, 1)[1]
+        examples = [json.loads(line) for line in final_instructions.splitlines()
+                    if line.startswith('{"needed":')]
+        self.assertEqual(len(examples), 2)
+        self.assertEqual([example["needed"] for example in examples], [True, False])
+        for example in examples:
+            self.assertEqual(set(example), {"needed", "reason", "markdown"})
+        self.assertEqual(len(scenes_in(examples[0]["markdown"])), 1)
+        self.assertEqual(examples[1]["markdown"], "")
+
     def test_generic_shapes_steps_and_dimensions(self):
         for dimension in (2, 3):
             spec = diagram(dimension)
@@ -149,12 +161,52 @@ class SceneServiceTests(unittest.TestCase):
         with patch.object(self.app.model, "nonempty", side_effect=[bad, response()]) as model:
             self.assertEqual(self.invoke()[0], 200)
             self.assertEqual(model.call_count, 2)
+            self.assertNotIn("private-script", model.call_args_list[1].args[0][-1]["content"])
         self.app.repository.write_key(self.key, json.dumps(self.material))
         with patch.object(self.app.model, "nonempty", return_value=bad) as model:
             with self.assertRaises(JobError) as error:
                 self.invoke()
             self.assertEqual(error.exception.status, 502)
             self.assertNotIn("private-script", str(error.exception))
+            self.assertEqual(model.call_count, 2)
+            self.assertEqual(self.app.repository.material(self.key), self.material)
+
+    def test_missing_markdown_outer_field_retries_then_accepts_only_complete_envelope(self):
+        missing = json.dumps({"needed": True, "reason": "private-marker"}) + "\n" + addition()
+        with patch.object(self.app.model, "nonempty", side_effect=[missing, response()]) as model:
+            status, result = self.invoke()
+            self.assertEqual(status, 200)
+            self.assertEqual(len(scenes_in(result["study_notes"])), 1)
+            self.assertEqual(model.call_count, 2)
+            feedback = model.call_args_list[1].args[0][-1]["content"]
+            for field in ("needed", "reason", "markdown"):
+                self.assertIn(field, feedback)
+            self.assertIn("一个完整 JSON 对象", feedback)
+            self.assertIn("外层对象后", feedback)
+            self.assertNotIn("private-marker", feedback)
+        self.app.repository.write_key(self.key, json.dumps(self.material))
+        with patch.object(self.app.model, "nonempty", return_value=missing) as model:
+            with self.assertRaises(JobError) as error:
+                self.invoke()
+            self.assertEqual(error.exception.status, 502)
+            self.assertNotIn("private-marker", str(error.exception))
+            self.assertEqual(model.call_count, 2)
+            self.assertEqual(self.app.repository.material(self.key), self.material)
+
+    def test_decline_without_markdown_is_not_accepted(self):
+        missing = json.dumps({"needed": False, "reason": "无需图示"})
+        decline = json.dumps({"needed": False, "reason": "没有图形收益", "markdown": ""})
+        with patch.object(self.app.model, "nonempty", side_effect=[missing, decline]) as model:
+            status, result = self.invoke()
+            self.assertEqual(status, 200)
+            self.assertFalse(result["needed"])
+            self.assertEqual(model.call_count, 2)
+            self.assertIn("markdown", model.call_args_list[1].args[0][-1]["content"])
+            self.assertEqual(self.app.repository.material(self.key), self.material)
+        with patch.object(self.app.model, "nonempty", return_value=missing) as model:
+            with self.assertRaises(JobError) as error:
+                self.invoke()
+            self.assertEqual(error.exception.status, 502)
             self.assertEqual(model.call_count, 2)
             self.assertEqual(self.app.repository.material(self.key), self.material)
 

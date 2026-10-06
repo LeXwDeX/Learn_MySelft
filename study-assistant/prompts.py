@@ -200,7 +200,16 @@ SCENE_SUPPLEMENT = r"""
 仅输出JSON对象，字段只有 needed、reason、markdown。needed 必须为布尔值。reason 为不超过200字符的简短理由。需要图示时 needed=true，markdown 为独立补充段落：先写观察方法，随后给1个完整 learn-scene，必要时补1句结论。不要重复或替换原文，不输出完整节点材料，不输出题目或答案。自然语言不超过500字，场景JSON不计入字数。
 确实没有图形收益时 needed=false，markdown 必须为空字符串；reason 说明原因。不能只以“已有文字/公式可以讲清”排除适合观察的内容。基础向量的坐标、分量、长度，以及位置变化、结构联系通常有图形收益。
 用户触发补图时尽量组合通用diagram表达本单元最重要的一个概念。不得编造真实数据；示例数值要明确是例子。不得暴露原文配套测验的答案。
-""" + SCENE_TEACHING
+""" + SCENE_TEACHING + r"""
+
+最终输出格式（本次补图任务以此为准）：只输出一个完整的 JSON 外层对象。外层必须恰好有 needed、reason、markdown 三个字段。needed 是布尔值，reason 是不超过 200 字符的简短理由，markdown 是字符串。需要图示时，把观察方法和一个完整 learn-scene 围栏都写在 markdown 字符串中。JSON 字符串内的换行写成 \n，内层场景 JSON 的双引号写成 \"。外层对象结束后不要再输出独立场景、围栏、说明或第二个 JSON 对象。
+
+需要图示的完整外层示例：
+{"needed":true,"reason":"状态转换适合用图观察。","markdown":"先看两个状态，再点击下一步观察变化方向。\n\n```learn-scene\n{\"version\":1,\"type\":\"diagram\",\"title\":\"状态变化\",\"summary\":\"箭头表示从初始状态走向完成状态。\",\"elements\":[{\"id\":\"start\",\"kind\":\"point\",\"label\":\"初始状态\",\"points\":[[0,0]]},{\"id\":\"finish\",\"kind\":\"point\",\"label\":\"完成状态\",\"points\":[[2,0]]},{\"id\":\"flow\",\"kind\":\"arrow\",\"points\":[[0,0],[2,0]],\"opacity\":0}],\"steps\":[{\"caption\":\"出现的箭头表示状态改变的方向。\",\"changes\":[{\"id\":\"flow\",\"opacity\":1}]}]}\n```"}
+
+确实不需要图示时仍须输出三个字段，markdown 必须是空字符串：
+{"needed":false,"reason":"本段没有适合观察的空间或过程关系。","markdown":""}
+"""
 
 
 SYSTEM_TMPL = """你是一位严谨、耐心的学习辅导老师，正在辅导一位成年学习者系统学习当前主题、打牢基础。
