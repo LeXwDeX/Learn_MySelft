@@ -225,10 +225,20 @@ async function main() {
     assert.equal(await latest.locator('[data-scene="error"]').count(), 0);
     await saved();
     await page.setViewportSize({width:390,height:900});
-    await latest.screenshot({path:path.join(output,'natural-manim-tutor-390.png')});
+    await page.locator('#agent-launch').click();
+    const agentDialog = page.locator('#agent-dialog');
+    await page.waitForFunction(() => document.querySelector('#agent-dialog')?.open === true);
+    assert.equal(await agentDialog.evaluate(dialog => dialog.open), true, 'mobile launcher must open the tutor dialog');
+    const mobileLatest = page.locator('#ai-msgs .ai-msg.assistant').last();
+    const mobileScene = mobileLatest.locator('[data-scene="ready"]').first();
+    await mobileScene.waitFor({state:'visible'});
+    await mobileScene.screenshot({path:path.join(output,'natural-manim-tutor-390.png')});
     await page.reload();
     await page.locator('#node-n1 button[data-ai="n1"]').click();
-    await page.locator('#ai-msgs .ai-msg.assistant').last().locator('[data-scene="ready"]').first().waitFor();
+    await page.waitForFunction(() => document.querySelector('#agent-dialog')?.open === true);
+    assert.equal(await agentDialog.evaluate(dialog => dialog.open), true, 'reopening the tutor on mobile must open the dialog');
+    const restoredScene = page.locator('#ai-msgs .ai-msg.assistant').last().locator('[data-scene="ready"]').first();
+    await restoredScene.waitFor({state:'visible'});
     report.cases.push('natural_manim_tutor_request_renders_and_reopens_without_protocol_instructions');
 
     progress('non_math_natural_generation');
