@@ -19,24 +19,35 @@ class SceneService:
     def _addition(self, source, node, *, requested):
         payload = {"node": {name: node.get(name) for name in ("title", "essence", "objectives")},
                    "study_notes": source[:20000], "requested": requested}
+        envelope_retry = ("上次回复的外层格式无效。只输出一个完整 JSON 对象，"
+                          "恰好包含 needed、reason、markdown 三个必填字段。"
+                          "markdown 必须是字符串；不需要图示时也必须是空字符串。"
+                          "把 learn-scene 围栏放在 markdown 字符串内，不能在外层对象后另输出场景或说明。")
+        scene_retry = ("上次图示配置或显示检查未通过。请简化图形并遵守场景字段约束。"
+                       "只输出一个含 needed、reason、markdown 三字段的完整 JSON 外层对象，"
+                       "在 markdown 字符串中放一个有效 learn-scene 围栏。")
+        retry = scene_retry
         for attempt in range(2):
             messages = [{"role": "system", "content": SCENE_SUPPLEMENT},
                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
             if attempt:
-                messages.append({"role": "user", "content": "上次图示未通过配置或显示检查。请简化图形并严格遵守字段约束，再输出JSON。"})
+                messages.append({"role": "user", "content": retry})
             result = _json_block(self.model.nonempty(
                 messages, max_tokens=self.model.settings.max_output_tokens, temperature=0.3))
+            if (not isinstance(result, dict) or set(result) != {"needed", "reason", "markdown"}
+                    or type(result["needed"]) is not bool
+                    or not isinstance(result["reason"], str) or not result["reason"].strip()
+                    or len(result["reason"]) > 200 or not isinstance(result["markdown"], str)):
+                retry = envelope_retry
+                continue
             try:
-                if (not isinstance(result, dict) or set(result) != {"needed", "reason", "markdown"}
-                        or type(result["needed"]) is not bool
-                        or not isinstance(result["reason"], str) or not result["reason"].strip()
-                        or len(result["reason"]) > 200 or not isinstance(result["markdown"], str)):
-                    raise SceneContractError("图示回复格式无效")
                 addition = result["markdown"].strip()
                 if not result["needed"]:
                     if addition:
-                        raise SceneContractError("无图示时不应返回正文")
+                        retry = envelope_retry
+                        continue
                     return "", result["reason"]
+                retry = scene_retry
                 if len(addition) > 14000 or len(scenes_in(addition)) != 1:
                     raise SceneContractError("补充段落必须包含一个有效图示")
                 review = self.verification.review_rendered({"study_notes": addition})
