@@ -8,11 +8,11 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright
 
 
-def capture(source, config):
+def capture(source, config, *, check_only=False):
     site = Path(config['site']).resolve()
     shared = (site / 'learn/assets').resolve()
     katex = (site / 'diagram-design/learning-path/katex').resolve()
-    images, errors, complete = [], [], True
+    images, errors, complete, diagrams = [], [], True, 0
     with sync_playwright() as runtime:
         browser = runtime.chromium.launch(headless=True)
         try:
@@ -37,6 +37,26 @@ def capture(source, config):
 <script src="http://render.local/learn/assets/markdown.js"></script><main></main>''', wait_until='load')
                 page.evaluate('''async source => {const root=document.querySelector('main');root.innerHTML=LearnMarkdown.render(source);await LearnMarkdown.enhance(root);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}''', source)
                 errors.extend(page.evaluate('''() => Array.from(document.querySelectorAll('.md-math-fallback,[data-diagram="failed"],[data-scene="error"],.md-fallback')).map(el=>el.textContent.slice(0,180))'''))
+                ready = page.evaluate("document.querySelectorAll('[data-diagram=ready]').length")
+                diagrams += ready
+                if check_only:
+                    # enhance() finishing is insufficient: SVG image decoding can still fail.
+                    if errors or ready != 1:
+                        complete = False
+                        page.close()
+                        continue
+                    try:
+                        page.wait_for_function("""() => {
+                          const figures = Array.from(document.querySelectorAll('[data-diagram]'));
+                          return figures.length === 1 && figures.every(figure => {
+                            const image = figure.querySelector('img');
+                            return figure.dataset.diagram === 'ready' && image && image.complete && image.naturalWidth > 0;
+                          });
+                        }""", timeout=10000)
+                    except Exception:
+                        complete = False
+                    page.close()
+                    continue
                 height = page.evaluate('document.documentElement.scrollHeight')
                 if height > 10000:
                     complete = False
@@ -49,12 +69,13 @@ def capture(source, config):
             browser.close()
     if sum(map(len, images)) > 8 * 1024 * 1024:
         images, complete = [], False
-    return {'images': images, 'errors': list(dict.fromkeys(errors)), 'complete': complete}
+    return {'images': images, 'errors': list(dict.fromkeys(errors)), 'complete': complete, 'diagrams': diagrams}
 
 
 if __name__ == '__main__':
     config = json.loads(Path(sys.argv[1]).read_text())
-    source = json.load(sys.stdin)['source']
+    request = json.load(sys.stdin)
+    source = request['source']
     if len(source) > 80000:
         raise ValueError('render input too long')
-    print(json.dumps(capture(source, config)))
+    print(json.dumps(capture(source, config, check_only=request.get('check_only') is True)))

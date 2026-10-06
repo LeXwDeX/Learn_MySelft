@@ -13,7 +13,7 @@ const graph='先检查条件，再检查结论。\n\n```mermaid\nflowchart TD\n 
   res.setHeader('Content-Type',file.endsWith('.css')?'text/css':'application/javascript');res.end(fs.readFileSync(file));
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const browser=await chromium.launch({headless:true});
+ const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});
  try{
  for(const width of [1440,390]){
   const page=await browser.newPage({viewport:{width,height:900}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -27,13 +27,24 @@ const graph='先检查条件，再检查结论。\n\n```mermaid\nflowchart TD\n 
   await page.getByRole('button',{name:'放大查看'}).click();assert(await page.locator('dialog').isVisible());await page.getByRole('button',{name:'放大',exact:true}).click();await page.getByRole('button',{name:'关闭',exact:true}).click();await page.locator('dialog').waitFor({state:'detached'});
   await page.evaluate(source=>LearnMarkdown.exportButton(document.querySelector('#content'),source,'讲解.md'),graph);
   const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'导出 Markdown'}).click();const download=await downloadPromise;assert.equal(fs.readFileSync(await download.path(),'utf8'),graph);
+  const legacy='```mermaid\nflowchart TD\n A["向量<br/>坐标"] --> B["线性组合"]\n```';
+  await render(legacy);assert.equal(await page.locator('[data-diagram=ready]').count(),1);assert(await page.locator('figure img').evaluate(i=>i.complete&&i.naturalWidth>0));
+  assert.equal(await page.locator('figure code').textContent(),'flowchart TD\n A["向量<br/>坐标"] --> B["线性组合"]\n');
+  await page.evaluate(source=>LearnMarkdown.exportButton(content,source,'历史图.md'),legacy);
+  const legacyDownloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'导出 Markdown'}).click();const legacyDownload=await legacyDownloadPromise;assert.equal(fs.readFileSync(await legacyDownload.path(),'utf8'),legacy);
+  for(const label of ['坏<br onclick="alert(1)">标签','坏<script>alert(1)</script>标签','坏<br/><img src=x>标签']){
+   await render('```mermaid\nflowchart TD\n A["'+label+'"] --> B["结论"]\n```');assert.equal(await page.locator('[data-diagram=failed]').count(),1);
+  }
+  await render('```mermaid\nflowchart TD\n A["'+('文字<br/>'.repeat(1200))+'"] --> B\n```');assert.equal(await page.locator('[data-diagram=failed]').count(),1);
   await render('```mermaid\nflowchart TD\n A["bad\n```\n\n正文仍然可读');assert.equal(await page.locator('[data-diagram=failed]').count(),1);assert.match(await page.locator('#content').innerText(),/正文仍然可读/);
   await render(graph.slice(0,-3));assert.equal(await page.locator('[data-diagram=failed]').count(),1);
   await render('```mermaid\nflowchart TD\n A-->B\n click A "javascript:alert(1)"\n```');assert.equal(await page.locator('[data-diagram=failed]').count(),1);
   await render('```mermaid\nsequenceDiagram\n participant A as 学生\n participant B as 老师\n A->>B: 提问\n B-->>A: 提示\n```');assert.equal(await page.locator('[data-diagram=ready]').count(),1);
+  await render('```mermaid\nsequenceDiagram\n participant A\n participant B\n'+Array(101).fill(' A->>B: 消息').join('\n')+'\n```');assert.equal(await page.locator('[data-diagram=failed]').count(),1);
+  await render('```mermaid\nsequenceDiagram\n participant A\n participant B\n'+Array(100).fill(' A->>B: 消息').join('\n')+'\n```');assert.equal(await page.locator('[data-diagram=ready]').count(),1);
   await page.evaluate(async source=>{const el=document.querySelector('#content');el.innerHTML=LearnMarkdown.render(source);const work=LearnMarkdown.enhance(el);el.textContent='新视图';await work},graph);assert.equal(await page.locator('#content').innerText(),'新视图');
   await render(graph+'\n\n|概念|说明|\n|---|---|\n|加法|合并|');assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({width,status:'passed',cases:['stream','real flowchart/sequence','bad syntax','unsafe diagram','zoom','MD export','detached view','mobile width']}));await page.close();
+  console.log(JSON.stringify({width,status:'passed',cases:['stream','real flowchart/sequence','legacy br repair and exact MD export','raw size guard','bad syntax','unsafe diagram','zoom','MD export','detached view','mobile width']}));await page.close();
  }
  // Dependency failure must preserve the surrounding text and source.
  const page=await browser.newPage();await page.route('**/vendor-mermaid.js',r=>r.abort());await page.goto('http://127.0.0.1:'+server.address().port);await page.evaluate(async source=>{content.innerHTML=LearnMarkdown.render(source);await LearnMarkdown.enhance(content)},graph);assert.equal(await page.locator('[data-diagram=failed]').count(),1);assert.match(await page.locator('#content').innerText(),/条件/);await page.close();

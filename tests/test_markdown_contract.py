@@ -21,3 +21,14 @@ class MarkdownContractTests(unittest.TestCase):
         self.assertIn("本单元正文尚未就绪", prompt)
         self.assertIn("图也不能提前泄露", prompt)
         self.assertIn("不声称已通过浏览器验证", prompt)
+
+    def test_rendering_contract_names_limits_and_forbids_html_breaks(self):
+        for prompt in (prompts.build_system({}), prompts._path_system('node')):
+            for required in ('不得输出未列出的渲染方式', 'flowchart、graph、sequenceDiagram',
+                             '8000 字符', '100 条边', '最多 4 张图', '<br>', '<br/>',
+                             'SVG', 'JavaScript', 'CSS', '%%{', 'front matter',
+                             '不输出外部图片', '中文标签加双引号', '短标签',
+                             r'\(', r'\[', '脚注', '提示块'):
+                self.assertIn(required, prompt)
+            for kind in ('linear_transform', 'secant', 'surface_slice'):
+                self.assertIn('type=' + kind, prompt)

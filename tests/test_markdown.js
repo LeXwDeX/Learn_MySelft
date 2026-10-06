@@ -3,6 +3,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const window={markdownit:require('../shared/vendor-markdown-it.js')};
 vm.runInNewContext(fs.readFileSync('shared/markdown.js','utf8'),{window,WeakMap,Promise});
 const md=window.LearnMarkdown;
+assert.equal(md.normalizeMermaid('flowchart TD\n A["向量<br>与<BR />坐标<br/>表示"] --> B'), 'flowchart TD\n A["向量 与 坐标 表示"] --> B');
+assert.equal(md.normalizeMermaid('flowchart TD\n A["坏<br onclick=x>标签"] --> B'), 'flowchart TD\n A["坏<br onclick=x>标签"] --> B');
+assert.equal(md.normalizeMermaid('flowchart TD\n A<br/> --> B'), 'flowchart TD\n A<br/> --> B');
+assert.equal(md.normalizeMermaid('flowchart TD\n A["引号\\"<br/>标签"] --> B'), 'flowchart TD\n A["引号\\" 标签"] --> B');
 assert.match(md.render('| 比较 | 说明 |\n| --- | --- |\n| A | B |'),/<table>/);
 assert.match(md.render('$\\|x\\|_2$'),/\\\|x\\\|_2/);
 assert.doesNotMatch(md.render('<img src=x onerror=alert(1)>'),/<img/);

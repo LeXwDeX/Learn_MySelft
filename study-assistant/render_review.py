@@ -10,7 +10,11 @@ import signal
 from pathlib import Path
 import re
 import subprocess
+import threading
 import urllib.error
+
+
+_CAPTURE_SLOTS = threading.BoundedSemaphore(2)
 
 
 class ReviewIssue(ValueError):
@@ -32,12 +36,21 @@ def markdown(candidate):
     return '\n\n'.join(sections)
 
 
-def _capture(config, path, source):
+def _capture(config, path, source, *, check_only=False):
+    if not _CAPTURE_SLOTS.acquire(timeout=1):
+        raise TimeoutError('renderer busy')
+    try:
+        return _capture_worker(config, path, source, check_only=check_only)
+    finally:
+        _CAPTURE_SLOTS.release()
+
+
+def _capture_worker(config, path, source, *, check_only=False):
     process = subprocess.Popen([config['python'], str(Path(__file__).with_name('render_worker.py')), str(path)],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, start_new_session=True)
     try:
-        stdout, _ = process.communicate(json.dumps({'source': source}), timeout=75)
+        stdout, _ = process.communicate(json.dumps({'source': source, 'check_only': check_only}), timeout=75)
     except subprocess.TimeoutExpired:
         # The browser and driver are descendants; kill the whole isolated session.
         try:
@@ -49,6 +62,44 @@ def _capture(config, path, source):
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, 'render_worker')
     return json.loads(stdout)
+
+
+def normalize_mermaid(source):
+    """Match the browser's narrow legacy-label repair without rewriting storage."""
+    return re.sub(r'"(?:\\.|[^"\\])*"',
+                  lambda match: re.sub(r'<br\s*/?\s*>', ' ', match.group(), flags=re.I), source)
+
+
+def validate_mermaid(source, config_path=None):
+    """Use the isolated deployed renderer, without a second model request.
+
+    No source or screenshot is returned on failure. Missing/incomplete rendering
+    remains unavailable and can never release a Mermaid block to the client.
+    """
+    if not isinstance(source, str) or len(source) > 8000:
+        return {'status': 'failed', 'reason': 'diagram_too_long'}
+    normalized = normalize_mermaid(source)
+    if (not re.match(r'^\s*(flowchart|graph|sequenceDiagram)\b', normalized)
+            or re.search(r'%%\{|^\s*---|\bclick\s|<[^>]*>', normalized, re.M)):
+        return {'status': 'failed', 'reason': 'unsupported_diagram'}
+    if len(re.findall(r'--?(?:>>?|[)x])', normalized)) > 100:
+        return {'status': 'failed', 'reason': 'diagram_too_many_edges'}
+    path = Path(config_path) if config_path else Path(__file__).with_name('render-review.json')
+    if not path.exists():
+        return {'status': 'unavailable', 'reason': 'renderer_not_configured'}
+    # Make the wrapper strictly longer than every possible backtick in the source.
+    fence = '`' * max(3, max((len(run) + 1 for run in re.findall(r'`+', normalized)), default=3))
+    try:
+        config = json.loads(path.read_text())
+        rendered = _capture(config, path, fence + 'mermaid\n' + normalized + '\n' + fence,
+                            check_only=True)
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return {'status': 'unavailable', 'reason': 'renderer_unavailable'}
+    if rendered.get('errors'):
+        return {'status': 'failed', 'reason': 'diagram_render_failed'}
+    if not rendered.get('complete') or rendered.get('diagrams') != 2:
+        return {'status': 'unavailable', 'reason': 'render_incomplete'}
+    return {'status': 'passed', 'source': normalized}
 
 
 def review(candidate, ask, config_path=None):

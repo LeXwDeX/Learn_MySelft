@@ -233,6 +233,16 @@ class Handler(BaseHTTPRequestHandler):
             )
             self.wfile.flush()
 
+        gate = self.app.tutor_rendering.stream()
+
+        def delta(piece):
+            for safe_piece in gate.feed(piece):
+                sse({"delta": safe_piece})
+
+        def interrupted():
+            for safe_piece in gate.finish(interrupted=True):
+                sse({"delta": safe_piece})
+
         try:
             with self.app.model.stream(messages) as resp:
                 ctype = (resp.headers.get("Content-Type") or "").lower()
@@ -243,7 +253,7 @@ class Handler(BaseHTTPRequestHandler):
                         .get("message", {})
                         .get("content", "")
                     )
-                    sse({"delta": text})
+                    delta(text)
                 else:
                     for line in resp:
                         line = line.decode("utf-8", "replace").strip()
@@ -261,7 +271,9 @@ class Handler(BaseHTTPRequestHandler):
                             continue
                         piece = (choices[0].get("delta") or {}).get("content")
                         if piece:
-                            sse({"delta": piece})
+                            delta(piece)
+            for safe_piece in gate.finish():
+                sse({"delta": safe_piece})
             sse({"done": True})
         except urllib.error.HTTPError as e:
             detail = ""
@@ -269,8 +281,13 @@ class Handler(BaseHTTPRequestHandler):
                 detail = e.read().decode("utf-8", "replace")[:300]
             except Exception:
                 pass
+            interrupted()
             sse({"error": "upstream HTTP %s: %s" % (e.code, detail)})
+        except (BrokenPipeError, ConnectionResetError):
+            # The client is gone. Do not launch a renderer or write another event.
+            return
         except Exception as e:
+            interrupted()
             sse({"error": "%s: %s" % (type(e).__name__, e)})
 
     def do_POST(self):

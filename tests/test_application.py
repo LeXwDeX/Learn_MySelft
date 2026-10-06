@@ -151,5 +151,70 @@ class ApplicationTests(unittest.TestCase):
             thread.join()
 
 
+    def test_real_http_tutor_diagrams_are_checked_and_failures_keep_source(self):
+        app = self.apps[0]
+        _, token = app.accounts.login("admin", "test-password", "127.0.0.1")
+        server = app.server(("127.0.0.1", 0))
+        thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+        thread.start()
+        graph = '先读正文。\n\n```mermaid\nflowchart TD\n A["向量<br/>坐标"] --> B\n```\n'
+
+        class InterruptedResponse(io.BytesIO):
+            def __iter__(self):
+                while line := self.readline():
+                    yield line
+                raise OSError("synthetic upstream interruption")
+
+        try:
+            for mime, status, interrupted in [("text/event-stream", "passed", False),
+                                               ("application/json", "passed", False),
+                                               ("text/event-stream", "unavailable", False),
+                                               ("application/json", "failed", False),
+                                               ("text/event-stream", "passed", True)]:
+                source = graph[:-4] if interrupted else graph
+                if mime == "text/event-stream":
+                    payload = b"".join(("data: " + json.dumps({"choices": [{"delta": {"content": piece}}]}) + "\n\n").encode()
+                                       for piece in source)
+                    if not interrupted:
+                        payload += b"data: [DONE]\n\n"
+                else:
+                    payload = json.dumps({"choices": [{"message": {"content": source}}]}).encode()
+                response = (InterruptedResponse if interrupted else io.BytesIO)(payload)
+                response.headers = {"Content-Type": mime}
+                with self.subTest(mime=mime, status=status, interrupted=interrupted), \
+                     patch.object(app.model, "stream", return_value=response), \
+                     patch.object(app.tutor_rendering, "validate", return_value={"status": status, "source": source.split('```mermaid\n')[1].split('```')[0].replace('<br/>', ' ')}) as validate:
+                    request = urllib.request.Request(
+                        "http://127.0.0.1:%d/ask" % server.server_port,
+                        json.dumps({"question": "Explain", "unit": {"unit_id": "n1"}}).encode(),
+                        {"Content-Type": "application/json", "Cookie": "learn_session=" + token},
+                    )
+                    with urllib.request.urlopen(request, timeout=5) as result:
+                        events = [json.loads(line[6:]) for line in result.read().decode().splitlines()
+                                  if line.startswith("data: ")]
+                    text = ''.join(event.get('delta', '') for event in events)
+                    self.assertIn('先读正文。', text)
+                    self.assertTrue(all(set(event) <= {'delta', 'done', 'error'} for event in events))
+                    if status == 'passed' and not interrupted:
+                        self.assertIn('```mermaid', text)
+                        self.assertIn('向量 坐标', text)
+                        validate.assert_called_once()
+                    else:
+                        self.assertNotIn('```mermaid', text)
+                        self.assertIn('```text', text)
+                        self.assertIn('向量<br/>坐标', text)
+                        self.assertIn('保留源码', text)
+                    if interrupted:
+                        validate.assert_not_called()
+                        self.assertIn('error', events[-1])
+                    else:
+                        self.assertEqual(events[-1], {'done': True})
+                    self.assertTrue(response.closed)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+
 if __name__ == "__main__":
     unittest.main()

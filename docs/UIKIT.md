@@ -13,6 +13,7 @@ UI Kit 为首页、学习路径、测验地图和测验窗口提供共享样式�
 | 边框 | `--learn-border` | `#dce1e8` 分隔线和控件边框。 |
 | 强调 | `--learn-accent`, `--learn-accent-tint` | `#c74f20` 主操作；`#fff1e9` 强调背景。 |
 | 状态 | `--learn-success`, `--learn-danger` | `#2f7d5d` 成功；`#b42318` 错误。 |
+| 学习层级 | `--learn-level-1` 至 `--learn-level-4` | `#245b83`、`#3f7eaa`、`#6ea1c6`、`#a0c1d9`。学习路径卡片按层级固定使用蓝色；同一层跨根节点颜色相同。 |
 | 圆角 | `--learn-radius`, `--learn-radius-control` | 卡片 `8px`；控件 `6px`。 |
 | 间距 | `--learn-space-1/2/3/4/6` | 分别为 `4/8/12/16/24px`。 |
 | 字体 | `--learn-font`, `--learn-mono`, `--learn-serif` | 系统无衬线、等宽和衬线字体栈。 |

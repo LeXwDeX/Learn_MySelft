@@ -37,6 +37,7 @@
     "state_store.py": "infrastructure",
     "study_assistant.py": "composition",
     "text_utils.py": "domain",
+    "tutor_rendering.py": "services",
     "tutor_routes.py": "http",
     "user_accounts.py": "infrastructure",
     "web_server.py": "tools"

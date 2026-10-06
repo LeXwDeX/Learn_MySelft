@@ -61,7 +61,7 @@ flowchart BT
 | --- | --- | --- |
 | composition | `study_assistant.py`, `application.py` | 读取配置、持有单实例锁、创建应用；注册服务操作和 HTTP 路由；启动后台任务与服务器。 |
 | http | `http_handler.py`, `http_io.py`, `account_routes.py`, `state_routes.py`, `path_routes.py`, `job_routes.py`, `material_routes.py`, `tutor_routes.py` | 处理 HTTP、请求体与流式响应；按账号、状态、路径、任务、资料和辅导功能分派请求。 |
-| services | `learning_service.py`, `quiz_service.py`, `quiz_generation.py`, `flywheel_service.py`, `request_auth.py` | 执行学习阶段、测验与验题、薄弱点和细化流程；集中处理请求授权。 |
+| services | `learning_service.py`, `quiz_service.py`, `quiz_generation.py`, `flywheel_service.py`, `request_auth.py`, `tutor_rendering.py` | 执行学习阶段、测验与验题、薄弱点和细化流程；集中处理请求授权；校验辅导回复的 Mermaid 图块并安全降级。 |
 | infrastructure | `background_jobs.py`, `generation_cache.py`, `material_parser.py`, `material_repository.py`, `model_client.py`, `render_review.py`, `state_schema.py`, `state_store.py`, `user_accounts.py` | 提供持久任务队列、缓存、资料解析、资料仓库、上游客户端、渲染检查、Schema 校验、SQLite 和账号存储。 |
 | domain | `app_config.py`, `flywheel.py`, `generation_contracts.py`, `material_titles.py`, `path_hierarchy.py`, `prompts.py`, `quiz_harness.py`, `research_sources.py`, `service_limits.py`, `text_utils.py` | 定义配置边界、路径和飞轮规则、生成结果规范、标题、测验协议、研究来源策略、限额、提示词及文本处理。 |
 | tools | `backup_state.py`, `material_worker.py`, `migrate_quiz_v2.py`, `render_worker.py`, `web_server.py` | 备份数据、隔离解析上传、执行测验迁移、隔离渲染检查、提供静态页面和用户路径路由。 |
@@ -69,6 +69,8 @@ flowchart BT
 ### 组合与调用
 
 启动入口 `study_assistant.py` 调用 `create_application()`。`application.py` 创建账号与 SQLite 存储、资料仓库、模型客户端、缓存和业务服务，再将具体依赖注入各路由对象。`Handler` 只通过服务器上的 `application` 属性访问应用，不负责创建业务对象。
+
+`Application` 向 `TutorRendering` 注入隔离图示校验器。`Handler` 将上游片段交给渲染服务，再发送安全的 `delta`。普通文字保持流式输出，完整 Mermaid 图块经共享渲染器检查后才发出。
 
 路径操作由 `Application.operations` 注册。同步路径请求经 `PathRoutes` 调用 `dispatch`；后台任务由 `JobQueue` 执行 `Application.run_job()`，重新检查用户状态、操作权限和资料存在性后，再调用同一个操作注册表。后台队列不构造或伪造 HTTP handler。
 
