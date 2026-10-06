@@ -296,6 +296,7 @@
   function diagram(root, spec, life, id) {
     var steps = spec.steps || [], step = 0, progress = 1, running = false, paused = false;
     var animation = 0, inputFrame = 0, last = 0, speed = 1, view = 'oblique';
+    var playback = null, reading = false, readingLeft = 0;
     var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
     function copy(state) { return state.map(function (item) { return {id: item.id, kind: item.kind, color: item.color, label: item.label, points: item.points.map(function (point) { return point.slice(); }), radius: item.radius, opacity: item.opacity}; }); }
     var states = [copy(spec.elements)];
@@ -308,6 +309,9 @@
         if (change.opacity !== undefined) item.opacity = change.opacity;
       });
       states.push(next);
+    });
+    var alwaysHidden = spec.elements.filter(function (item, index) {
+      return states.every(function (state) { return state[index].opacity === 0; });
     });
     var p = plot(root, spec.dimension === 3 ? '三维图形的投影' : '二维图形');
     p.svg.classList.add('learn-scene-diagram-plot');
@@ -331,6 +335,8 @@
       return {group: group, shape: node, label: label};
     });
     var caption = el(root, 'p', {class: 'learn-scene-caption', 'aria-live': 'polite'});
+    if (alwaysHidden.length) el(root, 'p', {class: 'learn-scene-visibility-note'},
+      '有 ' + alwaysHidden.length + ' 个图元在所有步骤中都保持隐藏。请核对场景数据。');
     var labeled = spec.elements.filter(function (item) { return item.label; });
     if (labeled.length) {
       var legend = el(root, 'div', {class: 'learn-scene-diagram-legend'});
@@ -338,7 +344,7 @@
       var labels = el(legend, 'ul');
       labeled.forEach(function (item) { el(labels, 'li', {}, item.label); });
     }
-    var controls, prev, next, play, slider, viewSelect;
+    var controls, prev, next, single, play, slider, viewSelect;
     if (spec.dimension === 3) {
       var viewWrap = el(root, 'label', {class: 'learn-scene-diagram-view'}, '视角 ');
       viewSelect = el(viewWrap, 'select', {'aria-label': '图形视角'});
@@ -350,16 +356,22 @@
       controls = el(controlBox, 'div', {class: 'learn-scene-controls'});
       prev = button(controls, '上一步', function () { go(Math.max(0, step - 1)); }, life);
       next = button(controls, '下一步', function () { go(Math.min(steps.length, step + 1)); }, life);
-      play = button(controls, '开始', function () {
+      single = button(controls, '播放第 1 步', function () {
         if (running) { pause(true); return; }
-        if (paused && progress < 1) { start(); return; }
-        if (step === steps.length && progress === 1) go(0);
-        if (progress === 1) { step++; progress = 0; }
-        start();
+        if (paused && playback === 'single') { start('single'); return; }
+        reading = false; readingLeft = 0;
+        if (step === 0) { step = 1; progress = 0; }
+        else if (progress === 1) progress = 0;
+        start('single');
+      }, life);
+      play = button(controls, '播放全部', function () {
+        if (running) { pause(true); return; }
+        if (paused && playback === 'all') { start('all'); return; }
+        go(0); step = 1; progress = 0;
+        start('all');
       }, life, true);
-      button(controls, '重播', function () { go(0); step = 1; progress = 0; start(); }, life);
       var speedWrap = el(controls, 'label', {class: 'learn-scene-speed'}, '速度 '), speedSelect = el(speedWrap, 'select', {'aria-label': '动画速度'});
-      [['0.5', '慢速'], ['1', '正常']].forEach(function (option) { el(speedSelect, 'option', {value: option[0]}, option[1]); });
+      [['0.5', '慢速'], ['1', '正常'], ['2', '快速']].forEach(function (option) { el(speedSelect, 'option', {value: option[0]}, option[1]); });
       speedSelect.value = '1';
       life.on(speedSelect, 'change', function () { speed = Number(speedSelect.value); });
       slider = range(controlBox, '本步进度', {min: 0, max: 1, value: 1}, id + '-progress', life, function (value) {
@@ -382,13 +394,17 @@
       return result;
     }
     function metrics() {
-      width = Math.max(180, p.box.clientWidth); height = width < 420 ? 300 : 380;
+      width = Math.max(100, p.box.clientWidth); height = width < 420 ? 300 : 380;
       p.svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height); p.svg.style.height = height + 'px';
       var left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
-      states.forEach(function (state) { state.forEach(function (item) {
+      states.forEach(function (state, stateIndex) { state.forEach(function (item, itemIndex) {
+        var prior = states[Math.max(0, stateIndex - 1)][itemIndex];
+        var following = states[Math.min(states.length - 1, stateIndex + 1)][itemIndex];
+        if (item.opacity === 0 && prior.opacity === 0 && following.opacity === 0) return;
         var points = item.kind === 'circle' ? projectedCircle(item, 32) : item.points.map(project);
         points.forEach(function (point) { left = Math.min(left, point[0]); right = Math.max(right, point[0]); top = Math.min(top, point[1]); bottom = Math.max(bottom, point[1]); });
       }); });
+      if (left === Infinity) { left = -0.5; right = 0.5; top = -0.5; bottom = 0.5; }
       var spanX = Math.max(1, right - left), spanY = Math.max(1, bottom - top);
       scale = Math.min((width - 48) / spanX, (height - 48) / spanY);
       offsetX = width / 2 - (left + right) * scale / 2; offsetY = height / 2 - (top + bottom) * scale / 2;
@@ -463,25 +479,43 @@
       p.svg.dataset.step = String(step); p.svg.dataset.progress = String(progress); p.svg.dataset.view = spec.dimension === 3 ? view : 'plane';
     }
     function reflect() {
-      caption.textContent = '步骤 ' + (step + 1) + ' / ' + (steps.length + 1) + '：' + (step ? steps[step - 1].caption : '观察初始图形。');
+      var description = '步骤 ' + (step + 1) + ' / ' + (steps.length + 1) + '：' + (step ? steps[step - 1].caption : '观察初始图形。');
+      if (caption.textContent !== description) caption.textContent = description;
       if (!steps.length) return;
       prev.disabled = step === 0; next.disabled = step === steps.length;
-      play.textContent = running ? '暂停' : step === steps.length && progress === 1 ? '重播' : paused || (step > 0 && progress < 1) ? '继续' : '开始';
+      single.disabled = running && playback === 'all'; play.disabled = running && playback === 'single';
+      single.textContent = running && playback === 'single' ? '暂停本步' : paused && playback === 'single' ? '继续本步' :
+        step === 0 ? '播放第 1 步' : progress === 1 ? '重播本步' : '播放本步';
+      play.textContent = running && playback === 'all' ? '暂停全部' : paused && playback === 'all' ? '继续全部' :
+        step === steps.length && progress === 1 ? '重播全部' : '播放全部';
       slider.disabled = step === 0; slider.value = String(progress);
     }
-    function pause(keepPosition) { if (animation) life.cancel(animation); animation = 0; running = false; paused = !!keepPosition; reflect(); }
+    function pause(keepPosition) {
+      if (animation) life.cancel(animation);
+      animation = 0; running = false; paused = !!keepPosition;
+      if (!keepPosition) { playback = null; reading = false; readingLeft = 0; }
+      reflect();
+    }
     function tick(now) {
       animation = 0; if (!live(root)) { pause(false); return; }
-      progress = Math.min(1, progress + Math.max(0, now - last) * speed / 1000); last = now;
+      var elapsed = Math.max(0, now - last) * speed; last = now;
+      if (reading) {
+        readingLeft -= elapsed;
+        if (readingLeft <= 0) { reading = false; step++; progress = 0; }
+      } else progress = reduced && reduced.matches ? 1 : Math.min(1, progress + elapsed / 1000);
       render(); reflect();
-      if (progress < 1) animation = life.frame(tick);
-      else if (step < steps.length) { step++; progress = 0; render(); reflect(); animation = life.frame(tick); }
-      else { running = false; paused = false; reflect(); }
+      if (!reading && progress === 1) {
+        if (playback === 'all' && step < steps.length) {
+          reading = true; readingLeft = clamp(1200 + steps[step - 1].caption.length * 35, 1500, 4500);
+        }
+        else { running = false; paused = false; playback = null; reflect(); }
+      }
+      if (running) animation = life.frame(tick);
     }
-    function start() {
+    function start(mode) {
       if (!live(root)) return;
-      if (reduced && reduced.matches) { progress = 1; running = false; paused = false; render(); reflect(); return; }
-      running = true; paused = false; last = window.performance.now(); reflect(); animation = life.frame(tick);
+      playback = mode; running = true; paused = false; last = window.performance.now();
+      render(); reflect(); animation = life.frame(tick);
     }
     function go(target) { pause(false); step = target; progress = 1; render(); reflect(); }
     function schedule() { if (!inputFrame && live(root)) inputFrame = life.frame(function () { inputFrame = 0; render(); }); }

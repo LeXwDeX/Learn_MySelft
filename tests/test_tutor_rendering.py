@@ -5,10 +5,15 @@ import json
 import subprocess
 import sys
 import unittest
+import io
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'study-assistant'))
-from tutor_rendering import MermaidStream, MAX_DIAGRAMS, MAX_SOURCE, MAX_OPENING
+from tutor_rendering import MermaidStream, TutorRendering, MAX_DIAGRAMS, MAX_SOURCE, MAX_OPENING
+from http_handler import Handler
 from render_review import normalize_mermaid
+from scene_contracts import MAX_SOURCE as MAX_SCENE_SOURCE
 
 
 class TutorRenderingTests(unittest.TestCase):
@@ -371,6 +376,137 @@ process.stdout.write(JSON.stringify(sources.map(source=>(window.LearnMarkdown.re
                     sources.append(whole)
                     expected.append(1 if status == 'passed' else 0)
         self.assertEqual(self.shared_diagram_counts(sources), expected)
+
+
+class TutorAnimationTests(unittest.TestCase):
+    def scene(self, *, animated=True):
+        scene = {"version": 1, "type": "diagram", "title": "信息流",
+                 "summary": "信息点从发送端移动到接收端。",
+                 "elements": [{"id": "packet", "kind": "point", "points": [[0, 0]]}]}
+        if animated:
+            scene['steps'] = [{"caption": "传递信息。", "changes": [{"id": "packet", "points": [[2, 0]]}]}]
+        return json.dumps(scene, ensure_ascii=False)
+
+    def collect(self, source, *, repair=None, interrupted=False, chunks=None, required=True):
+        gate = MermaidStream(lambda _: {'status': 'passed'}, require_animation=required, repair=repair)
+        output = []
+        for piece in chunks or [source]:
+            output.extend(gate.feed(piece))
+        output.extend(gate.finish(interrupted=interrupted))
+        self.assertEqual(gate.finish(), [])
+        return ''.join(output), gate
+
+    def test_static_scene_is_not_released_as_animation_and_repair_is_once(self):
+        calls = []
+        source = '先看关系。\n\n```learn-scene\n' + self.scene(animated=False) + '\n```\n'
+        def repair(reply):
+            calls.append(reply)
+            return self.scene()
+        output, gate = self.collect(source, repair=repair, chunks=list(source))
+        self.assertTrue(gate.animation_passed)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0], source)
+        self.assertIn('先看关系。', output)
+        self.assertIn('```text', output)
+        self.assertEqual(output.count('```learn-scene'), 1)
+
+    def test_valid_scene_all_chunk_boundaries_and_crlf_need_no_repair(self):
+        source = '```learn-scene\n' + self.scene() + '\n```\n'
+        def unexpected(_):
+            self.fail('valid animation must not retry')
+        chunkings = [[source], list(source)]
+        chunkings.extend([source[:cut], source[cut:]] for cut in range(1, len(source)))
+        for chunks in chunkings:
+            output, gate = self.collect(source, repair=unexpected, chunks=chunks)
+            self.assertEqual(output, source)
+            self.assertTrue(gate.animation_passed)
+        output, _ = self.collect(source.replace('\n', '\r\n'), chunks=list(source.replace('\n', '\r\n')), repair=unexpected)
+        self.assertEqual(output, source)
+
+    def test_failed_missing_bad_and_oversized_repairs_report_failure(self):
+        for repaired in (None, 'null', '{}', self.scene(animated=False), 'x' * (MAX_SCENE_SOURCE + 1)):
+            calls = []
+            def repair(reply):
+                calls.append(reply)
+                return repaired
+            output, gate = self.collect('保留讲解。', repair=repair)
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(gate.animation_passed)
+            self.assertIn('保留讲解。', output)
+            self.assertIn('动画暂未生成成功', output)
+            self.assertNotIn('```learn-scene', output)
+        def fail(_):
+            raise OSError('private upstream detail')
+        output, _ = self.collect('讲解。', repair=fail)
+        self.assertNotIn('private upstream detail', output)
+        self.assertIn('动画暂未生成成功', output)
+
+    def test_interruption_does_not_validate_release_or_repair_partial_scene(self):
+        def unexpected(_):
+            self.fail('interruption must not repair')
+        source = '讲解。\n```learn-scene\n' + self.scene() + '\n```'
+        output, gate = self.collect(source, chunks=list(source), interrupted=True, repair=unexpected)
+        self.assertFalse(gate.animation_passed)
+        self.assertNotIn('```learn-scene', output)
+        self.assertIn('```text', output)
+
+    def test_unclosed_oversized_or_nested_scene_needs_safe_repair(self):
+        for source in ('```learn-scene\n' + self.scene(),
+                       '```learn-scene\n' + 'x' * (MAX_SCENE_SOURCE + 1) + '\n```\n',
+                       '> ```learn-scene\n> ' + self.scene() + '\n> ```\n',
+                       '- ```learn-scene\n  ' + self.scene() + '\n  ```\n'):
+            output, gate = self.collect(source, repair=lambda _: self.scene(), chunks=list(source))
+            self.assertTrue(gate.animation_passed)
+            self.assertEqual(output.count('```learn-scene'), 1)
+            self.assertIn('```text', output)
+
+    def test_ordinary_static_scene_keeps_legacy_source(self):
+        source = '```learn-scene\n' + self.scene(animated=False) + '\n```\n'
+        output, _ = self.collect(source, required=False, chunks=list(source))
+        self.assertEqual(output, source)
+
+    def test_scene_source_limit_excludes_the_closing_separator_newline(self):
+        raw = self.scene()
+        for length, success in ((MAX_SCENE_SOURCE, True), (MAX_SCENE_SOURCE + 1, False)):
+            source = '```learn-scene\n' + raw + ' ' * (length - len(raw)) + '\n```\n'
+            output, gate = self.collect(source, chunks=list(source))
+            self.assertEqual(gate.animation_passed, success)
+            self.assertEqual('```learn-scene' in output, success)
+
+    def test_unclosed_ordinary_code_cannot_hide_a_repaired_scene(self):
+        source = '```python\nprint("untrusted example")'
+        output, gate = self.collect(source, repair=lambda _: self.scene(), chunks=list(source))
+        self.assertTrue(gate.animation_passed)
+        self.assertIn('print("untrusted example")\n```\n\n\n```learn-scene', output)
+
+    def test_repair_context_is_bounded_and_mermaid_gate_still_runs(self):
+        checked, repaired = [], []
+        def validate(source):
+            checked.append(source)
+            return {'status': 'passed'}
+        def repair(source):
+            repaired.append(source)
+            return self.scene()
+        gate = MermaidStream(validate, require_animation=True, repair=repair)
+        source = '```mermaid\nflowchart TD\nA-->B\n```\n' + '文' * (MAX_SCENE_SOURCE + 1)
+        output = ''.join(gate.feed(source) + gate.finish())
+        self.assertEqual(len(checked), 1)
+        self.assertEqual(len(repaired), 1)
+        self.assertEqual(len(repaired[0]), MAX_SCENE_SOURCE)
+        self.assertIn('```mermaid', output)
+        self.assertEqual(output.count('```learn-scene'), 1)
+
+    def test_detected_disconnected_client_does_not_launch_repair(self):
+        response = io.BytesIO(json.dumps({'choices': [{'message': {'content': ''}}]}).encode())
+        response.headers = {'Content-Type': 'application/json'}
+        model = SimpleNamespace(stream=Mock(return_value=response), json=Mock())
+        app = SimpleNamespace(model=model, tutor_rendering=TutorRendering(lambda _: {'status': 'passed'}))
+        request = SimpleNamespace(app=app, send_response=Mock(), send_header=Mock(),
+                                  end_headers=Mock(), _cors=Mock(),
+                                  wfile=SimpleNamespace(write=Mock(side_effect=BrokenPipeError), flush=Mock()))
+        Handler.stream(request, [{'role': 'system', 'content': '说明。'}, {'role': 'user', 'content': '请做动画演示'}])
+        model.json.assert_not_called()
+        self.assertTrue(response.closed)
 
 
 if __name__ == '__main__':

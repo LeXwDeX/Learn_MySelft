@@ -13,6 +13,8 @@ from background_jobs import JobError
 from user_accounts import AccountError, COOKIE_NAME
 from state_schema import SCHEMA_VERSION
 from http_io import read_json_body
+from prompts import SCENE_ANIMATION_REQUEST, SCENE_ANIMATION_REPAIR
+from scene_contracts import animation_requested
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -233,7 +235,35 @@ class Handler(BaseHTTPRequestHandler):
             )
             self.wfile.flush()
 
-        gate = self.app.tutor_rendering.stream()
+        # Only the latest user turn determines this request's contract. Images
+        # retain their original message; inspect text parts without logging them.
+        latest = next((item.get("content") for item in reversed(messages)
+                       if item.get("role") == "user"), "")
+        question = latest if isinstance(latest, str) else "\n".join(
+            item.get("text", "") for item in latest or []
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+        require_animation = animation_requested(question)
+        if require_animation:
+            messages = list(messages)
+            messages.insert(1, {"role": "system", "content": SCENE_ANIMATION_REQUEST})
+
+        def repair(source):
+            # Reuse the authorized request's context. Never persist a second
+            # user turn or expose the upstream reply/error as an instruction.
+            repair_messages = list(messages)
+            # Replace the primary fence-format requirement with JSON-only repair.
+            repair_messages[1] = {"role": "system", "content": SCENE_ANIMATION_REPAIR}
+            repair_messages.append({"role": "assistant", "content": source})
+            repair_messages.append({"role": "user", "content": "请补充这次问题所需的合法动画场景，只返回场景 JSON。"})
+            return self.app.model.json(
+                repair_messages,
+                max_tokens=min(self.app.settings.max_output_tokens, 6000),
+                temperature=0.3,
+                timeout=min(self.app.settings.upstream_timeout, 60),
+            )
+
+        gate = self.app.tutor_rendering.stream(require_animation=True, repair=repair) if require_animation else self.app.tutor_rendering.stream()
 
         def delta(piece):
             for safe_piece in gate.feed(piece):
@@ -272,6 +302,10 @@ class Handler(BaseHTTPRequestHandler):
                         piece = (choices[0].get("delta") or {}).get("content")
                         if piece:
                             delta(piece)
+            # Write before finish can launch repair; a broken client detected
+            # here follows the existing disconnect path without another call.
+            if require_animation and not gate.animation_passed:
+                sse({"delta": ""})
             for safe_piece in gate.finish():
                 sse({"delta": safe_piece})
             sse({"done": True})

@@ -287,10 +287,18 @@ function putState(entries) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: body, keepalive: !!keepalive && new Blob([body]).size <= 60000
       }).then(function (r) {
-        if (!r.ok) throw new Error('保存失败（' + r.status + '）');
+        if (r.ok) return;
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          var error = new Error(data.error || '保存失败（' + r.status + '）');
+          error.status = r.status;
+          error.code = data.code;
+          throw error;
+        });
       });
     }
-    var write = send(true).catch(function () {
+    var write = send(true).catch(function (error) {
+      // A conflict or recovery lock needs its own action, not the same request.
+      if (error.status && error.status < 500) throw error;
       return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return send(false); });
     });
     session.stateWrites.push(write);
@@ -445,6 +453,9 @@ function purgeLocalLegacy() {
 // ---------- 网络 ----------
 
 function post(path, body, jobOptions) {
+    try {
+      if (window.LearnSaves && window.LearnSaves.assertReady) window.LearnSaves.assertReady();
+    } catch (error) { return Promise.reject(error); }
     if (window.LearnJobs && window.LearnJobs.supports(path)) {
       if (!body.key) body.key = format.storeKey();
       var expectedKind = {'/path/intake': 'intake', '/path/research': 'research', '/path/plan': 'plan', '/path/node': 'node'}[path];
@@ -1515,16 +1526,56 @@ session.activeAiView = null;
 
 session.aiBusy = false;
 
+session.aiLayoutMoving = false;
+
 session.refreshAgentLayout = function () {};
 
 function bindAgentLayout() {
     var dialog = format.$('agent-dialog'), panel = format.$('node-panel');
     var workspace = panel.parentElement;
     var oldOverflow = '', oldAnchor = '', readingX = 0, readingY = 0;
-    var readingFrame = null;
+    var readingFrame = null, viewFrame = null, expanded = false, priorFocus = null, returnView = null, movingView = null;
+    var expandButton = format.$('agent-expand'), closeButton = format.$('agent-close');
+    function captureView(useStored) {
+      var view = session.activeAiView;
+      session.aiLayoutMoving = true;
+      if (!view) return null;
+      return {view: view, top: !useStored && view.box.clientHeight ? view.box.scrollTop : view.scrollTop,
+        follow: view.follow, start: view.input.selectionStart, end: view.input.selectionEnd,
+        direction: view.input.selectionDirection,
+        anchor: movingView && movingView.view === view ? movingView.anchor : view.box.style.overflowAnchor};
+    }
+    function restoreView(saved) {
+      if (viewFrame !== null) cancelAnimationFrame(viewFrame);
+      if (!saved) { session.aiLayoutMoving = false; return; }
+      movingView = saved;
+      saved.view.box.style.overflowAnchor = 'none';
+      function restore() {
+        saved.view.box.scrollTop = saved.top;
+        // A wider window can shorten the conversation. Keep the requested
+        // position for return even when the browser temporarily clamps it.
+        saved.view.scrollTop = saved.top;
+        saved.view.follow = saved.follow;
+        saved.view.input.setSelectionRange(saved.start, saved.end, saved.direction);
+      }
+      restore();
+      viewFrame = requestAnimationFrame(function () {
+        restore();
+        viewFrame = requestAnimationFrame(function () {
+          viewFrame = null;
+          restore();
+          saved.view.box.style.overflowAnchor = saved.anchor;
+          movingView = null;
+          session.aiLayoutMoving = false;
+        });
+      });
+    }
     function updateLayout() {
       var mobile = window.matchMedia('(max-width:800px)').matches;
-      if (!mobile && dialog.open) window.LearnUI.dialog.close(dialog);
+      if (!mobile && dialog.open && !expanded) {
+        returnView = captureView(true);
+        window.LearnUI.dialog.close(dialog);
+      }
       var toolbar = document.querySelector('.toolbar');
       var top = Math.max(0, toolbar.getBoundingClientRect().bottom);
       document.documentElement.style.setProperty('--agent-top', top + 'px');
@@ -1535,16 +1586,20 @@ function bindAgentLayout() {
     }
     session.refreshAgentLayout = updateLayout;
     format.$('agent-launch').addEventListener('click', showAgent);
-    format.$('agent-close').addEventListener('click', function () { window.LearnUI.dialog.close(dialog); });
+    expandButton.addEventListener('click', function () { dialog.openAgent(true); });
+    closeButton.addEventListener('click', function () { window.LearnUI.dialog.close(dialog); });
     dialog.addEventListener('close', function () {
+      var saved = returnView || captureView();
+      returnView = null;
       workspace.appendChild(panel);
-      if (session.activeAiView) {
-        session.activeAiView.box.scrollTop = session.activeAiView.scrollTop;
-        if (session.activeAiView.follow) aiScroll(session.activeAiView, true);
-      }
+      expanded = false;
+      expandButton.hidden = false;
+      closeButton.hidden = true;
       document.body.style.overflow = oldOverflow;
       updateLayout();
       window.scrollTo(readingX, readingY);
+      if (priorFocus && priorFocus.isConnected) priorFocus.focus({preventScroll: true});
+      restoreView(saved);
       // Reparenting the panel changes layout. Keep browser scroll anchoring off
       // until that layout has settled so it cannot undo the restored position.
       readingFrame = requestAnimationFrame(function () {
@@ -1560,9 +1615,14 @@ function bindAgentLayout() {
         });
       });
     });
-    dialog.addEventListener('click', function (e) { if (e.target === dialog) window.LearnUI.dialog.close(dialog); });
-    dialog.openAgent = function () {
+    dialog.addEventListener('click', function (e) {
+      if (e.target !== dialog) return;
+      var rect = dialog.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) window.LearnUI.dialog.close(dialog);
+    });
+    dialog.openAgent = function (enlarge) {
       if (dialog.open) return;
+      var saved = captureView();
       if (readingFrame !== null) {
         cancelAnimationFrame(readingFrame);
         readingFrame = null;
@@ -1574,14 +1634,18 @@ function bindAgentLayout() {
       document.documentElement.style.overflowAnchor = 'none';
       oldOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
+      priorFocus = document.activeElement;
+      expanded = !!enlarge;
+      expandButton.hidden = true;
+      closeButton.hidden = false;
       dialog.appendChild(panel);
-      window.LearnUI.dialog.open(dialog);
-      if (session.activeAiView) {
-        session.activeAiView.box.scrollTop = session.activeAiView.scrollTop;
-        if (session.activeAiView.follow) aiScroll(session.activeAiView, true);
-      }
+      window.LearnUI.dialog.open(dialog, closeButton);
+      restoreView(saved);
     };
-    window.addEventListener('resize', updateLayout);
+    window.addEventListener('resize', function () {
+      if (dialog.open && expanded) restoreView(captureView(true));
+      updateLayout();
+    });
     var layoutFrame = null;
     window.addEventListener('scroll', function () {
       if (layoutFrame !== null) return;
@@ -1679,6 +1743,7 @@ function syncAiMaterial(id) {
 function aiScroll(view, force) {
     view = view || session.activeAiView;
     if (!view) return;
+    if (session.aiLayoutMoving) return;
     if (force) view.follow = true;
     if (view.follow && view.root.isConnected && view.box.clientHeight) {
       view.box.scrollTop = view.box.scrollHeight;
@@ -1766,7 +1831,7 @@ function renderAiPanel(id) {
     session.activeAiView = view;
     syncAiMaterial(id);
     box.addEventListener('scroll', function () {
-      if (!box.clientHeight) return;
+      if (!box.clientHeight || session.aiLayoutMoving) return;
       view.scrollTop = box.scrollTop;
       view.follow = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
       if (view.follow) view.more.hidden = true;

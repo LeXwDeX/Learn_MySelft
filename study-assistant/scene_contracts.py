@@ -156,6 +156,55 @@ def validate_scene(spec):
     return spec
 
 
+def animation_requested(question):
+    """Use only the current question, never earlier questions or study notes."""
+    if not isinstance(question, str):
+        return False
+    question = re.sub(r"(?:不要|不用|无需|不需要|取消)(?:做|生成|提供)?(?:动画|动态演示|动态展示)", "", question)
+    return bool(re.search(r"动画|动态演示|动态展示|manim|3b1b|3blue1brown|\banimat(?:e|ed|ion)\b", question, re.I))
+
+
+def validate_animation(spec):
+    """Require a playable scene with visible change, without changing v1 data.
+
+    Compare adjacent cumulative states. An out-and-back motion is legitimate;
+    setting a field to its previous/default value or moving hidden geometry is
+    not. Parameter sliders alone do not provide a playback sequence.
+    """
+    validate_scene(spec)
+    if spec["type"] == "linear_transform":
+        # The built-in sequence changes basis vectors, then adds weighted ones.
+        matrix = spec["matrix"]
+        basis_change = any(abs(matrix[row][column] - int(row == column)) > 0.001
+                           for row in range(2) for column in range(2))
+        weighted_change = any(abs(value) > 0.001 for value in spec.get("vector", [1, 1]))
+        if basis_change or weighted_change:
+            return spec
+        _fail()
+    if spec["type"] != "diagram" or not spec.get("steps"):
+        _fail()
+    states = {item["id"]: dict(item, opacity=item.get("opacity", 1)) for item in spec["elements"]}
+    changed = False
+    for step in spec["steps"]:
+        for change in step["changes"]:
+            before = states[change["id"]]
+            after = dict(before, **change)
+            # An empty label has no visible glyph. Other kinds have geometry.
+            drawable = before["kind"] != "label" or bool(before.get("label", "").strip())
+            visible = max(before["opacity"], after["opacity"]) > 0.001
+            opacity_changed = abs(before["opacity"] - after["opacity"]) > 0.001
+            geometry_changed = any(abs(a - b) > 0.001
+                                   for first, second in zip(before["points"], after["points"])
+                                   for a, b in zip(first, second))
+            radius_changed = abs(before.get("radius", 0) - after.get("radius", 0)) > 0.001
+            if drawable and visible and (opacity_changed or geometry_changed or radius_changed):
+                changed = True
+            states[change["id"]] = after
+    if not changed:
+        _fail()
+    return spec
+
+
 def _interval(value, lower, upper, *, positive=False):
     _object(value, {"min", "max", "value"}, {"min", "max", "value"})
     start = _number(value["min"], lower, upper)

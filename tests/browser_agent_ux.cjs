@@ -53,6 +53,66 @@ const history = Object.fromEntries(['n1', 'n2'].map(id => [id, Array.from({lengt
     }};
   }, {fixture, history});
   async function select(id) { await page.locator('#node-' + id + ' .node-head').click(); }
+  async function captureAgentState() {
+    return page.evaluate(() => {
+      const panel = document.querySelector('#node-panel');
+      const input = document.querySelector('#ai-input');
+      const msgs = document.querySelector('#ai-msgs');
+      window.__agentExpandRefs = {panel, view: panel.querySelector('.agent-view'), input, msgs};
+      return {
+        panelText: panel.querySelector('.agent-view').innerText,
+        selected: document.querySelector('#node-n1').classList.contains('expanded'),
+        draft: input.value,
+        selection: [input.selectionStart, input.selectionEnd, input.selectionDirection],
+        scrollTop: msgs.scrollTop,
+        msgText: msgs.innerText,
+      };
+    });
+  }
+  async function assertAgentStateRetained(before, where) {
+    const after = await page.evaluate(() => {
+      const panel = document.querySelector('#node-panel');
+      const input = document.querySelector('#ai-input');
+      const msgs = document.querySelector('#ai-msgs');
+      const refs = window.__agentExpandRefs;
+      return {
+        sameNodes: refs.panel === panel && refs.view === panel.querySelector('.agent-view') && refs.input === input && refs.msgs === msgs,
+        panelText: panel.querySelector('.agent-view').innerText,
+        selected: document.querySelector('#node-n1').classList.contains('expanded'),
+        draft: input.value,
+        selection: [input.selectionStart, input.selectionEnd, input.selectionDirection],
+        scrollTop: msgs.scrollTop,
+        msgText: msgs.innerText,
+      };
+    });
+    assert(after.sameNodes, where + ': expansion must move the existing panel and conversation');
+    assert.equal(after.panelText, before.panelText, where + ': panel content changed');
+    assert.equal(after.selected, before.selected, where + ': selected chapter changed');
+    assert.equal(after.draft, before.draft, where + ': draft changed');
+    assert.deepEqual(after.selection, before.selection, where + ': text selection changed');
+    assert(Math.abs(after.scrollTop - before.scrollTop) < 5, where + ': conversation position changed: expected ' + before.scrollTop + ', observed ' + after.scrollTop);
+    assert.equal(after.msgText, before.msgText, where + ': conversation content changed');
+  }
+  async function openExpanded() {
+    await page.locator('#agent-expand').click();
+    await page.waitForFunction(() => document.querySelector('#agent-dialog').open);
+    assert(await page.locator('#agent-dialog #node-panel').count(), 'expanded view must contain the existing panel');
+  }
+  async function assertDialogRestored(readingY, oldOverflow, oldAnchor, focusId, where) {
+    await page.waitForFunction(({readingY, oldOverflow, oldAnchor}) => {
+      const dialog = document.querySelector('#agent-dialog');
+      return !dialog.open && document.body.style.overflow === oldOverflow &&
+        document.documentElement.style.overflowAnchor === oldAnchor && Math.abs(scrollY - readingY) < 5;
+    }, {readingY, oldOverflow, oldAnchor});
+    await page.waitForTimeout(100);
+    assert(Math.abs(await page.evaluate(() => scrollY) - readingY) < 5, where + ': reading position changed');
+    const focus = await page.evaluate(() => {
+      const e = document.activeElement, r = e.getBoundingClientRect();
+      return {id: e.id, connected: e.isConnected, visible: r.width > 0 && r.height > 0};
+    });
+    assert(focus.connected && focus.visible, where + ': focus is not usable after close');
+    if (focusId) assert.equal(focus.id, focusId, where + ': focus did not return to its opener');
+  }
   async function chunk(text, finish = false) {
     await page.evaluate(({text, finish}) => {
       const stream = window.__agentChunks[0];
@@ -87,29 +147,74 @@ const history = Object.fromEntries(['n1', 'n2'].map(id => [id, Array.from({lengt
     await page.locator('#ai-msgs').evaluate(e => {e.scrollTop=100;});await page.waitForTimeout(50);
     await chunk('流A第一段');assert(Math.abs(await page.locator('#ai-msgs').evaluate(e => e.scrollTop)-100)<5);
     await page.locator('.ai-new-reply').waitFor({state: 'visible'});
+    const streamBackground = await page.evaluate(() => ({y:scrollY,overflow:document.body.style.overflow,anchor:document.documentElement.style.overflowAnchor}));
+    await openExpanded();
+    const streamBox = await page.locator('#agent-dialog').evaluate(e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:innerHeight};});
+    assert(Math.abs(streamBox.top-24)<=5&&Math.abs(streamBox.height-streamBox.bottom-24)<=5,'desktop expanded dialog needs 24px vertical gaps');
+    await chunk('流A放大期间继续');await page.getByText('流A放大期间继续').waitFor({state:'visible'});
+    assert(Math.abs(await page.locator('#ai-msgs').evaluate(e=>e.scrollTop)-100)<5,'stream must not jump to bottom while reading older messages');
+    const streamDuring = await captureAgentState();
+    await page.locator('#agent-close').click();
+    await assertDialogRestored(streamBackground.y,streamBackground.overflow,streamBackground.anchor,'agent-expand','stream close button');
+    await assertAgentStateRetained(streamDuring,'stream close button');
+    report.cases.push('desktop_expand_preserves_live_stream_and_reader_position');
     await select('n2');assert.equal(await page.locator('#ai-input').inputValue(), '章节B草稿');
     await chunk('流A完整结尾', true);await page.waitForTimeout(100);
     assert(!(await page.locator('#ai-msgs').innerText()).includes('流A完整结尾'));
     await select('n1');assert((await page.locator('#ai-msgs').innerText()).includes('流A完整结尾'));
     await page.locator('.ai-new-reply').click();assert(await page.locator('#ai-msgs').evaluate(e => e.scrollHeight-e.scrollTop-e.clientHeight<32));
     report.cases.push('stream_isolation_history_and_new_reply');
+    for (const [method,label] of [['button','close button'],['outside','outside click'],['escape','Escape']]) {
+      await page.locator('#ai-input').fill('展开状态草稿 '+label);
+      await page.locator('#ai-input').evaluate(e=>{e.focus();e.setSelectionRange(2,5,'forward');});
+      await page.locator('#ai-msgs').evaluate(e=>{e.scrollTop=120;});await page.waitForTimeout(40);
+      const beforeExpand=await captureAgentState();
+      const background=await page.evaluate(()=>({y:scrollY,overflow:document.body.style.overflow,anchor:document.documentElement.style.overflowAnchor}));
+      await openExpanded();
+      const box=await page.locator('#agent-dialog').evaluate(e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:innerHeight,center:(r.left+r.right)/2,width:innerWidth,radius:getComputedStyle(e).borderRadius};});
+      assert(Math.abs(box.top-24)<=5&&Math.abs(box.height-box.bottom-24)<=5,'desktop dialog needs 24px vertical gaps');
+      assert(Math.abs(box.center-box.width/2)<=5,'desktop dialog must be centered');
+      assert.equal(box.radius,'8px','expanded dialog must use the shared 8px radius');
+      assert.equal(await page.locator('#node-panel').evaluate(e=>e.parentElement.id),'agent-dialog');
+      const radii=await page.locator('#node-panel,.node,.ai-bubble').evaluateAll(es=>es.map(e=>getComputedStyle(e).borderRadius));
+      assert(radii.length>=4&&radii.every(x=>x==='8px'),'node, panel, and AI bubble must use the shared 8px radius');
+      if(method==='button')await page.locator('#agent-close').click();
+      else if(method==='outside')await page.mouse.click(4,4);
+      else await page.keyboard.press('Escape');
+      await assertDialogRestored(background.y,background.overflow,background.anchor,'agent-expand','desktop '+label);
+      await assertAgentStateRetained(beforeExpand,'desktop '+label);
+      assert(await page.locator('#node-panel').evaluate(e=>e.parentElement.classList.contains('learning-workspace')),'closed dialog must return the panel to reading layout');
+    }
+    report.cases.push('desktop_expand_state_and_three_close_paths');
     await page.setViewportSize({width: 390, height: 844});await page.evaluate(() => scrollTo(0, 1500));
-    const originalAnchor = await page.evaluate(()=>document.documentElement.style.overflowAnchor);const before=await page.evaluate(()=>scrollY);await page.locator('#agent-launch').click();await page.locator('#agent-dialog').waitFor({state:'visible'});
+    const originalAnchor = await page.evaluate(()=>document.documentElement.style.overflowAnchor);const originalOverflow=await page.evaluate(()=>document.body.style.overflow);const before=await page.evaluate(()=>scrollY);await page.locator('#agent-launch').click();await page.locator('#agent-dialog').waitFor({state:'visible'});
+    const mobileBox=await page.locator('#agent-dialog').evaluate(e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:innerHeight,radius:getComputedStyle(e).borderRadius};});assert(mobileBox.top>=16&&mobileBox.height-mobileBox.bottom>=16,'mobile dialog needs 16px vertical gaps');assert.equal(mobileBox.radius,'8px','mobile dialog must use the shared 8px radius');
     report.mobileFocus=[];for(let i=0;i<8;i++){const focus=await page.evaluate(()=>({id:document.activeElement.id,tag:document.activeElement.tagName,inDialog:!!document.activeElement.closest('#agent-dialog')}));report.mobileFocus.push(focus);await page.keyboard.press('Tab');}assert(report.mobileFocus.every(f=>f.inDialog||f.tag==='BODY'));
     await page.screenshot({path:output+'/agent-mobile.png'});await page.locator('#agent-close').click();
-    await page.waitForFunction(({before,originalAnchor})=>!document.querySelector('#agent-dialog').open&&document.body.style.overflow!=='hidden'&&document.documentElement.style.overflowAnchor===originalAnchor&&Math.abs(scrollY-before)<5,{before,originalAnchor});assert.equal(await page.evaluate(()=>document.activeElement.id),'agent-launch');
+    await page.waitForFunction(({before,originalAnchor,originalOverflow})=>!document.querySelector('#agent-dialog').open&&document.body.style.overflow===originalOverflow&&document.documentElement.style.overflowAnchor===originalAnchor&&Math.abs(scrollY-before)<5,{before,originalAnchor,originalOverflow});assert.equal(await page.evaluate(()=>document.activeElement.id),'agent-launch');
     for(let repeat=0;repeat<3;repeat++){
       const readingY=await page.evaluate(()=>scrollY);
       await page.locator('#agent-launch').click();await page.locator('#ai-input').fill('反复开关草稿 '+repeat);
       if(repeat===2)await page.keyboard.press('Escape');else await page.locator('#agent-close').click();
-      await page.waitForFunction(({readingY,originalAnchor})=>!document.querySelector('#agent-dialog').open&&document.body.style.overflow!== 'hidden'&&document.documentElement.style.overflowAnchor===originalAnchor&&Math.abs(scrollY-readingY)<5,{readingY,originalAnchor});
+      await page.waitForFunction(({readingY,originalAnchor,originalOverflow})=>!document.querySelector('#agent-dialog').open&&document.body.style.overflow===originalOverflow&&document.documentElement.style.overflowAnchor===originalAnchor&&Math.abs(scrollY-readingY)<5,{readingY,originalAnchor,originalOverflow});
       await page.waitForTimeout(150);assert(Math.abs(await page.evaluate(()=>scrollY)-readingY)<5);
     }
     report.cases.push('repeated_close_escape_restores_scroll_anchor');
-    await page.locator('#agent-launch').click();await page.locator('#ai-msgs').evaluate(e=>{e.scrollTop=120;});await page.waitForTimeout(50);await page.setViewportSize({width:1440,height:1000});await page.waitForTimeout(100);
+    await page.locator('#agent-launch').click();await page.locator('#ai-msgs').evaluate(e=>{e.scrollTop=120;});await page.waitForTimeout(50);const mobileScroll=await page.locator('#ai-msgs').evaluate(e=>e.scrollTop);assert(Math.abs(mobileScroll-120)<5,'mobile fixture must reach the requested scroll position before rotation: observed '+mobileScroll);await page.setViewportSize({width:1440,height:1000});await page.waitForTimeout(100);
     assert(!(await page.locator('#agent-dialog').evaluate(e=>e.open)));assert(await page.locator('#node-panel').evaluate(e=>e.parentElement.classList.contains('learning-workspace')));
-    assert(Math.abs(await page.locator('#ai-msgs').evaluate(e=>e.scrollTop)-120)<5,'rotation restores conversation scroll');
+    const rotatedScroll=await page.locator('#ai-msgs').evaluate(e=>e.scrollTop);assert(Math.abs(rotatedScroll-120)<5,'rotation restores conversation scroll: expected 120, observed '+rotatedScroll);
     report.cases.push('mobile_focus_scroll_rotation');
+    await page.locator('#ai-input').fill('桌面调整窗口仍保持放大');
+    const resizeState=await captureAgentState();
+    const resizeBackground=await page.evaluate(()=>({y:scrollY,overflow:document.body.style.overflow,anchor:document.documentElement.style.overflowAnchor}));
+    await openExpanded();await page.setViewportSize({width:1024,height:1000});await page.waitForTimeout(80);
+    assert(await page.locator('#agent-dialog').evaluate(e=>e.open),'desktop resize must keep the expanded dialog open');
+    await page.setViewportSize({width:1440,height:1000});await page.waitForTimeout(80);
+    assert(await page.locator('#agent-dialog').evaluate(e=>e.open),'returning to wide desktop must keep the expanded dialog open');
+    await page.locator('#agent-close').click();
+    await assertDialogRestored(resizeBackground.y,resizeBackground.overflow,resizeBackground.anchor,'agent-expand','desktop resize close');
+    await assertAgentStateRetained(resizeState,'desktop resize close');
+    report.cases.push('desktop_resize_keeps_expanded_modal');
     await page.locator('#ai-input').fill('细化后仍保留');await page.locator('#node-n1 button[data-mat="quiz"]').click();
     await page.locator('#node-n1 #open-quiz-workspace').click();await page.locator('.qd-question').waitFor();assert.equal(await page.locator('.qd-question').count(),1);await page.locator('#qd-close').click();
     page.once('dialog',d=>d.accept());await page.locator('#node-n1 #refine-node').click();await page.waitForTimeout(100);await select('n2');await select('n1');assert.equal(await page.locator('#ai-input').inputValue(),'细化后仍保留');
