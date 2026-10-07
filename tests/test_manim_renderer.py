@@ -10,6 +10,12 @@ from manim_renderer import ManimRenderer, ManimUnavailable
 
 SOURCE='class LessonScene(TeachingScene):\n def construct(self):\n  self.next_step("观察")'
 
+def png(width=240,height=135):
+    import struct,zlib
+    def chunk(kind,data):
+        return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data)&0xffffffff)
+    return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+chunk(b'IDAT',zlib.compress((b'\0'+b'\xff\xff\xff'*width)*height))+chunk(b'IEND',b'')
+
 class FakeRenderer(ManimRenderer):
     def __init__(self,path): super().__init__(path); self.inputs=[]; self.bad=False
     def _phase(self,image,envelope,limit,timeout):
@@ -17,7 +23,7 @@ class FakeRenderer(ManimRenderer):
         if envelope['phase']=='render': return {'raw_video':base64.b64encode(b'untrusted').decode(),'steps':[]}
         files={'video.mp4':base64.b64encode(b'normalized').decode(),'poster.png':base64.b64encode(b'png').decode(),'step-0.png':base64.b64encode(b'png').decode()}
         if self.bad: files['../../escape']=files['poster.png']
-        return {'manifest':dict(version=1,fps=30,width=1280,height=720,duration=1,engine={'name':'ManimGL','version':'1.7.2'},steps=[dict(caption='观察',start_frame=0,end_frame=30,result_frame=29,hold_start_frame=9)]),'files':files}
+        return {'manifest':dict(version=1,fps=30,width=1280,height=720,duration=1,engine={'name':'ManimGL','version':'1.7.2'},steps=[dict(caption='观察',start_frame=0,end_frame=30,result_frame=29,hold_start_frame=9)]),'files':files,'review_frames':[base64.b64encode(png()).decode()]}
 
 class RendererTests(unittest.TestCase):
     def setUp(self):
@@ -42,3 +48,17 @@ class RendererTests(unittest.TestCase):
             with self.assertRaises(ManimContractError):renderer.render(SOURCE)
         with patch.object(renderer,'_phase',side_effect=[{'raw_video':'AAAA','steps':[]},{'error':'media_check_failed'}]):
             with self.assertRaises(ManimContractError):renderer.render(SOURCE)
+
+    def test_review_frames_fail_closed_without_original_frame_fallback(self):
+        from unittest.mock import patch
+        renderer=FakeRenderer(self.path)
+        result=renderer._phase('',{'phase':'validate'},0,0)
+        encoded=lambda value:base64.b64encode(value).decode()
+        corrupt=bytearray(png());corrupt[-5]^=1
+        for reviews in (None,[],[encoded(png()),encoded(png())],[encoded(png(1280,720))],['%%%'],[encoded(b'bad')],[encoded(png()[:-1])],[encoded(bytes(corrupt))],[encoded(b'x'*(256*1024+1))]):
+            with self.subTest(value=type(reviews).__name__):
+                broken=dict(result)
+                if reviews is None:broken.pop('review_frames')
+                else:broken['review_frames']=reviews
+                with patch.object(renderer,'_phase',side_effect=[{'raw_video':'AAAA','steps':[]},broken]):
+                    with self.assertRaises(ManimContractError):renderer.render(SOURCE)
