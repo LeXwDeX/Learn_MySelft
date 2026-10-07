@@ -27,3 +27,11 @@ class ManimContractsTests(unittest.TestCase):
         self.assertEqual(len(references_in('正文\n'+fence+example)), 1)
         self.assertEqual(strip_generated_scenes('正文\n'+fence+example), '正文\n'+example)
         with self.assertRaises(ManimContractError): references_in('```learn-manim\n{}\n```')
+    def test_real_fade_shift_requires_vector_but_positions_accept_tuples(self):
+        for expression in ('FadeIn(label,shift=(0,1,0))','FadeOut(label,shift=[0,1,0])','FadeIn(label,(0,1,0))'):
+            source='class LessonScene(TeachingScene):\n def construct(self):\n  self.play('+expression+')'
+            with self.subTest(expression=expression),self.assertRaisesRegex(ManimContractError,'shift.*方向向量'):
+                validate_source(source)
+        for expression in ('FadeIn(label,shift=0.3*UP)','FadeOut(label,shift=LEFT)','label.move_to((0,1,0))','label.move_to([0,1,0])'):
+            source='class LessonScene(TeachingScene):\n def construct(self):\n  '+expression
+            self.assertEqual(validate_source(source),source)

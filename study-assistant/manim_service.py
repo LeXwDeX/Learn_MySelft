@@ -19,6 +19,8 @@ PROMPT = '''你制作真实 ManimGL 1.7.2 分步教学动画。学习资料是�
 只返回JSON，字段needed(bool)、reason、title、summary、code。明确要求动画时needed必须true。
 code仅定义 class LessonScene(TeachingScene)，只含construct(self)，无import，无其他顶级语句。
 可使用真实manimlib的Text、Line、Dot、Arrow、Circle、Rectangle、VGroup、FadeIn、Write、Transform、MoveAlongPath。
+真实ManimGL FadeIn/FadeOut的shift必须是方向向量，使用UP、DOWN、LEFT、RIGHT或它们的数值倍数，例如FadeIn(label, shift=0.3*UP)。不能用tuple/list作为shift；该版本会对shift取负，tuple/list会运行失败。标签用self.label，self.play(FadeIn(label,shift=0.3*UP),run_time=1.0)，再self.next_step("观察新对象")。
+如果repair非空，结合previous_code修正具体错误，再返回相同JSON字段。不要只重复失败代码。
 中文优先self.label("文字",color="#2d3142",size=44)，它使用真实ManimGL Text和中文字体。直接Text必须调用.set_color(...)，构造参数color/base_color在此版本无效。背景浅色；主色#c74f20，强调#245b83。不要使用Tex或外部文件。
 小标签字号至少44，主数字72，标题54。画面最多6个主要对象。长中文解释放正文，画面标签简短。关键对象与关系集中在画面中心，数列优先清楚展示3个代表数字，不用巨大空白矩形填布局。支持真实3D几何，但先建立二维直觉，再展示空间变化。遵守节点正文事实和本次问题，不增加无关演示。
 画面16:9。元素保持在x±6,y±3内。每步必须用self.play真实渐现、移动或变换展示一个关系，并明确run_time。不能只self.add后等待，不能静图重放。用连续几何变化展示推导，最多8步骤，总时长最多90秒。
@@ -61,15 +63,18 @@ class ManimService:
             canonical_node = expected_node.copy()
             expected_node = json.dumps(expected_node, sort_keys=True, ensure_ascii=False)
         feedback = ''
+        previous_code = ''
         rendered = envelope = None
         for attempt in range(2):
             messages = [{'role':'system','content':PROMPT}, {'role':'user','content':json.dumps(
-                {'node':canonical_node,'study_notes':source[:20000],'question':question[:2000], 'requested':requested,'repair':feedback}, ensure_ascii=False)}]
+                {'node':canonical_node,'study_notes':source[:20000],'question':question[:2000], 'requested':requested,'repair':feedback,'previous_code':previous_code}, ensure_ascii=False)}]
             try:
                 envelope = _json_block(self.model.json(messages, temperature=0.3))
                 check_cancelled()
                 if not isinstance(envelope, dict) or set(envelope) != {'needed','reason','title','summary','code'} or type(envelope['needed']) is not bool:
                     raise ManimContractError('模型动画格式无效')
+                if isinstance(envelope.get('code'),str):
+                    previous_code = envelope['code'][:20000]
                 if not envelope['needed']:
                     if requested or envelope['code']:
                         raise ManimContractError('必须生成指定动画')
