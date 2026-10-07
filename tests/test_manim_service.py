@@ -8,9 +8,10 @@ import urllib.error
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
 from background_jobs import JobError
-from manim_service import ManimService
+from manim_service import METADATA_LIMITS, PROMPT, ManimService
 from manim_contracts import ManimContractError
 from manim_renderer import ManimUnavailable
+from prompts import MATH_VISUAL_TEACHING
 
 class Repository:
     def __init__(self):
@@ -111,3 +112,68 @@ class ManimServiceTests(unittest.TestCase):
             payload=json.loads(model.call_args_list[1].args[0][1]['content'])
             self.assertIn('方向向量',payload['repair'])
             self.assertEqual(payload['previous_code'],bad['code'])
+    def test_oversized_reason_repairs_before_render_and_still_requires_visual_review(self):
+        from unittest.mock import patch
+        good=self.service.model.json([{}, {'content':'generation'}])
+        bad=json.loads(good);bad['reason']='修复说明'*74
+        with patch.object(self.service.model,'json',side_effect=[json.dumps(bad),good,'{"ok":true,"issues":[]}']) as model, \
+             patch.object(self.renderer,'render',wraps=self.renderer.render) as render:
+            spec=self.generate()
+            self.assertTrue(spec['asset_id'])
+            self.assertEqual(render.call_count,1)
+            self.assertEqual(model.call_count,3)
+            repair=json.loads(model.call_args_list[1].args[0][1]['content'])
+            self.assertIn('reason',repair['repair'])
+            self.assertIn(str(METADATA_LIMITS['reason']),repair['repair'])
+            self.assertIn(str(len(bad['reason'])),repair['repair'])
+            self.assertNotIn(bad['reason'],repair['repair'])
+            self.assertEqual(repair['previous_code'],bad['code'])
+            self.assertIsInstance(model.call_args_list[2].args[0][1]['content'],list)
+            for name,cap in METADATA_LIMITS.items():self.assertIn('%s≤%d字符'%(name,cap),PROMPT)
+    def test_repeated_oversized_metadata_preserves_notes_without_render_or_publish(self):
+        from unittest.mock import patch
+        self.repo.doc['nodeDetail']={'n1':{'study_notes':'原正文'}}
+        original=json.dumps(self.repo.doc,sort_keys=True)
+        good=self.service.model.json([{}, {'content':'generation'}])
+        for name,cap in METADATA_LIMITS.items():
+            with self.subTest(field=name):
+                bad=json.loads(good);bad[name]='私密'*(cap//2+1)
+                with patch.object(self.service.model,'json',return_value=json.dumps(bad)) as model,patch.object(self.renderer,'render') as render:
+                    with self.assertRaises(JobError) as raised:self.generate()
+                    self.assertEqual(raised.exception.status,502)
+                    self.assertEqual(model.call_count,2)
+                    render.assert_not_called()
+                    repair=json.loads(model.call_args_list[1].args[0][1]['content'])['repair']
+                    self.assertIn(name,repair);self.assertIn(str(cap),repair)
+                    self.assertNotIn('私密',repair)
+                    self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
+                    self.assertFalse(self.service.root.exists())
+    def test_shared_math_guide_and_own_material_level_reach_builder_and_independent_review(self):
+        from unittest.mock import patch
+        self.repo.doc['spec']={'level':'初中生','goal':'用图形解释等价变形'}
+        with patch.object(self.service.model,'json',wraps=self.service.model.json) as model:
+            self.generate()
+        self.assertEqual(model.call_count,2)
+        generation,review=[call.args[0] for call in model.call_args_list]
+        for messages in (generation,review):self.assertIn(MATH_VISUAL_TEACHING,messages[0]['content'])
+        first=json.loads(generation[1]['content'])
+        second=json.loads(review[1]['content'][0]['text'])
+        for payload in (first,second):
+            self.assertEqual(payload['level'],'初中生')
+            self.assertEqual(payload['goal'],'用图形解释等价变形')
+            self.assertEqual(payload['node']['title'],'角')
+        self.assertIn('JSON',generation[0]['content'])
+        self.assertIn('"ok":',review[0]['content'])
+        self.assertNotIn('needed(bool)',review[0]['content'])
+        self.assertIn('约240像素',review[0]['content'])
+        self.assertNotIn('"ok":',MATH_VISUAL_TEACHING)
+    def test_level_and_goal_are_bounded_and_missing_level_is_not_inferred(self):
+        from unittest.mock import patch
+        for specification,expected_level,expected_goal in [({'level':'级'*201,'goal':'目'*401},'级'*200,'目'*400),({},'','')]:
+            with self.subTest(specification=bool(specification)):
+                self.repo.doc['spec']=specification
+                with patch.object(self.service.model,'json',wraps=self.service.model.json) as model:self.generate()
+                generation,review=[call.args[0] for call in model.call_args_list]
+                for payload in (json.loads(generation[1]['content']),json.loads(review[1]['content'][0]['text'])):
+                    self.assertEqual(payload['level'],expected_level)
+                    self.assertEqual(payload['goal'],expected_goal)
