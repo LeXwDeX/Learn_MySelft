@@ -15,7 +15,7 @@ import json as _json
 from pathlib import Path as _Path
 class TeachingScene(Scene):
     default_camera_config = {"background_color": "#f5f5f5"}
-    def label(self, text, color="#2d3142", size=44):
+    def label(self, text, color="#2d3142", size=96):
         return Text(text, font="Noto Sans CJK SC", font_size=size).set_color(color)
     def setup(self):
         super().setup()
@@ -109,6 +109,15 @@ def render(envelope):
     print(json.dumps({'raw_video':base64.b64encode(video.read_bytes()).decode(),'steps':steps}, separators=(',',':')))
 
 
+def mobile_review_frame(result, destination):
+    """Scale a real result PNG inside the independent validation container."""
+    run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(result),
+         '-vf', 'scale=240:135:flags=lanczos', '-frames:v', '1', '-y', str(destination)])
+    regular(destination, 256 * 1024)
+    run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(destination), '-f', 'null', '-'])
+    return destination
+
+
 def validate(envelope):
     output = Path('/output')
     if set(envelope) != {'phase','raw_video','steps'}:
@@ -144,11 +153,15 @@ def validate(envelope):
                              stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=30,check=True)
     check_hold_frames(decoded.stdout,manifest)
     filenames = ['video.mp4']
+    review_paths = []
     for index, step in enumerate(steps):
         filename = 'step-%d.png' % index
         run(['ffmpeg', '-v', 'error', '-i', str(final), '-vf', 'select=eq(n\\,%d)' % step['result_frame'],
              '-frames:v', '1', '-y', str(output / filename)])
         filenames.append(filename)
+        review_path = output / ('review-%d.png' % index)
+        mobile_review_frame(output / filename, review_path)
+        review_paths.append(review_path)
     (output / 'poster.png').write_bytes((output / 'step-0.png').read_bytes())
     filenames.append('poster.png')
     files = {}
@@ -161,9 +174,16 @@ def validate(envelope):
         data = path.read_bytes()
         total += len(data)
         files[filename] = base64.b64encode(data).decode()
+    review_frames = []
+    for path in review_paths:
+        regular(path, 256 * 1024)
+        run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(path), '-f', 'null', '-'])
+        data = path.read_bytes()
+        total += len(data)
+        review_frames.append(base64.b64encode(data).decode())
     if total > MAX_TOTAL:
         raise ValueError('output oversized')
-    print(json.dumps({'manifest':manifest, 'files':files}, separators=(',', ':')))
+    print(json.dumps({'manifest':manifest, 'files':files, 'review_frames':review_frames}, separators=(',', ':')))
 
 
 def main():

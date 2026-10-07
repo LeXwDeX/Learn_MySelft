@@ -13,6 +13,12 @@ from manim_contracts import ManimContractError
 from manim_renderer import ManimUnavailable
 from prompts import MATH_VISUAL_TEACHING
 
+def png(width=240,height=135):
+    import struct,zlib
+    def chunk(kind,data):
+        return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data)&0xffffffff)
+    return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+chunk(b'IDAT',zlib.compress((b'\0'+b'\xff\xff\xff'*width)*height))+chunk(b'IEND',b'')
+
 class Repository:
     def __init__(self):
         self.lock=threading.RLock()
@@ -30,7 +36,7 @@ class Renderer:
     def __init__(self,path): self.state_dir=path; self.hook=lambda:None
     def render(self,source):
         self.hook()
-        return {'video':b'video','poster':b'poster','frames':[b'image'],'manifest':{'steps':[{}]}}
+        return {'video':b'video','poster':b'poster','frames':[b'image'],'review_frames':[png()],'manifest':{'steps':[{}]}}
 
 class ManimServiceTests(unittest.TestCase):
     def setUp(self):
@@ -177,3 +183,50 @@ class ManimServiceTests(unittest.TestCase):
                 for payload in (json.loads(generation[1]['content']),json.loads(review[1]['content'][0]['text'])):
                     self.assertEqual(payload['level'],expected_level)
                     self.assertEqual(payload['goal'],expected_goal)
+
+    def test_independent_review_receives_only_mobile_frames(self):
+        import base64
+        from unittest.mock import patch
+        with patch.object(self.service.model,'json',wraps=self.service.model.json) as model:
+            spec=self.generate()
+        images=model.call_args_list[1].args[0][1]['content'][1:]
+        self.assertEqual(len(images),1)
+        self.assertEqual(base64.b64decode(images[0]['image_url']['url'].split(',',1)[1]),png())
+        directory=self.service.root/'u1'/spec['asset_id']
+        self.assertEqual((directory/'step-0.png').read_bytes(),b'image')
+        self.assertFalse(any(path.name.startswith('review-') for path in directory.iterdir()))
+
+    def test_missing_or_invalid_mobile_frames_preserve_notes(self):
+        from unittest.mock import patch
+        self.repo.doc['nodeDetail']={'n1':{'study_notes':'原正文'}}
+        original=json.dumps(self.repo.doc,sort_keys=True)
+        good=self.renderer.render('ignored')
+        for reviews in (None,[],[png(1280,720)],[b'bad'],[b'x'*(256*1024+1)]):
+            with self.subTest(reviews=type(reviews).__name__):
+                broken=dict(good)
+                if reviews is None:broken.pop('review_frames')
+                else:broken['review_frames']=reviews
+                with patch.object(self.renderer,'render',return_value=broken),patch.object(self.service.model,'json',wraps=self.service.model.json) as model:
+                    with self.assertRaises(JobError) as raised:self.generate()
+                    self.assertEqual(raised.exception.status,502)
+                    self.assertEqual(model.call_count,2)
+                self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
+                self.assertFalse(self.service.root.exists())
+
+    def test_mobile_legibility_review_rejection_repairs_once_and_preserves_notes(self):
+        from unittest.mock import patch
+        self.repo.doc['nodeDetail']={'n1':{'study_notes':'原正文'}}
+        original=json.dumps(self.repo.doc,sort_keys=True)
+        good=self.service.model.json([{}, {'content':'generation'}])
+        bad_review=json.dumps({'ok':False,'issues':['主要方程在240×135图中看不清，标题独占一步且结论重复']})
+        with patch.object(self.service.model,'json',side_effect=[good,bad_review,good,bad_review]) as model,patch.object(self.renderer,'render',wraps=self.renderer.render) as render:
+            with self.assertRaises(JobError) as raised:self.generate()
+            self.assertEqual(raised.exception.status,502)
+            self.assertEqual(render.call_count,2)
+            self.assertEqual(model.call_count,4)
+            repair=json.loads(model.call_args_list[2].args[0][1]['content'])
+            self.assertIn('240×135',repair['repair'])
+            self.assertIn('class LessonScene',repair['previous_code'])
+            self.assertIn('纯标题或装饰',model.call_args_list[1].args[0][0]['content'])
+        self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
+        self.assertFalse(self.service.root.exists())

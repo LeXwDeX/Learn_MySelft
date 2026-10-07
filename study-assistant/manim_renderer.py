@@ -5,8 +5,45 @@ from pathlib import Path
 import re
 import subprocess
 import threading
+import struct
+import zlib
 import uuid
 from manim_contracts import MAX_IMAGE, MAX_TOTAL, MAX_VIDEO, ManimContractError, validate_manifest, validate_source
+
+MAX_REVIEW_IMAGE = 256 * 1024
+
+def review_png(value):
+    """Bound and inspect PNG structure without decoding pixels on the API host."""
+    if not isinstance(value, bytes) or not 0 < len(value) <= MAX_REVIEW_IMAGE or value[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ManimContractError('手机复核图格式或长度无效')
+    offset, kinds = 8, []
+    while offset < len(value):
+        if offset + 12 > len(value):
+            raise ManimContractError('手机复核图不完整')
+        length = struct.unpack('>I', value[offset:offset+4])[0]
+        end = offset + 12 + length
+        if end > len(value):
+            raise ManimContractError('手机复核图不完整')
+        kind = value[offset+4:offset+8]
+        payload = value[offset+8:offset+8+length]
+        crc = struct.unpack('>I',value[end-4:end])[0]
+        if zlib.crc32(kind+payload) & 0xffffffff != crc:
+            raise ManimContractError('手机复核图校验无效')
+        if not kinds:
+            if kind != b'IHDR' or length != 13 or struct.unpack('>II',payload[:8]) != (240,135):
+                raise ManimContractError('手机复核图必须为240×135')
+        elif kind == b'IHDR':
+            raise ManimContractError('手机复核图头重复')
+        kinds.append(kind)
+        offset = end
+        if kind == b'IEND':
+            if length or offset != len(value):
+                raise ManimContractError('手机复核图结尾无效')
+            break
+    if not kinds or kinds[-1] != b'IEND' or b'IDAT' not in kinds:
+        raise ManimContractError('手机复核图不完整')
+    return value
+
 
 _SLOTS = threading.BoundedSemaphore(1)
 
@@ -38,6 +75,8 @@ class ManimRenderer:
             result = self._phase(image, {'phase':'validate','raw_video':raw['raw_video'],'steps':raw['steps']}, MAX_TOTAL*4//3+65536,120)
             if result == {'error':'media_check_failed'}:
                 raise ManimContractError('视频检查失败，请每步播放真实变化并以next_step结束，保证最后至少0.7秒静止')
+            if not isinstance(result,dict) or set(result) != {'manifest','files','review_frames'}:
+                raise ManimContractError('动画缺少手机复核图')
             manifest = validate_manifest(result['manifest'])
             files = result['files']
             expected = {'video.mp4','poster.png'} | {'step-%d.png'%i for i in range(len(manifest['steps']))}
@@ -52,10 +91,24 @@ class ManimRenderer:
                     raise ManimContractError('动画产物长度无效')
                 total += len(value)
                 decoded[filename] = value
+            reviews = result['review_frames']
+            if not isinstance(reviews,list) or len(reviews) != len(manifest['steps']):
+                raise ManimContractError('手机复核图数量无效')
+            review_frames = []
+            for encoded in reviews:
+                if not isinstance(encoded,str) or len(encoded) > MAX_REVIEW_IMAGE*4//3+8:
+                    raise ManimContractError('手机复核图编码或长度无效')
+                try:
+                    value = review_png(base64.b64decode(encoded,validate=True))
+                except ValueError as error:
+                    raise ManimContractError('手机复核图编码或格式无效') from error
+                total += len(value)
+                review_frames.append(value)
             if total > MAX_TOTAL:
                 raise ManimContractError('动画产物总量无效')
             return dict(video=decoded['video.mp4'],poster=decoded['poster.png'],
-                        frames=[decoded['step-%d.png'%i] for i in range(len(manifest['steps']))],manifest=manifest)
+                        frames=[decoded['step-%d.png'%i] for i in range(len(manifest['steps']))],
+                        review_frames=review_frames,manifest=manifest)
         except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:
             if isinstance(error,ManimContractError): raise
             raise ManimUnavailable('动画渲染暂不可用') from error
