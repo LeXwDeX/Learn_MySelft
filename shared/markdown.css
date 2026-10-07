@@ -20,6 +20,7 @@
 .md-diagram>img{max-height:480px;width:auto;object-fit:contain}
 
 .md-scene{margin:var(--learn-space-3) 0;min-width:0;max-width:100%}
+.md-manim{margin:var(--learn-space-3) 0;min-width:0;max-width:100%}
 .md-scene>figcaption,.md-scene>details{font-size:14px;color:var(--learn-muted)}
 .md-scene[data-scene=ready]>figcaption{display:none}
 .md-scene[data-scene=error]>figcaption{color:var(--learn-danger)}
