@@ -27,6 +27,9 @@ from http_handler import Handler
 from tutor_rendering import TutorRendering
 from render_review import validate_mermaid
 from scene_service import SceneService
+from manim_renderer import ManimRenderer
+from manim_service import ManimService
+from manim_routes import ManimRoutes
 
 
 class Application:
@@ -49,8 +52,11 @@ class Application:
         self.verification = QuizGeneration(self.model)
         self.authorization = RequestAuthorization(self.accounts)
         self.tutor_rendering = TutorRendering(validate_mermaid)
+        self.manim = ManimService(self.repository, self.model,
+                                  ManimRenderer(settings.state_dir), self.authorize_scene,
+                                  authorize_read=self.authorize_asset)
         self.scenes = SceneService(self.repository, self.model, self.verification,
-                                   self.authorize_scene)
+                                   self.authorize_scene, manim=self.manim)
         dependencies = (self.repository, self.model, self.cache, self.verification)
         self.learning = LearningService(*dependencies, scenes=self.scenes)
         self.quizzes = QuizService(*dependencies)
@@ -76,6 +82,7 @@ class Application:
             "state": StateRoutes(self.repository, self.accounts),
             "path": PathRoutes(self.dispatch),
             "tutor": TutorRoutes(self.model),
+            "manim": ManimRoutes(self.manim),
         }
         self._queue = None
         self._queue_lock = threading.Lock()
@@ -83,6 +90,10 @@ class Application:
     def authorize_scene(self, actor, key):
         current = self.accounts.get_user(actor["id"])
         self.authorization.body(current, current["id"], "/path/node/scene", {"key": key})
+
+    def authorize_asset(self, actor, key):
+        current = self.accounts.get_user(actor["id"])
+        self.authorization.key(current, key.split("/", 1)[0], key, write=False)
 
     def dispatch(self, operation, body, actor):
         handler = self.operations.get(operation)

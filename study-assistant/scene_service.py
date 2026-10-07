@@ -6,15 +6,17 @@ from background_jobs import JobError
 from generation_contracts import _json_block
 from prompts import SCENE_SUPPLEMENT
 from scene_contracts import MAX_NOTES, MAX_SOURCE, SceneContractError, scenes_in, validate_scene
+from manim_contracts import references_in, strip_generated_scenes
 import quiz_harness as harness
 
 
 class SceneService:
-    def __init__(self, repository, model, verification, authorize):
+    def __init__(self, repository, model, verification, authorize, *, manim=None):
         self.repository = repository
         self.model = model
         self.verification = verification
         self.authorize = authorize
+        self.manim = manim
 
     def _addition(self, source, node, *, requested):
         payload = {"node": {name: node.get(name) for name in ("title", "essence", "objectives")},
@@ -69,9 +71,19 @@ class SceneService:
                 continue
         raise JobError(502, "图示生成未通过检查，原正文已保留，请重试")
 
-    def enrich_candidate(self, candidate, node):
+    def enrich_candidate(self, candidate, node, *, key=None, actor=None):
         """A separate graphic decision covers any subject; no keyword/course gate."""
         source = candidate.get("study_notes") or ""
+        if self.manim:
+            source = strip_generated_scenes(source)
+            candidate["study_notes"] = source
+            if source:
+                spec = self.manim.generate(key, node.get("id"), source, node,
+                                           requested=False, actor=actor)
+                if spec:
+                    candidate["study_notes"] = source.rstrip() + "\n\n" + self.manim.public_fence(spec)
+                    candidate["manim_review"] = {"status": "passed", "asset_id": spec["asset_id"]}
+            return candidate
         if not source or scenes_in(source):
             return candidate
         addition, _ = self._addition(source, node, requested=False)
@@ -96,6 +108,28 @@ class SceneService:
         if not node or not isinstance(detail, dict) or not detail.get("study_notes"):
             raise JobError(404, "学习正文尚未生成")
         source = detail["study_notes"]
+        if self.manim:
+            for existing in references_in(source):
+                try:
+                    self.manim.asset(actor, key.split("/", 1)[0], existing["asset_id"], "manifest")
+                    return 200, {"node_id": node_id, "study_notes": source,
+                                 "source_notes": source, "reused": True,
+                                 "sceneSupplement": detail.get("sceneSupplement")}
+                except JobError:
+                    continue
+            lesson = strip_generated_scenes(source)
+            spec = self.manim.generate(key, node_id, lesson, node, actor=actor)
+            notes = lesson.rstrip() + "\n\n" + self.manim.public_fence(spec)
+            if len(notes) > MAX_NOTES:
+                self.manim.discard(spec["asset_id"])
+                raise JobError(400, "补充动画超出正文长度限制，原正文已保留")
+            try:
+                result = self.repository.append_scene(key, node_id, source, notes,
+                                                      lambda: self.authorize(actor, key))
+            except BaseException:
+                self.manim.discard(spec["asset_id"])
+                raise
+            return 200, result
         try:
             present = scenes_in(source)
         except SceneContractError as error:

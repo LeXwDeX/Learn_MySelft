@@ -86,12 +86,13 @@ UI Kit 为首页、学习路径、测验地图和测验窗口提供共享样式�
 <script src="/learn/assets/materials.js"></script>
 <script src="/learn/assets/vendor-markdown-it.js"></script>
 <script src="/learn/assets/learning-scenes.js"></script>
+<script src="/learn/assets/manim-player.js"></script>
 <script src="/learn/assets/markdown.js"></script>
 ```
 
 页面自身的生成脚本在共享依赖之后加载。页面需要 Markdown、KaTeX 和代码高亮时，先加载所需的 vendor 脚本，再启动页面包。CSS 同样先加载 `ui.css`，然后加载 Markdown、资料和页面专属 CSS。`scripts/check_architecture.py` 会检查共享脚本依赖和 HTML 中的顺序。
 
-`learning-scenes.js` 提供 `LearnScenes`，由 Markdown 的 `enhance` 挂载 `learn-scene` JSON 场景。配套加载 `/learn/assets/learning-scenes.css`。场景按需使用线性变换、割线或 3D 曲面切片，默认不自动播放。协议与学习约束见 [学习正文交互场景](LEARNING_SCENES.md)。
+`manim-player.js` 提供 `LearnManim`。Markdown 的 `enhance` 读取 `learn-manim` 引用，加载经过授权的真实视频与步骤清单。默认不自动播放。每步停在结果帧。`learning-scenes.js` 保持历史 `learn-scene` 显示。两者复用 `/learn/assets/learning-scenes.css` 与 UI Kit tokens。协议与学习约束见 [学习正文交互场景](LEARNING_SCENES.md)。
 
 ## 第三方资源
 

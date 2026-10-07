@@ -171,4 +171,11 @@ class TutorRoutes:
             )
         else:
             messages.append({"role": "user", "content": question})
-        request.stream(messages)
+        node = body.get("node") or {}
+        if not isinstance(node, dict):
+            request._json(400, {"error": "学习节点格式不正确"})
+            return
+        if body.get("key") is not None:
+            request.stream(messages, graphics_context={"key": body.get("key"), "node_id": node.get("id")})
+        else:
+            request.stream(messages)

@@ -390,12 +390,17 @@ function sendAi(id, text) {
     var target = aiBubble('assistant', '');
     var body = target.querySelector('.ai-bubble');
     body.innerHTML = '<span class="spinner"></span>思考中…';
+    var generationStatus = document.createElement('p');
+    generationStatus.className = 'learn-manim-status';
+    generationStatus.setAttribute('role', 'status');
+    generationStatus.hidden = true;
+    target.appendChild(generationStatus);
     if (box) box.appendChild(target);
     aiScroll(view, true);
     var acc = '';
     window.LearnUser.fetch(model.session.API + '/ask', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ unit: aiUnit(id), question: q, history: hist })
+      body: JSON.stringify({ key: format.storeKey(), node: { id: id }, unit: aiUnit(id), question: q, history: hist })
     }).then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       if (!res.body || !res.body.getReader) throw new Error('浏览器不支持流式响应');
@@ -410,6 +415,11 @@ function sendAi(id, text) {
             if (line.indexOf('data:') !== 0) continue;
             var payload = line.slice(5).trim(); if (!payload) continue;
             var obj; try { obj = JSON.parse(payload); } catch (e2) { continue; }
+            if (typeof obj.status === 'string' && obj.status) {
+              generationStatus.textContent = obj.status;
+              generationStatus.hidden = false;
+              aiScroll(view);
+            }
             if (obj.error) acc += '\n[出错] ' + obj.error;
             if (obj.delta) { acc += obj.delta; aiRenderInto(body, acc, true); aiScroll(view); }
           }
@@ -418,9 +428,11 @@ function sendAi(id, text) {
       }
       return pump();
     }).then(function () {
+      generationStatus.remove();
       if (!acc) acc = '（没有返回内容，请重试。）';
       aiFinish(id, body, acc, view);
     }).catch(function (e) {
+      generationStatus.remove();
       if (!acc) acc = '请求失败：' + ((e && e.message) || e);
       aiFinish(id, body, acc, view);
     });

@@ -329,6 +329,7 @@ class LearningService:
             ]
 
         detail = None
+        candidate = None
         stage = "generation"
         try:
             last_error = ""
@@ -351,7 +352,7 @@ class LearningService:
                     if self.scenes:
                         stage = "scene_generation"
                         try:
-                            self.scenes.enrich_candidate(candidate, node)
+                            self.scenes.enrich_candidate(candidate, node, key=mkey, actor=actor)
                         except SceneContractError as error:
                             raise harness.QuizContractError("学习图示配置未通过检查，请修正字段与数值") from error
                     stage = "verification"
@@ -365,16 +366,51 @@ class LearningService:
                     detail = candidate
                     break
                 except harness.QuizContractError as error:
+                    if self.scenes and self.scenes.manim and candidate:
+                        asset = (candidate.get("manim_review") or {}).get("asset_id")
+                        if asset:
+                            self.scenes.manim.discard(asset)
                     self.log_node_failure(error, stage)
                     last_error = str(error)
             if detail is None:
                 raise harness.QuizContractError("出题校验失败：" + last_error)
         except Exception as error:
+            if self.scenes and self.scenes.manim and candidate:
+                asset = (candidate.get("manim_review") or {}).get("asset_id")
+                if asset:
+                    self.scenes.manim.discard(asset)
             self.log_node_failure(error, stage)
             if gate_key:
                 self.cache.finish(gate_key, _gate, err="node verification failed")
             raise
-        self.repository.merge(mkey, {"nodeDetail": {node_id: detail}})
+        try:
+            with self.repository.lock, self.repository.store.transaction():
+                if self.scenes:
+                    self.scenes.authorize(actor, mkey)
+                current = self.repository.material(mkey)
+                if current is None or not any(isinstance(n, dict) and n.get("id") == node_id
+                                              for n in (current.get("plan") or {}).get("nodes", [])):
+                    from background_jobs import JobError
+                    raise JobError(404, "学习资料或节点已删除，生成结果未保存")
+                existing = self.repository.node_detail(mkey, node_id)
+                if existing:
+                    if self.scenes and self.scenes.manim:
+                        asset = (detail.get("manim_review") or {}).get("asset_id")
+                        if asset:
+                            self.scenes.manim.discard(asset)
+                    detail = existing
+                else:
+                    self.repository.merge(mkey, {"nodeDetail": {node_id: detail}})
+        except BaseException:
+            try:
+                if self.scenes and self.scenes.manim:
+                    asset = (detail.get("manim_review") or {}).get("asset_id")
+                    if asset:
+                        self.scenes.manim.discard(asset)
+            finally:
+                if gate_key:
+                    self.cache.finish(gate_key, _gate, err="node save failed")
+            raise
         if gate_key:
             self.cache.put(gate_key, detail)
             self.cache.finish(gate_key, _gate, out=detail)

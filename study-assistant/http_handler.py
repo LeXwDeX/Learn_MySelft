@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import sys
+import threading
 import urllib.error
 import urllib.parse
 from http.cookies import SimpleCookie
@@ -13,7 +14,7 @@ from background_jobs import JobError
 from user_accounts import AccountError, COOKIE_NAME
 from state_schema import SCHEMA_VERSION
 from http_io import read_json_body
-from prompts import SCENE_ANIMATION_REQUEST, SCENE_ANIMATION_REPAIR
+from prompts import MANIM_TEACHING
 from scene_contracts import animation_requested
 
 
@@ -154,6 +155,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             self._authenticate()
+            if path.startswith("/manim/assets/"):
+                self.app.routes["manim"].get(self, path)
+                return
             if path == "/state/all":
                 target = self._target_user()
                 entries = self._state_all(target["id"])
@@ -217,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
             getattr(self, "connection", None),
         )
 
-    def stream(self, messages):
+    def stream(self, messages, *, graphics_context=None):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -246,24 +250,61 @@ class Handler(BaseHTTPRequestHandler):
         require_animation = animation_requested(question)
         if require_animation:
             messages = list(messages)
-            messages.insert(1, {"role": "system", "content": SCENE_ANIMATION_REQUEST})
+            messages.insert(1, {"role": "system", "content": MANIM_TEACHING})
 
-        def repair(source):
-            # Reuse the authorized request's context. Never persist a second
-            # user turn or expose the upstream reply/error as an instruction.
-            repair_messages = list(messages)
-            # Replace the primary fence-format requirement with JSON-only repair.
-            repair_messages[1] = {"role": "system", "content": SCENE_ANIMATION_REPAIR}
-            repair_messages.append({"role": "assistant", "content": source})
-            repair_messages.append({"role": "user", "content": "请补充这次问题所需的合法动画场景，只返回场景 JSON。"})
-            return self.app.model.json(
-                repair_messages,
-                max_tokens=min(self.app.settings.max_output_tokens, 6000),
-                temperature=0.3,
-                timeout=min(self.app.settings.upstream_timeout, 60),
-            )
+        gate = self.app.tutor_rendering.stream(server_graphics=True)
+        cancelled = threading.Event()
 
-        gate = self.app.tutor_rendering.stream(require_animation=True, repair=repair) if require_animation else self.app.tutor_rendering.stream()
+        def animation():
+            context = graphics_context or {}
+            key, node_id = context.get("key"), context.get("node_id")
+            if not isinstance(key, str) or not isinstance(node_id, str):
+                raise JobError(400, "请从学习单元打开动画演示")
+            self._authorize_key(key, write=True)
+            material = self.app.repository.material(key)
+            if material is None:
+                raise JobError(404, "学习资料已删除或不存在")
+            node = next((n for n in (material.get("plan") or {}).get("nodes", [])
+                         if isinstance(n, dict) and n.get("id") == node_id), None)
+            if node is None:
+                raise JobError(404, "学习节点已删除或不存在")
+            notes = ((material.get("nodeDetail") or {}).get(node_id) or {}).get("study_notes") or node.get("essence", "")
+            return self.app.manim.generate(key, node_id, notes, node, actor=self.actor,
+                                           cancelled=cancelled.is_set, question=question)
+
+        def append_animation():
+            # The SSE owner sends heartbeats and detects disconnection while a
+            # separate bounded service call produces and checks the real media.
+            done, outcome, outcome_lock = threading.Event(), [], threading.Lock()
+            def work():
+                try:
+                    spec = animation()
+                    with outcome_lock:
+                        if cancelled.is_set():
+                            self.app.manim.discard(spec["asset_id"])
+                            spec = None
+                        outcome.append((spec, None))
+                        done.set()
+                except Exception as error:
+                    with outcome_lock:
+                        outcome.append((None, error))
+                        done.set()
+            sse({"delta": "", "status": "正在生成并检查分步动画"})
+            threading.Thread(target=work, daemon=True).start()
+            try:
+                while not done.wait(3):
+                    sse({"delta": "", "status": "正在生成并检查分步动画"})
+                spec, error = outcome[0]
+                if error:
+                    sse({"delta": "\n\n动画暂未生成成功，已保留讲解。请重试“动画演示”。\n"})
+                    return
+                sse({"delta": "\n\n" + self.app.manim.public_fence(spec) + "\n"})
+            except (BrokenPipeError, ConnectionResetError):
+                with outcome_lock:
+                    cancelled.set()
+                    if done.is_set() and outcome and outcome[0][0]:
+                        self.app.manim.discard(outcome[0][0]["asset_id"])
+                raise
 
         def delta(piece):
             for safe_piece in gate.feed(piece):
@@ -302,12 +343,10 @@ class Handler(BaseHTTPRequestHandler):
                         piece = (choices[0].get("delta") or {}).get("content")
                         if piece:
                             delta(piece)
-            # Write before finish can launch repair; a broken client detected
-            # here follows the existing disconnect path without another call.
-            if require_animation and not gate.animation_passed:
-                sse({"delta": ""})
             for safe_piece in gate.finish():
                 sse({"delta": safe_piece})
+            if require_animation:
+                append_animation()
             sse({"done": True})
         except urllib.error.HTTPError as e:
             detail = ""
@@ -318,6 +357,7 @@ class Handler(BaseHTTPRequestHandler):
             interrupted()
             sse({"error": "upstream HTTP %s: %s" % (e.code, detail)})
         except (BrokenPipeError, ConnectionResetError):
+            cancelled.set()
             # The client is gone. Do not launch a renderer or write another event.
             return
         except Exception as e:

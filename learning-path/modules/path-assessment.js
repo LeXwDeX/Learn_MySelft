@@ -18,7 +18,7 @@ function listSection(title, arr) {
       arr.map(function (x) { return '<li>' + format.mdRender(x) + '</li>'; }).join('') + '</ul></div>';
   }
 
-function hasLearningScene(notes) {
+function hasLearningScene(notes, manimOnly) {
     var lines = String(notes || '').split(/\r?\n/), marker = '', length = 0;
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
@@ -28,7 +28,7 @@ function hasLearningScene(notes) {
       }
       var opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
       if (!opening) continue;
-      if (/^learn-scene(?:\s|$)/i.test(opening[2].trim())) return true;
+      if ((manimOnly ? /^learn-manim(?:\s|$)/i : /^learn-(?:scene|manim)(?:\s|$)/i).test(opening[2].trim())) return true;
       marker = opening[1][0]; length = opening[1].length;
     }
     return false;
@@ -39,14 +39,14 @@ session.sceneWork = Object.create(null);
 function sceneWorkKey(key, id) { return key + '#' + id; }
 
 function sceneSupplementSection(id, d) {
-    if (hasLearningScene(d.study_notes)) return '';
+    if (hasLearningScene(d.study_notes, true)) return '';
     var key = format.storeKey(), work = session.sceneWork[sceneWorkKey(key, id)];
     var busy = !!(work && work.status === 'running');
     var notNeeded = !!(work && work.status === 'not-needed' && work.notes === d.study_notes);
     return '<div class="scene-supplement" data-scene-supplement="' + format.esc(id) + '">' +
       '<button class="btn scene-supplement-btn" type="button"' +
       (window.LearnUser.readOnly || busy || notNeeded ? ' disabled' : '') +
-      '>' + (busy ? '正在补充…' : '补充图示') + '</button>' +
+      '>' + (busy ? '正在生成…' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
       '<span class="scene-supplement-status" role="status" aria-live="polite"></span></div>';
   }
 
@@ -205,7 +205,10 @@ function consumeSceneSupplement(id, key, result, workKey) {
       clearSceneSupplementWork(id, key, workKey);
       return;
     }
-    if (result.needed !== false) session.sceneWork[workKey] = {status: 'done'};
+    if (result.needed !== false) {
+      session.sceneWork[workKey] = {status: 'done'};
+      if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+    }
   }
 
 function clearSceneSupplementWork(id, key, workKey) {
@@ -222,7 +225,7 @@ function markSceneSupplementError(id, key) {
 
 function supplementScene(id) {
     var key = format.storeKey(), node = domain.nodeById(id), detail = model.state.nodeDetail[id];
-    if (!node || !detail || !model.state.plan || window.LearnUser.readOnly || hasLearningScene(detail.study_notes)) return Promise.resolve();
+    if (!node || !detail || !model.state.plan || window.LearnUser.readOnly || hasLearningScene(detail.study_notes, true)) return Promise.resolve();
     var workKey = sceneWorkKey(key, id), current = session.sceneWork[workKey];
     if (current && current.status === 'running') return current.promise;
     var work = {status: 'running'};

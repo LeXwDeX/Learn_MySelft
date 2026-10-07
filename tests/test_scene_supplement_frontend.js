@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'learning-path/modules/path-assessment.js'), 'utf8');
 const sceneNotes = '原有正文\n\n```learn-scene\n{"version":1,"type":"linear_transform","title":"变换","summary":"观察向量。","matrix":[[1,0],[0,1]]}\n```';
+const manimNotes = '原有正文\n\n```learn-manim\n{"version":1,"asset_id":"' + 'a'.repeat(32) + '","title":"变换","summary":"观察向量。"}\n```';
 const marker = {version: 1, source_sha256: 'a'.repeat(64), notes_sha256: 'b'.repeat(64)};
 
 function deferred() {
@@ -86,6 +87,27 @@ function assertMaterialSelected(h, message) {
 }
 
 (async function main() {
+  {
+    const h = harness();
+    h.detail.study_notes = sceneNotes;
+    const beforeQuiz = JSON.stringify(h.quiz), beforeState = JSON.stringify(h.nodeState);
+    h.setPost(() => Promise.resolve({node_id:'n1', source_notes:sceneNotes, study_notes:manimNotes}));
+    h.api.renderNodeDetail('n1');
+    assert.match(h.scope.innerHTML, /升级教学动画/);
+    await h.api.supplementScene('n1');
+    assert.equal(h.detail.study_notes, manimNotes, 'real Manim replaces the historical graphic');
+    assert.equal(JSON.stringify(h.quiz), beforeQuiz);
+    assert.equal(JSON.stringify(h.nodeState), beforeState);
+    assert.doesNotMatch(h.scope.innerHTML, /data-scene-supplement=/);
+    await h.api.supplementScene('n1');
+    assert.equal(h.calls.post.length, 1, 'existing Manim assets are not regenerated');
+  }
+  {
+    const h = harness();
+    h.detail.study_notes = '````text\n' + manimNotes + '\n````';
+    h.api.renderNodeDetail('n1');
+    assert.match(h.scope.innerHTML, /补充教学动画/, 'a quoted example is not a rendered animation');
+  }
   {
     const h = harness();
     h.api.renderNodeDetail('n1');
@@ -170,7 +192,7 @@ function assertMaterialSelected(h, message) {
     assert.equal(JSON.stringify(h.nodeState), beforeState, 'supplement must preserve score and progress');
     assert.equal(h.calls.save, 1);
     assert.deepEqual(h.calls.sync, ['n1']);
-    assert.doesNotMatch(h.scope.innerHTML, /data-scene-supplement=/, 'hide the action after a scene is added');
+    assert.match(h.scope.innerHTML, /升级教学动画/, 'historical scenes remain eligible for a real Manim upgrade');
   }
 
   {

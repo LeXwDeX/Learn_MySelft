@@ -15,6 +15,7 @@ from background_jobs import JobError
 from prompts import SCENE_SUPPLEMENT, SCENE_TEACHING
 from scene_contracts import MAX_NOTES, MAX_SOURCE, SceneContractError, scenes_in, validate_scene
 from user_accounts import AccountError
+from scene_service import SceneService
 
 
 def diagram(dimension=2):
@@ -97,6 +98,10 @@ class SceneServiceTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.app = create_application({"STATE_DIR": self.temp.name, "DELETE_PASSWORD": "test-password"})
         self.addCleanup(self.app.close)
+        # Historical SVG contracts remain tested through an explicit legacy adapter.
+        self.app.scenes = SceneService(self.app.repository, self.app.model, self.app.verification, self.app.scenes.authorize, manim=None)
+        self.app.learning.scenes = self.app.scenes
+        self.app.operations["/path/node/scene"] = self.app.scenes.supplement
         admin = self.app.accounts.get_user("u0")
         self.user = self.app.accounts.create_user(admin, "learner", "Learner", "learner-password")
         self.key = self.user["id"] + "/learn-path-v1-scenes"

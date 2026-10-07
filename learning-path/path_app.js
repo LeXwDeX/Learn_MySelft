@@ -1870,12 +1870,17 @@ function sendAi(id, text) {
     var target = aiBubble('assistant', '');
     var body = target.querySelector('.ai-bubble');
     body.innerHTML = '<span class="spinner"></span>思考中…';
+    var generationStatus = document.createElement('p');
+    generationStatus.className = 'learn-manim-status';
+    generationStatus.setAttribute('role', 'status');
+    generationStatus.hidden = true;
+    target.appendChild(generationStatus);
     if (box) box.appendChild(target);
     aiScroll(view, true);
     var acc = '';
     window.LearnUser.fetch(model.session.API + '/ask', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ unit: aiUnit(id), question: q, history: hist })
+      body: JSON.stringify({ key: format.storeKey(), node: { id: id }, unit: aiUnit(id), question: q, history: hist })
     }).then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       if (!res.body || !res.body.getReader) throw new Error('浏览器不支持流式响应');
@@ -1890,6 +1895,11 @@ function sendAi(id, text) {
             if (line.indexOf('data:') !== 0) continue;
             var payload = line.slice(5).trim(); if (!payload) continue;
             var obj; try { obj = JSON.parse(payload); } catch (e2) { continue; }
+            if (typeof obj.status === 'string' && obj.status) {
+              generationStatus.textContent = obj.status;
+              generationStatus.hidden = false;
+              aiScroll(view);
+            }
             if (obj.error) acc += '\n[出错] ' + obj.error;
             if (obj.delta) { acc += obj.delta; aiRenderInto(body, acc, true); aiScroll(view); }
           }
@@ -1898,9 +1908,11 @@ function sendAi(id, text) {
       }
       return pump();
     }).then(function () {
+      generationStatus.remove();
       if (!acc) acc = '（没有返回内容，请重试。）';
       aiFinish(id, body, acc, view);
     }).catch(function (e) {
+      generationStatus.remove();
       if (!acc) acc = '请求失败：' + ((e && e.message) || e);
       aiFinish(id, body, acc, view);
     });
@@ -1941,7 +1953,7 @@ function listSection(title, arr) {
       arr.map(function (x) { return '<li>' + format.mdRender(x) + '</li>'; }).join('') + '</ul></div>';
   }
 
-function hasLearningScene(notes) {
+function hasLearningScene(notes, manimOnly) {
     var lines = String(notes || '').split(/\r?\n/), marker = '', length = 0;
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
@@ -1951,7 +1963,7 @@ function hasLearningScene(notes) {
       }
       var opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
       if (!opening) continue;
-      if (/^learn-scene(?:\s|$)/i.test(opening[2].trim())) return true;
+      if ((manimOnly ? /^learn-manim(?:\s|$)/i : /^learn-(?:scene|manim)(?:\s|$)/i).test(opening[2].trim())) return true;
       marker = opening[1][0]; length = opening[1].length;
     }
     return false;
@@ -1962,14 +1974,14 @@ session.sceneWork = Object.create(null);
 function sceneWorkKey(key, id) { return key + '#' + id; }
 
 function sceneSupplementSection(id, d) {
-    if (hasLearningScene(d.study_notes)) return '';
+    if (hasLearningScene(d.study_notes, true)) return '';
     var key = format.storeKey(), work = session.sceneWork[sceneWorkKey(key, id)];
     var busy = !!(work && work.status === 'running');
     var notNeeded = !!(work && work.status === 'not-needed' && work.notes === d.study_notes);
     return '<div class="scene-supplement" data-scene-supplement="' + format.esc(id) + '">' +
       '<button class="btn scene-supplement-btn" type="button"' +
       (window.LearnUser.readOnly || busy || notNeeded ? ' disabled' : '') +
-      '>' + (busy ? '正在补充…' : '补充图示') + '</button>' +
+      '>' + (busy ? '正在生成…' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
       '<span class="scene-supplement-status" role="status" aria-live="polite"></span></div>';
   }
 
@@ -2128,7 +2140,10 @@ function consumeSceneSupplement(id, key, result, workKey) {
       clearSceneSupplementWork(id, key, workKey);
       return;
     }
-    if (result.needed !== false) session.sceneWork[workKey] = {status: 'done'};
+    if (result.needed !== false) {
+      session.sceneWork[workKey] = {status: 'done'};
+      if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+    }
   }
 
 function clearSceneSupplementWork(id, key, workKey) {
@@ -2145,7 +2160,7 @@ function markSceneSupplementError(id, key) {
 
 function supplementScene(id) {
     var key = format.storeKey(), node = domain.nodeById(id), detail = model.state.nodeDetail[id];
-    if (!node || !detail || !model.state.plan || window.LearnUser.readOnly || hasLearningScene(detail.study_notes)) return Promise.resolve();
+    if (!node || !detail || !model.state.plan || window.LearnUser.readOnly || hasLearningScene(detail.study_notes, true)) return Promise.resolve();
     var workKey = sceneWorkKey(key, id), current = session.sceneWork[workKey];
     if (current && current.status === 'running') return current.promise;
     var work = {status: 'running'};
