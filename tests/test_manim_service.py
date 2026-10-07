@@ -83,6 +83,7 @@ class ManimServiceTests(unittest.TestCase):
             self.assertEqual(render.call_count,2)
             repair_payload=json.loads(model.call_args_list[1].args[0][1]['content'])
             self.assertIn('场景运行失败',repair_payload['repair'])
+            self.assertIn('class LessonScene',repair_payload['previous_code'])
         with patch.object(self.renderer,'render',side_effect=ManimUnavailable('环境失败')) as render:
             with self.assertRaises(JobError) as raised:self.generate()
             self.assertEqual(raised.exception.status,503)
@@ -98,3 +99,15 @@ class ManimServiceTests(unittest.TestCase):
             os.utime(directory,(1,1))
         self.assertEqual(self.service.collect_expired(now=100000),2)
         for asset_id in ('b'*32,'c'*32,'d'*32):self.assertTrue((root/asset_id).exists())
+    def test_invalid_fade_shift_repairs_before_container_with_previous_code(self):
+        from unittest.mock import patch
+        good=self.service.model.json([{}, {'content':'generation'}])
+        bad=json.loads(good)
+        bad['code']='class LessonScene(TeachingScene):\n def construct(self):\n  self.play(FadeIn(self.label("观察"),shift=(0,1,0)))'
+        with patch.object(self.service.model,'json',side_effect=[json.dumps(bad),good,'{"ok":true,"issues":[]}']) as model, \
+             patch.object(self.renderer,'render',wraps=self.renderer.render) as render:
+            self.generate()
+            self.assertEqual(render.call_count,1)
+            payload=json.loads(model.call_args_list[1].args[0][1]['content'])
+            self.assertIn('方向向量',payload['repair'])
+            self.assertEqual(payload['previous_code'],bad['code'])

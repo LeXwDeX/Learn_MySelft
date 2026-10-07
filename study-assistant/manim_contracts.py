@@ -49,6 +49,12 @@ def validate_source(source):
             raise ManimContractError('动画代码包含不支持的操作')
         if isinstance(node, ast.Attribute) and node.attr.startswith('_'):
             raise ManimContractError('动画代码不能访问内部属性')
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ('FadeIn','FadeOut'):
+            shifts = [keyword.value for keyword in node.keywords if keyword.arg == 'shift']
+            if len(node.args) > 1:
+                shifts.append(node.args[1])
+            if any(isinstance(shift,(ast.Tuple,ast.List)) for shift in shifts):
+                raise ManimContractError('ManimGL FadeIn/FadeOut 的 shift 必须使用方向向量，例如 0.3*UP，不能使用 tuple/list')
     return source
 
 
