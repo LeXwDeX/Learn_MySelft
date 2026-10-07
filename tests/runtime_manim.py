@@ -42,7 +42,8 @@ def run(environment, output):
         'spec': {'topic': '向量的分量与下标', 'level': '初中生', 'goal': '通过分步动画理解顺序、下标与维度'},
         'plan': {'title': 'Manim 教学回归', 'summary': '真实动画、分步停顿和恢复验证', 'nodes': [node, second]},
         'nodeDetail': {'n2': {'study_notes': notes + legacy, 'key_points': ['维度等于分量个数。'], 'examples': [], 'traps': []}},
-        'nodeState': {'n2': {'score': 88, 'status': 'review'}}}
+        # Scores come from issued quiz grading. Client fixtures may set only status.
+        'nodeState': {'n2': {'status': 'review'}}}
     request('/state/put', {'entries': {key: json.dumps(material, ensure_ascii=False)}})
     report = {'environment': environment, 'sourceKey': key,
         'sourceURL': f'http://192.168.33.146:{site}/learn/u/{uid}/learning-path.html?t={slug}', 'assets': {}, 'cases': []}
