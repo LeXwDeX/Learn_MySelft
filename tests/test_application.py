@@ -151,72 +151,45 @@ class ApplicationTests(unittest.TestCase):
             thread.join()
 
 
-    def test_real_http_tutor_animation_contract_and_single_bounded_repair(self):
+    def test_real_http_tutor_animation_uses_separate_manim_and_rejects_upstream_assets(self):
+        from background_jobs import JobError
         app = self.apps[0]
+        key = "u0/learn-path-v1-manim"
+        app.repository.write_key(key, json.dumps({"topic":"角", "plan":{"nodes":[{"id":"n1","title":"角"}]},
+                                                  "nodeDetail":{"n1":{"study_notes":"观察角的变化。"}}}))
         _, token = app.accounts.login("admin", "test-password", "127.0.0.1")
         server = app.server(("127.0.0.1", 0))
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
         thread.start()
-        static = {"version": 1, "type": "diagram", "title": "状态关系", "summary": "观察信息流。",
-                  "elements": [{"id": "packet", "kind": "point", "points": [[0, 0]]}]}
-        animated = {**static, "steps": [{"caption": "信息移动到接收端。", "changes": [{"id": "packet", "points": [[2, 0]]}]}]}
-        def scene(spec):
-            return '```learn-scene\n' + json.dumps(spec, ensure_ascii=False) + '\n```\n'
-        class InterruptedResponse(io.BytesIO):
-            def __iter__(self):
-                while line := self.readline():
-                    yield line
-                raise OSError("synthetic upstream interruption")
-        cases = [
-            ("请做动画演示", scene(static), animated, 1, True, False, []),
-            ("请做动画演示", scene(animated), None, 0, True, False, []),
-            ("请做动画演示", "只有讲解。", animated, 1, True, False, []),
-            ("请做动画演示", scene(static), static, 1, False, False, []),
-            ("请做动画演示", "只有讲解。", animated, 0, False, True, []),
-            ("请画静态图", scene(static), None, 0, False, False, []),
-            ("请解释定义", "普通讲解。", None, 0, False, False,
-             [{"role": "user", "content": "请做动画演示"}]),
-        ]
+        spec = {"version":1,"asset_id":"a"*32,"title":"角的变化","summary":"逐步观察"}
+        upstream = '先观察。\n```learn-manim\n' + json.dumps({**spec,"asset_id":"b"*32}) + '\n```\n'
         try:
-            for question, source, repaired, calls, success, interrupted, history in cases:
-                payload = b''.join(("data: " + json.dumps({"choices": [{"delta": {"content": piece}}]}) + "\n\n").encode()
-                                   for piece in source)
-                if not interrupted:
-                    payload += b"data: [DONE]\n\n"
-                response = (InterruptedResponse if interrupted else io.BytesIO)(payload)
-                response.headers = {"Content-Type": "text/event-stream"}
-                with self.subTest(question=question, success=success, interrupted=interrupted), \
-                     patch.object(app.model, "stream", return_value=response) as primary, \
-                     patch.object(app.model, "json", return_value=json.dumps(repaired, ensure_ascii=False)) as repair:
-                    request = urllib.request.Request(
-                        "http://127.0.0.1:%d/ask" % server.server_port,
-                        json.dumps({"question": question, "unit": {"unit_id": "n1"}, "history": history}).encode(),
-                        {"Content-Type": "application/json", "Cookie": "learn_session=" + token},
-                    )
-                    with urllib.request.urlopen(request, timeout=5) as result:
-                        events = [json.loads(line[6:]) for line in result.read().decode().splitlines() if line.startswith("data: ")]
-                    text = ''.join(event.get('delta', '') for event in events)
-                    self.assertEqual(repair.call_count, calls)
+            for question, failure, calls in [("请做动画演示", False,1), ("请做动画演示",True,1), ("请解释定义",False,0)]:
+                payload = json.dumps({"choices":[{"message":{"content":upstream}}]}).encode()
+                response = io.BytesIO(payload)
+                response.headers={"Content-Type":"application/json"}
+                with self.subTest(question=question,failure=failure), patch.object(app.model,"stream",return_value=response), \
+                     patch.object(app.manim,"generate",side_effect=JobError(503,"unavailable") if failure else None,return_value=spec) as generate, \
+                     patch.object(app.model,"json") as legacy_repair:
+                    request=urllib.request.Request("http://127.0.0.1:%d/ask"%server.server_port,
+                        json.dumps({"question":question,"key":key,"node":{"id":"n1"}}).encode(),
+                        {"Content-Type":"application/json","Cookie":"learn_session="+token})
+                    with urllib.request.urlopen(request,timeout=5) as result:
+                        events=[json.loads(line[6:]) for line in result.read().decode().splitlines() if line.startswith("data: ")]
+                    text=''.join(event.get('delta','') for event in events)
+                    self.assertEqual(generate.call_count,calls)
+                    legacy_repair.assert_not_called()
+                    self.assertIn("先观察。",text)
+                    self.assertNotIn('```learn-scene',text)
+                    self.assertEqual(text.count('```learn-manim'),1 if calls and not failure else 0)
+                    if calls and not failure:
+                        self.assertIn('"asset_id": "'+"a"*32+'"',text)
+                        self.assertEqual(generate.call_args.kwargs['question'],question)
+                    if failure: self.assertIn("动画暂未生成成功",text)
                     self.assertTrue(response.closed)
-                    if question == "请做动画演示" and not interrupted:
-                        self.assertIn("本次学生明确要求动画", primary.call_args.args[0][1]['content'])
-                        self.assertEqual(events[-1], {'done': True})
-                        self.assertEqual('动画暂未生成成功' in text, not success)
-                        self.assertEqual(text.count('```learn-scene'), 1 if success else 0)
-                    elif interrupted:
-                        self.assertIn('error', events[-1])
-                    else:
-                        self.assertEqual(text, source)
-                    if calls:
-                        self.assertLessEqual(repair.call_args.kwargs['max_tokens'], 6000)
-                        self.assertLessEqual(repair.call_args.kwargs['timeout'], 60)
-                        instructions = [item['content'] for item in repair.call_args.args[0] if item['role'] == 'system']
-                        self.assertIn('只输出一个完整的 v1 场景 JSON 对象', instructions[-1])
-                        self.assertFalse(any('本次学生明确要求动画' in value for value in instructions))
+                    self.assertEqual(events[-1],{'done':True})
         finally:
-            server.shutdown()
-            server.server_close()
-            thread.join()
+            server.shutdown();server.server_close();thread.join()
 
     def test_real_http_tutor_diagrams_are_checked_and_failures_keep_source(self):
         app = self.apps[0]

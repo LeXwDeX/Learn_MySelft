@@ -75,11 +75,20 @@
       ]
     },
     {
+      "source": "manim-player.js",
+      "global": "LearnManim",
+      "dependencies": [
+        "LearnUser",
+        "LearnUI"
+      ]
+    },
+    {
       "source": "markdown.js",
       "global": "LearnMarkdown",
       "dependencies": [
         "markdownit",
-        "LearnScenes"
+        "LearnScenes",
+        "LearnManim"
       ]
     }
   ]

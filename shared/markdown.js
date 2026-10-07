@@ -169,11 +169,12 @@
     };
     parser.renderer.rules.fence = function (tokens, index, options, env) {
       var token = tokens[index], lang = token.info.trim().split(/\s+/)[0];
-      if (lang !== 'mermaid' && lang !== 'learn-scene') return '<pre class="md-code"><code' + (/^[\w+#-]+$/.test(lang) ? ' class="language-' + lang + '"' : '') + '>' + escape(token.content) + '</code></pre>';
+      if (lang !== 'mermaid' && lang !== 'learn-scene' && lang !== 'learn-manim') return '<pre class="md-code"><code' + (/^[\w+#-]+$/.test(lang) ? ' class="language-' + lang + '"' : '') + '>' + escape(token.content) + '</code></pre>';
       var lastLine = env.lines[token.map[1] - 1] || '';
       var closed = new RegExp('^ {0,3}' + token.markup[0] + '{' + token.markup.length + ',}\\s*$').test(lastLine);
       var status = env.streaming ? 'waiting' : closed ? 'pending' : 'invalid';
       var message = env.streaming ? '图示正在生成，回复完成后显示…' : closed ? '正在校验图示…' : '图示代码未完整闭合，请参考周围文字，或让 AI 重新画图。';
+      if (lang === 'learn-manim') return '<figure class="md-manim" data-manim="' + status + '"><figcaption role="status">' + (env.streaming ? '动画正在准备，回复完成后显示…' : closed ? '正在加载教学动画…' : '动画引用未完整闭合，请参考文字说明。') + '</figcaption><details><summary>查看动画引用</summary><pre><code>' + escape(token.content) + '</code></pre></details></figure>';
       if (lang === 'learn-scene') return '<figure class="md-scene" data-scene="' + status + '"><figcaption role="status">' + message + '</figcaption><details><summary>查看原始内容</summary><pre><code>' + escape(token.content) + '</code></pre></details></figure>';
       return '<figure class="md-diagram" data-diagram="' + status + '"><figcaption role="status">' + message + '</figcaption><details><summary>查看图示源代码</summary><pre><code>' + escape(token.content) + '</code></pre></details></figure>';
     };
@@ -272,6 +273,11 @@
       figure.dataset.scene = 'error';
       figure.querySelector('figcaption').textContent = '互动图示组件暂不可用。请参考周围文字或展开图示内容。';
     });
+    if (window.LearnManim) window.LearnManim.enhance(root);
+    else root.querySelectorAll('[data-manim="pending"],[data-manim="invalid"]').forEach(function (figure) {
+      figure.dataset.manim = 'error';
+      figure.querySelector('figcaption').textContent = '教学动画组件暂不可用。请参考文字说明。';
+    });
     root.querySelectorAll('[data-diagram="invalid"]').forEach(function (figure) { diagramFallback(figure, '图示尚不完整'); });
     var tasks = [];
     root.querySelectorAll('[data-diagram="pending"]').forEach(function (figure) {
@@ -285,6 +291,7 @@
   }
   function dispose(root) {
     if (window.LearnScenes) window.LearnScenes.dispose(root);
+    if (window.LearnManim) window.LearnManim.dispose(root);
   }
   function exportButton(root, source, filename) {
     if (!root || !root.querySelector) return;

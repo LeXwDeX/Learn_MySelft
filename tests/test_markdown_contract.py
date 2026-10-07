@@ -30,5 +30,6 @@ class MarkdownContractTests(unittest.TestCase):
                              '不输出外部图片', '中文标签加双引号', '短标签',
                              r'\(', r'\[', '脚注', '提示块'):
                 self.assertIn(required, prompt)
-            for kind in ('linear_transform', 'secant', 'surface_slice'):
-                self.assertIn('type=' + kind, prompt)
+            self.assertIn('真正的 ManimGL 分步教学动画', prompt)
+            self.assertIn('不要自行输出 learn-scene、learn-manim', prompt)
+            self.assertIn('独立任务中生成实际场景代码、渲染视频', prompt)

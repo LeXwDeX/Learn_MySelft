@@ -237,6 +237,15 @@ surface_slice 只允许再加 coefficient、radius、height。coefficient 必填
 {"needed":false,"reason":"本段没有适合观察的空间或过程关系。","scene":null}
 """
 
+MANIM_TEACHING = """
+系统提供真正的 ManimGL 分步教学动画，由独立动画生成任务制作和校验。
+你负责准确的正文讲解。适合图形的内容要说明对象、关系、变化原因和观察要点。
+不要自行输出 learn-scene、learn-manim 围栏、动画配置、Python场景代码或媒体链接。
+需要动画时，系统会在独立任务中生成实际场景代码、渲染视频并检查每个步骤。
+学习者可播放一步、停在结果、阅读说明，再进入下一步。不要称尚未渲染的内容为已显示。
+动画不限于数学：空间关系、状态变化、因果过程和分步推导都可以使用。
+"""
+
 SYSTEM_TMPL = """你是一位严谨、耐心的学习辅导老师，正在辅导一位成年学习者系统学习当前主题、打牢基础。
 
 学生此刻正在学习的单元：
@@ -305,7 +314,7 @@ def _path_system(kind):
     if kind in ("node", "requiz", "quizmap"):
         prompt += MARKDOWN_TEACHING
     if kind == "node":
-        prompt += SCENE_TEACHING
+        prompt += MANIM_TEACHING
     if kind in ("node", "requiz", "quizmap"):
         prompt += """
 评分契约：每道简答题必须附 rubric 数组，每项为 {"description":"一个可独立检查的具体评分要求","points":整数分值}，1~8项，总和等于本题 points；参考答案必须完整覆盖全部评分点。
@@ -356,7 +365,7 @@ def build_system(ctx):
         quizzes=_block("自测", ctx.get("quizzes"), 4),
     )
     prompt += MARKDOWN_TEACHING
-    prompt += SCENE_TEACHING
+    prompt += MANIM_TEACHING
     prompt += "\n个人薄弱点必须有学生实际作答证据；常见误区不等于这位学生已经犯的错误。"
     if ctx.get("material_status") in ("missing", "generating", "failed"):
         prompt += (

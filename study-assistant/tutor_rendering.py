@@ -55,8 +55,9 @@ class TutorRendering:
     def __init__(self, validate):
         self.validate = validate
 
-    def stream(self, *, require_animation=False, repair=None):
-        return MermaidStream(self.validate, require_animation=require_animation, repair=repair)
+    def stream(self, *, require_animation=False, repair=None, server_graphics=False):
+        return MermaidStream(self.validate, require_animation=require_animation, repair=repair,
+                             server_graphics=server_graphics)
 
 
 class MermaidStream:
@@ -67,10 +68,11 @@ class MermaidStream:
     so Mermaid examples inside them never trigger a renderer.
     """
 
-    def __init__(self, validate, *, require_animation=False, repair=None):
+    def __init__(self, validate, *, require_animation=False, repair=None, server_graphics=False):
         self.validate = validate
         self.require_animation = require_animation
         self.repair = repair
+        self.server_graphics = server_graphics
         self.animation_passed = False
         self.scenes = 0
         self.reply = []
@@ -229,6 +231,12 @@ class MermaidStream:
         if fence[0] == '`' and '`' in info:
             return [line]
         language = (info.strip().split() or [''])[0]
+        if self.server_graphics and language in ('learn-scene', 'learn-manim'):
+            self.mode = 'code'
+            self.containers = containers
+            self.marker, self.length = fence[0], len(fence)
+            offset = info_start + len(info) - len(info.lstrip())
+            return [line[:offset] + 'text' + line[offset + len(language):]]
         if containers:
             self.mode = 'code'
             self.containers = containers

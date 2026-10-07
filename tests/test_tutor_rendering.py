@@ -6,6 +6,7 @@ import subprocess
 import sys
 import unittest
 import io
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -507,6 +508,38 @@ class TutorAnimationTests(unittest.TestCase):
         Handler.stream(request, [{'role': 'system', 'content': '说明。'}, {'role': 'user', 'content': '请做动画演示'}])
         model.json.assert_not_called()
         self.assertTrue(response.closed)
+
+    def test_late_published_animation_is_discarded_after_disconnect(self):
+        release, started, cleaned = threading.Event(), threading.Event(), threading.Event()
+        response = io.BytesIO(json.dumps({'choices': [{'message': {'content': ''}}]}).encode())
+        response.headers = {'Content-Type': 'application/json'}
+        def generate(*args, **kwargs):
+            started.set()
+            self.assertTrue(release.wait(8))
+            return {'asset_id': 'a' * 32}
+        discarded = []
+        def discard(asset_id):
+            discarded.append(asset_id)
+            cleaned.set()
+        writes = []
+        def write(data):
+            writes.append(data)
+            if len(writes) == 2:
+                self.assertTrue(started.is_set())
+                raise BrokenPipeError()
+        app = SimpleNamespace(model=SimpleNamespace(stream=Mock(return_value=response)),
+            tutor_rendering=TutorRendering(lambda _: {'status':'passed'}),
+            repository=SimpleNamespace(material=lambda key: {'plan':{'nodes':[{'id':'n1','essence':'向量'}]}}),
+            manim=SimpleNamespace(generate=generate, discard=discard))
+        request = SimpleNamespace(app=app, actor={'id':'u0'}, _authorize_key=Mock(),
+            send_response=Mock(), send_header=Mock(), end_headers=Mock(), _cors=Mock(),
+            wfile=SimpleNamespace(write=write, flush=Mock()))
+        try:
+            Handler.stream(request, [{'role':'user','content':'动画演示'}], graphics_context={'key':'u0/test','node_id':'n1'})
+        finally:
+            release.set()
+        self.assertTrue(cleaned.wait(3))
+        self.assertEqual(discarded, ['a' * 32])
 
 
 if __name__ == '__main__':

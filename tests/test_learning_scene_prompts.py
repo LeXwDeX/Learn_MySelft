@@ -93,14 +93,11 @@ class LearningScenePromptTests(unittest.TestCase):
     def test_only_node_and_tutor_prompts_offer_scenes(self):
         node = prompts._path_system("node")
         tutor = prompts.build_system({"material_status": "ready", "notes": "正文"})
-        self.assertIn("交互场景", node)
-        self.assertIn("```learn-scene", node)
-        self.assertIn("把围栏作为 study_notes 正文内容", node)
-        self.assertIn("交互场景", tutor)
-        self.assertIn("```learn-scene", tutor)
-        self.assertIn("输出前自检", node)
+        for prompt in (node, tutor):
+            self.assertIn("真正的 ManimGL", prompt)
+            self.assertIn("不要自行输出 learn-scene、learn-manim", prompt)
+            self.assertIn("独立任务", prompt)
         self.assertIn("题干中的图和表只呈现已知条件", node)
-        self.assertIn("图也不能提前泄露", tutor)
         self.assertIn("绝不主动给答案", tutor)
 
         excluded = [
@@ -169,11 +166,10 @@ class LearningScenePromptTests(unittest.TestCase):
 
     def test_natural_learning_requests_have_generic_graphic_capability(self):
         for prompt in (prompts._path_system("node"), prompts.build_system({"unit_title": "概念"})):
-            self.assertIn("Manim / 3Blue1Brown", prompt)
-            self.assertIn("用户无需提出画图要求", prompt)
-            self.assertIn("不限于数学或固定课程", prompt)
-            self.assertIn("type=diagram", prompt)
-            self.assertIn("实际高维嵌入", prompt)
+            self.assertIn("真正的 ManimGL", prompt)
+            self.assertIn("动画不限于数学", prompt)
+            self.assertIn("播放一步、停在结果", prompt)
+
         self.assertIn("外层字段必须恰好是 needed、reason、scene", prompts.SCENE_SUPPLEMENT)
 
     def test_scene_contract_keeps_unready_material_and_answer_boundaries(self):
@@ -182,8 +178,8 @@ class LearningScenePromptTests(unittest.TestCase):
             with self.subTest(status=status):
                 self.assertIn("本单元正文尚未就绪", prompt)
                 self.assertIn("不冒充已有正文或配套题", prompt)
-                self.assertIn("图也不能提前泄露正在作答题目的答案", prompt)
-                self.assertIn("learn-scene 围栏内只输出下面定义的 JSON 对象", prompt)
+                self.assertIn("绝不主动给答案", prompt)
+                self.assertIn("不要自行输出 learn-scene、learn-manim", prompt)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ import re
 import subprocess
 import threading
 import urllib.error
+from manim_contracts import references_in, strip_generated_scenes
 
 
 _CAPTURE_SLOTS = threading.BoundedSemaphore(2)
@@ -106,6 +107,16 @@ def review(candidate, ask, config_path=None):
     source = markdown(candidate)
     digest = hashlib.sha256(source.encode()).hexdigest()
     report = {'source_sha256': digest, 'status': 'not_needed'}
+    assets = references_in(source)
+    if assets:
+        checked = candidate.get('manim_review') or {}
+        if checked.get('status') != 'passed' or len(assets) != 1 or checked.get('asset_id') != assets[0]['asset_id']:
+            return dict(report, status='unavailable', reason='manim_not_independently_reviewed')
+        report['manim_assets'] = [asset['asset_id'] for asset in assets]
+        report['manim_status'] = 'passed'
+        # Media has already passed isolated decoding and per-step visual review.
+        # This sessionless Markdown worker checks the remaining lesson only.
+        source = strip_generated_scenes(source)
     if not re.search(r'\$|\\[([]|(?:`{3,}|~{3,})(?:mermaid|learn-scene)\b|\|.*\||\[\^|\[!', source):
         return report
     path = Path(config_path) if config_path else Path(__file__).with_name('render-review.json')
