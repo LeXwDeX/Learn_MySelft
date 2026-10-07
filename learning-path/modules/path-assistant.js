@@ -212,6 +212,8 @@ function aiUnit(id) {
     });
     return {
       unit_id: domain.dispId(id), unit_title: n.title || '', domain: model.state.topic || '',
+      learner_level: String((model.state.spec || {}).level || '').slice(0, 200),
+      learning_goal: String((model.state.spec || {}).goal || '').slice(0, 400),
       essence: n.essence || '', musts: kp, traps: traps, quizzes: quizzes,
       notes: d.study_notes ? String(d.study_notes).slice(0, 6000) : '',
       material_status: aiMaterialStatus(id)

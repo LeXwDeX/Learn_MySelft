@@ -89,7 +89,9 @@ def run(environment, output):
     report['cases'].append('upgrade_preserves_learning_state_and_prose')
     print('Checking /ask real animation', flush=True)
     _, _, stream = request('/ask', {'key': key, 'node': {'id': 'n2'},
-        'unit': {'unit_id': 'n2', 'title': second['title'], 'topic': material['topic'], 'study_notes': notes},
+        'unit': {'unit_id': 'n2', 'unit_title': second['title'], 'domain': material['topic'],
+            'notes': notes, 'material_status': 'ready', 'learner_level': material['spec']['level'],
+            'learning_goal': material['spec']['goal']},
         'question': '请用分步动画演示(3,-1,4)前三个位置和下标，再交换前两个分量，最后说明维度仍是3。', 'history': []}, raw=True)
     events = [json.loads(line[5:].strip()) for line in stream.decode().splitlines() if line.startswith('data:')]
     assert any(event.get('done') for event in events)

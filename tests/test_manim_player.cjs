@@ -69,6 +69,15 @@ const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
   status=200;response={...manifest,fps:24};const invalid=figure();window.LearnManim.enhance(invalid);await flush();assert.ok(descendants(invalid).find(n=>n.textContent==='动画清单无效'));
   response=manifest;const fallback=figure();window.LearnManim.enhance(fallback);await flush();const fv=descendants(fallback).find(n=>n.tagName==='video');fv.requestVideoFrameCallback=undefined;button(fallback,'播放本步').emit('click');await flush();fv.currentTime=40/30;window.raf();assert.equal(fv.paused,true);assert.equal(fv.currentTime,59/30);window.LearnManim.dispose(fallback);
   const assistantSource=fs.readFileSync('learning-path/modules/path-assistant.js','utf8');
+  const levelModel={state:{spec:{},nodeDetail:{n:{study_notes:'已有正文'}},topic:'数学'},session:{nodeMaterialStatus:{}}};
+  let levelAssistant;
+  vm.runInNewContext(assistantSource,{define(name,deps,factory){levelAssistant=factory({'path.format':{},'path.model':levelModel,'path.domain':{nodeById:()=>({title:'当前单元'}),dispId:id=>id},'path.persistence':{}});}});
+  for(const level of ['小学','初中','高中','本科']){
+    levelModel.state.spec={level,goal:'按当前基础理解'};
+    const unit=levelAssistant.aiUnit('n');assert.equal(unit.learner_level,level);assert.equal(unit.learning_goal,'按当前基础理解');assert.equal(unit.notes,'已有正文');
+  }
+  levelModel.state.spec={};assert.equal(levelAssistant.aiUnit('n').learner_level,'','missing level is not guessed');
+  levelModel.state.spec={level:'长'.repeat(300),goal:'长'.repeat(500)};assert.equal(levelAssistant.aiUnit('n').learner_level.length,200);assert.equal(levelAssistant.aiUnit('n').learning_goal.length,400);
   const sendSource=assistantSource.slice(assistantSource.indexOf('function sendAi('),assistantSource.indexOf('  return Object.freeze'));
   const body=new Element('div',doc), box=new Element('div',doc);box.querySelector=()=>null;
   const input={value:'question',style:{},focus(){}};
