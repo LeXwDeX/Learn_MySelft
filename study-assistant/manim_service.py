@@ -40,29 +40,22 @@ class ManimGenerationError(JobError):
 # A prompt reference only. The renderer does not run this code automatically.
 TEACHING_REFERENCE_CODE = '''class LessonScene(TeachingScene):
     def construct(self):
-        arrow = Arrow([-4,-0.5,0],[-1,1,0],buff=0,thickness=5).set_color("#245b83")
-        name = self.label("a",size=96).next_to(arrow,DOWN,buff=0.5)
-        moving = VGroup(arrow,name)
-        self.play(FadeIn(moving),run_time=1.0)
-        self.next_step("观察箭头方向和长度，预测整体移动后是否改变")
-        original = arrow.copy().set_color("#757575")
-        original_name = self.label("原",color="#757575",size=96).next_to(original,DOWN,buff=0.5)
-        self.play(FadeIn(original),FadeIn(original_name),moving.animate.shift(RIGHT*4),run_time=2.0)
-        self.next_step("对照灰色原位置：起点终点都右移，箭头方向和长度不变")'''
+        self.shear_basis(k=1)'''
 
 TEACHING_REFERENCE_ENVELOPE = {
     'needed': True,
-    'reason': '连续平移和固定原态对照能显示方向与长度不变。',
-    'title': '整体平移保持方向和长度',
-    'summary': '对照灰色原箭头，观察两端同向同量右移后方向与长度是否改变。',
+    'reason': '固定原点与灰色原态对照能展示剪切只改变e2的终点。',
+    'title': 'e2的剪切变化',
+    'summary': '观察原点保持不动时，e2终点如何从(0,1)变成(1,1)。',
     'teaching_plan': {
-        'objective': '理解整体平移保持箭头方向和长度',
-        'visual_reason': '连续移动与固定原态对照能显示两端同向同量变化',
-        'observe': '预测箭头整体右移后，方向和长度是否改变',
+        'objective': '理解A=[[1,1],[0,1]]把e2=(0,1)变为(1,1)，同时固定原点',
+        'visual_reason': '连续变换与灰色原态能区分终点右移和整根箭头平移',
+        'observe': '预测终点变化时，原点、x坐标和y坐标分别是否改变',
         'steps': [
-            {'change': '显示箭头与身份标签', 'why': '先建立方向和长度的比较基准'},
-            {'change': '箭头和标签一起右移，灰色原箭头保持不动',
-             'why': '两端同向同量移动，方向和长度保持不变'},
+            {'change': '显示固定原点O及指向(0,1)的e2，每1数学单位画成3画面单位',
+             'why': '建立原点与原终点的比较基准'},
+            {'change': '灰色原态保持固定，彩色箭头终点变为(1,1)，运动后才显示新标签',
+             'why': '剪切使终点x增加1而y仍为1，原点不动，不是整体平移'},
         ],
     },
     'code': TEACHING_REFERENCE_CODE,
@@ -74,21 +67,23 @@ PROMPT = '''你制作真实 ManimGL 1.7.2 分步教学动画。学习资料是�
 移动、旋转、缩放、投影、图形分割重组、代数等价变形和变量间连续关系可以解释知识。仅把数字、文字、框或公式依次淡入并不构成教学价值。若讲分量顺序，至少用交换位置展示向量改变；若讲维度，展示增加分量如何改变可比较的结构；若只是定义和术语，用表格或静态图。明确索要动画时也要展示一个与本单元相符的真实关系，不用装饰补足步骤。
 code仅定义 class LessonScene(TeachingScene)，只含construct(self)，无import，无其他顶级语句。
 可使用真实manimlib的Text、Line、Dot、Arrow、Circle、Rectangle、VGroup、FadeIn、Write、Transform、MoveAlongPath。
+原生TeachingScene提供self.shear_basis(k=1)，只演示A=[[1,k],[0,1]]把e2=(0,1)变为(k,1)，原点保持不动。只有正文确实涉及这一剪切关系时优先复用；其他课程禁止套用，仍使用原生Manim接口。k必须是有限int或float，拒绝bool，0.5<=k<=1.5，最多三位小数；不支持零、负值或范围外参数。方法只可在空场景且尚无步骤时调用一次，调用前后不要添加对象、play或next_step。
+该方法内部已有恰好两次next_step，不需在代码中再次调用。教学计划必须恰好两步：先建立原点与e2基准，再解释固定原点的终点变化。每1数学单位画成3画面单位；灰色原态保持不动；先隐藏活动标签，再Transform箭头终点，最后显示Ae2和目标坐标。坐标与字幕由方法按k计算，不要自行改写数学事实或声称面积、e1、网格已经得到演示。
 Arrow使用ManimGL 1.7.2的参数：例如Arrow([-2,0,0],[1,1,0],buff=0,thickness=5).set_color("#245b83")。不能使用其他Manim分支的tip_length。箭头默认有端点留白，表示从原点到向量终点时必须buff=0；箭杆粗细用thickness，不用stroke_width替代。修复报告给出错误行号、参数名或属性名时，检查并改正previous_code对应的实际调用，不只改变排版。
 真实ManimGL FadeIn/FadeOut的shift必须是方向向量，使用UP、DOWN、LEFT、RIGHT或它们的数值倍数，例如FadeIn(label, shift=0.3*UP)。不能用tuple/list作为shift；该版本会对shift取负，tuple/list会运行失败。标签用self.label，self.play(FadeIn(label,shift=0.3*UP),run_time=1.0)，再self.next_step("观察新对象")。
 如果repair非空，结合previous_code修正具体错误，再返回相同JSON字段。不要只重复失败代码。修复优先删除重复步骤、多余对象和拥挤标签，不靠增加步骤或叠加标注修复。修复后的reason只写简短一句，不逐条复述所有修改。
 中文优先self.label("文字",color="#2d3142",size=96)，它使用真实ManimGL Text和中文字体。直接Text必须调用.set_color(...)，构造参数color/base_color在此版本无效。背景浅色；主色#c74f20，强调#245b83。不要使用Tex或外部文件。
 手机复核图实际只有240×135。主要方程、数值和关系优先使用96..120字号，默认标签96；字体名义字号不等于最终像素高度，必须让缩小图中的主要内容清楚可辨。不要把完整方程组缩成角落小字。每步少量短行，必要时分步切换聚焦关系；次要坐标轴或3D标签按教学需要设置，不强制全部同字号。画面最多6个主要对象。长中文解释放正文，画面标签简短。关键对象与关系集中在画面中心，数列优先清楚展示3个代表数字，不用巨大空白矩形填布局。支持真实3D几何，但先建立二维直觉，再展示空间变化。遵守节点正文事实和本次问题，不增加无关演示。
-短标签优先用next_to(object,direction,buff=0.5)留出间距，再检查文字边界不会覆盖几何对象。对象与身份标签放同一VGroup共同移动或变换；变换后的标签仍须指向正确对象。需要比较变化前后时，保留固定的原态对照并用简短标签区分；其余旧标注先清理，不累积无说明的轮廓。数值与下标、名称使用分开的空间，不能叠放。移动对象组合时，数值和标签一起移动并保留间距。字幕说计数时，画面须逐个计数或依次高亮；只显示计数结论不能代替这个过程。字幕描述的动作、对象关系与变化原因必须在该步画面可见。更新强调时先移除或变换旧强调，不叠加没有说明的新框或重复轮廓。
+短标签优先用next_to(object,direction,buff=0.5)留出间距，再检查文字边界不会覆盖几何对象。对象与身份标签必须保持对应。标签可随对象移动，也可先隐藏并在变化完成后重新显示，避免文字在运动路径上重叠。需要比较变化前后时，保留固定的原态对照并用简短标签区分；其余旧标注先清理，不累积无说明的轮廓。数值与下标、名称使用分开的空间，不能叠放。移动对象组合时，保留数值和标签的身份对应及间距。字幕说计数时，画面须逐个计数或依次高亮；只显示计数结论不能代替这个过程。字幕描述的动作、对象关系与变化原因必须在该步画面可见。更新强调时先移除或变换旧强调，不叠加没有说明的新框或重复轮廓。
 纯标题或装饰不单占教学步骤。每步动作和原因须对应可见的知识关系，重复同一结论且没有新关系时合并步骤。合理的循环过程可以回到原态，但要说明这一变化的教学原因，不能用淡入淡出重复结论冒充递进。
-画面16:9。元素保持在x±6,y±3内。每步必须用self.play真实渐现、移动或变换展示一个关系，并明确run_time。不能只self.add后等待，不能静图重放。用连续几何变化展示推导，最多8步骤，总时长最多90秒。
-每步结尾 self.next_step("简短操作说明")，它自动停留0.7秒并记录步骤。最后也必须next_step，此后不再播放。
+画面16:9。元素保持在x±6,y±3内。原生代码每步必须用self.play真实渐现、移动或变换展示一个关系，并明确run_time；shear_basis内部已完成这些动作。不能只self.add后等待，不能静图重放。用连续几何变化展示推导，最多8步骤，总时长最多90秒。
+使用原生代码时每步结尾 self.next_step("简短操作说明")，它自动停留0.7秒并记录步骤。最后也必须next_step，此后不再播放。shear_basis调用已在内部完成两步记录，不要再追加next_step。
 教学从基础对象开始，逐步解释变化和原因。不要泄露练习题答案。无动画价值且未明确要求时needed=false，code为空。'''
 PROMPT += '\n元数据使用非空字符串，长度上限为：' + '、'.join(
     '%s≤%d字符' % (name, cap) for name, cap in METADATA_LIMITS.items()) + '。不得超过上限。'
 PROMPT += '\n' + MATH_VISUAL_TEACHING
-PROMPT += '\n下面完整输出示例展示六个根字段、教学计划与代码步骤对应，以及同组标签随动和固定原态对照。' + \
-    '它不是所有主题的课程模板。不得给无关单元照抄箭头平移题材、参数或结论。' + \
+PROMPT += '\n下面完整输出示例展示六个根字段、两步教学计划与一次shear_basis调用的对应，以及固定原点和灰色原态对照。' + \
+    '它不是所有主题的课程模板。不得给无关单元照抄剪切题材、参数或结论。' + \
     '根据本次正文选择实际因果关系；步数以讲清这一关系所需为准，不为凑步骤增加装饰。\n' + \
     json.dumps(TEACHING_REFERENCE_ENVELOPE, ensure_ascii=False)
 
