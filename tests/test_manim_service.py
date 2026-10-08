@@ -8,8 +8,8 @@ import urllib.error
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
 from background_jobs import JobError
-from manim_service import METADATA_LIMITS, PROMPT, ManimService, ManimGenerationError
-from manim_contracts import ManimContractError
+from manim_service import METADATA_LIMITS, PROMPT, TEACHING_REFERENCE_CODE, ManimService, ManimGenerationError
+from manim_contracts import ManimContractError, validate_source, validate_teaching_plan
 from manim_renderer import ManimUnavailable
 from prompts import MATH_VISUAL_TEACHING
 
@@ -47,6 +47,29 @@ class ManimServiceTests(unittest.TestCase):
             if actor != key.split('/')[0]: raise JobError(403,'denied')
         self.service=ManimService(self.repo,Model(),self.renderer,authorize)
     def generate(self): return self.service.generate('u1/learn-path-v1-a','n1','候选新正文',{'id':'n1'},actor='u1')
+    def test_short_reference_passes_source_and_two_step_plan_contract(self):
+        self.assertEqual(validate_source(TEACHING_REFERENCE_CODE), TEACHING_REFERENCE_CODE)
+        self.assertLessEqual(len(TEACHING_REFERENCE_CODE.splitlines()), 30)
+        plan = {'objective': '理解整体平移保持箭头方向和长度',
+                'visual_reason': '连续移动与固定原态对照能显示两端同向同量变化',
+                'observe': '预测箭头整体右移后，方向和长度是否改变',
+                'steps': [{'change': '显示箭头与身份标签', 'why': '先建立方向和长度的比较基准'},
+                          {'change': '箭头和标签一起右移，灰色原箭头保持不动',
+                           'why': '两端同向同量移动，方向和长度保持不变'}]}
+        self.assertEqual(validate_teaching_plan(plan, step_count=2), plan)
+
+    def test_generation_receives_reference_without_changing_user_topic(self):
+        from unittest.mock import patch
+        with patch.object(self.service.model, 'json', wraps=self.service.model.json) as model:
+            self.generate()
+        messages = model.call_args_list[0].args[0]
+        self.assertIn(TEACHING_REFERENCE_CODE, messages[0]['content'])
+        self.assertIn('不得给无关单元照抄', messages[0]['content'])
+        self.assertIn('每个短片只选一个最有教学价值的关系', messages[0]['content'])
+        payload = json.loads(messages[1]['content'])
+        self.assertEqual(payload['node']['title'], '角')
+        self.assertEqual(payload['study_notes'], '候选新正文')
+
     def test_candidate_can_publish_before_notes_and_access_checks_live_owner(self):
         spec=self.generate()
         path,kind=self.service.asset('u1','u1',spec['asset_id'],'video.mp4')
