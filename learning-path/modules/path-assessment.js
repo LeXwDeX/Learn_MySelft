@@ -43,17 +43,22 @@ function sceneSupplementSection(id, d) {
     var key = format.storeKey(), work = session.sceneWork[sceneWorkKey(key, id)];
     var busy = !!(work && work.status === 'running');
     var notNeeded = !!(work && work.status === 'not-needed' && work.notes === d.study_notes);
+    var retryAnimation = !!(d.manim_review && d.manim_review.status === 'failed' && d.manim_review.retryable === true);
     return '<div class="scene-supplement" data-scene-supplement="' + format.esc(id) + '">' +
       '<button class="btn scene-supplement-btn" type="button"' +
       (window.LearnUser.readOnly || busy || notNeeded ? ' disabled' : '') +
-      '>' + (busy ? '正在生成…' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
+      '>' + (busy ? '正在生成…' : retryAnimation ? '重试教学动画' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
       '<span class="scene-supplement-status" role="status" aria-live="polite"></span></div>';
   }
 
 function sceneSupplementMessage(id) {
     var work = session.sceneWork[sceneWorkKey(format.storeKey(), id)], detail = model.state.nodeDetail[id];
     if (work && work.status === 'not-needed' && detail && work.notes !== detail.study_notes) return '';
-    return work && work.status === 'running' ? '正在补充图示…' : work && work.status === 'error' ? '补充失败，可以重试。' : work && work.status === 'not-needed' ? work.message : '';
+    if (work && work.status === 'running') return '正在生成教学动画…';
+    if (work && work.status === 'error') return '动画仍未生成，可以重试。学习正文已保留。';
+    if (work && work.status === 'not-needed') return work.message;
+    if (detail && detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true) return '学习材料已就绪，动画暂未生成，可单独重试。';
+    return '';
   }
 
 // ---------- 自测题渲染（选择题点选 / 填空·简答文本作答） ----------
@@ -184,12 +189,15 @@ function applySceneSupplement(id, key, result) {
       if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
       return true;
     }
-    if (result.study_notes === detail.study_notes) return true;
-    if (typeof result.source_notes !== 'string' || result.source_notes !== detail.study_notes) return false;
-    detail.study_notes = result.study_notes;
+    if (result.study_notes !== detail.study_notes && (typeof result.source_notes !== 'string' || result.source_notes !== detail.study_notes)) return false;
+    var changed = result.study_notes !== detail.study_notes;
+    if (changed) detail.study_notes = result.study_notes;
     if (Object.prototype.hasOwnProperty.call(result, 'sceneSupplement')) detail.sceneSupplement = result.sceneSupplement;
-    persistence.save();
-    assistant.syncAiMaterial(id);
+    if (Object.prototype.hasOwnProperty.call(result, 'manim_review')) detail.manim_review = result.manim_review;
+    if (changed || Object.prototype.hasOwnProperty.call(result, 'manim_review')) {
+      persistence.save();
+      assistant.syncAiMaterial(id);
+    }
     if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
     return true;
   }
@@ -239,7 +247,9 @@ function supplementScene(id) {
       consumeSceneSupplement(id, key, result, workKey);
     }).catch(function (error) {
       markSceneSupplementError(id, key);
-      if (format.storeKey() === key && !error.jobId) shell.showError('补充图示失败：' + error.message, function () { return supplementScene(id); });
+      if (format.storeKey() === key && !error.jobId && !(detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true)) {
+        shell.showError('补充图示失败，请稍后重试。', function () { return supplementScene(id); });
+      }
     });
     return work.promise;
   }

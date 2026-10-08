@@ -175,7 +175,7 @@ function renderCardContent(id) {
       return;
     }
     if (model.session.generatingNode === id) {   // 已在生成：重建后仍显示卡内 loading，不重复请求
-      scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
+      scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成并校验学习材料，完成后会自动显示…</p>';
       return;
     }
     if (!domain.isUnlocked(id) && !domain.isDone(id)) {
@@ -190,7 +190,7 @@ function renderCardContent(id) {
       });
       return;
     }
-    scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成学习材料（可能需要 30~90 秒）…</p>';
+    scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成并校验学习材料，完成后会自动显示…</p>';
     requestAnimationFrame(drawEdges);
     model.session.generatingNode = id;
     model.session.nodeMaterialStatus[id] = 'generating';

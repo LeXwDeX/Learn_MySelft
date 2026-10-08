@@ -4,7 +4,7 @@ import json
 import re
 import material_parser
 import quiz_harness as harness
-from background_jobs import log_job_failure
+from background_jobs import JobError, log_job_failure
 from material_titles import document_title, short_title
 from research_sources import collect_sources, select_sources
 from service_limits import MAX_TOPIC, MAX_QUESTION, PATH_MAX_ROUNDS, GEN_WAIT_MAX
@@ -279,7 +279,11 @@ class LearningService:
             self.cache.finish(gate_key, _gate, out=plan)
         return (200, plan)
 
-    def node(self, path, body, actor):
+    def node(self, path, body, actor, *, cancelled=lambda: False):
+        def check_cancelled():
+            if cancelled():
+                raise JobError(409, '资料生成已取消，结果未保存')
+        check_cancelled()
         material = (
             self.repository.material(body.get("key")) if body.get("key") else None
         )
@@ -289,6 +293,19 @@ class LearningService:
         node = body.get("node") or {}
         mkey = clip(str(body.get("key") or ""), 200)
         node_id = clip(node.get("id"), 20)
+        expected_node = expected_notes = None
+        if mkey:
+            with self.repository.lock:
+                if self.scenes:
+                    self.scenes.authorize(actor,mkey)
+                material = self.repository.material(mkey)
+                canonical = next((item for item in ((material or {}).get('plan') or {}).get('nodes',[])
+                                  if isinstance(item,dict) and item.get('id') == node_id),None)
+                if material is None or canonical is None:
+                    raise JobError(404, '学习资料或节点已删除，结果未保存')
+                node = json.loads(json.dumps(canonical,ensure_ascii=False))
+                expected_node = json.dumps(node,sort_keys=True,ensure_ascii=False)
+                expected_notes = ((material.get('nodeDetail') or {}).get(node_id) or {}).get('study_notes') or ''
         gate_key = mkey + "#node#" + node_id if mkey and node_id else None
         if gate_key:
             hit = self.repository.node_detail(mkey, node_id) or self.cache.get(gate_key)
@@ -297,6 +314,7 @@ class LearningService:
             _gate, _owner = self.cache.join(gate_key)
             if not _owner:
                 _gate["ev"].wait(GEN_WAIT_MAX)
+                check_cancelled()
                 hit = (
                     _gate["out"]
                     or self.cache.get(gate_key)
@@ -335,6 +353,7 @@ class LearningService:
             last_error = ""
             for attempt in range(3):
                 try:
+                    check_cancelled()
                     stage = "generation"
                     candidate = _norm_node_detail(
                         _json_block(
@@ -350,11 +369,7 @@ class LearningService:
                     if not candidate:
                         raise harness.QuizContractError("材料不完整")
                     if self.scenes:
-                        stage = "scene_generation"
-                        try:
-                            self.scenes.enrich_candidate(candidate, node, key=mkey, actor=actor)
-                        except SceneContractError as error:
-                            raise harness.QuizContractError("学习图示配置未通过检查，请修正字段与数值") from error
+                        self.scenes.prepare_candidate(candidate)
                     stage = "verification"
                     qs = self.verification.checked_questions(
                         candidate["quiz"]["questions"], node=True
@@ -362,7 +377,17 @@ class LearningService:
                     candidate["render_review"] = self.verification.review_rendered(
                         candidate
                     )
+                    if not isinstance(candidate['render_review'],dict) or candidate['render_review'].get('status') not in ('passed','not_needed'):
+                        raise JobError(503, '正文渲染检查暂不可用，资料未保存，请稍后重试')
                     candidate["quiz"] = _issued_quiz(qs)
+                    check_cancelled()
+                    if self.scenes:
+                        stage = 'scene_generation'
+                        try:
+                            self.scenes.enrich_candidate(candidate,node,key=mkey,actor=actor,cancelled=cancelled)
+                        except SceneContractError as error:
+                            raise harness.QuizContractError('学习图示配置未通过检查，请修正字段与数值') from error
+                    check_cancelled()
                     detail = candidate
                     break
                 except harness.QuizContractError as error:
@@ -374,31 +399,34 @@ class LearningService:
                     last_error = str(error)
             if detail is None:
                 raise harness.QuizContractError("出题校验失败：" + last_error)
-        except Exception as error:
-            if self.scenes and self.scenes.manim and candidate:
-                asset = (candidate.get("manim_review") or {}).get("asset_id")
-                if asset:
-                    self.scenes.manim.discard(asset)
-            self.log_node_failure(error, stage)
-            if gate_key:
-                self.cache.finish(gate_key, _gate, err="node verification failed")
+        except BaseException as error:
+            try:
+                if self.scenes and self.scenes.manim and candidate:
+                    asset = (candidate.get("manim_review") or {}).get("asset_id")
+                    if asset:
+                        self.scenes.manim.discard(asset)
+                self.log_node_failure(error, stage)
+            finally:
+                if gate_key:
+                    self.cache.finish(gate_key, _gate, err="node verification failed")
             raise
         try:
             with self.repository.lock, self.repository.store.transaction():
+                check_cancelled()
                 if self.scenes:
                     self.scenes.authorize(actor, mkey)
                 current = self.repository.material(mkey)
-                if current is None or not any(isinstance(n, dict) and n.get("id") == node_id
-                                              for n in (current.get("plan") or {}).get("nodes", [])):
-                    from background_jobs import JobError
+                current_node = next((n for n in ((current or {}).get('plan') or {}).get('nodes',[])
+                                     if isinstance(n,dict) and n.get('id') == node_id),None)
+                if current is None or current_node is None:
                     raise JobError(404, "学习资料或节点已删除，生成结果未保存")
+                current_notes = ((current.get('nodeDetail') or {}).get(node_id) or {}).get('study_notes') or ''
+                if (json.dumps(current_node,sort_keys=True,ensure_ascii=False) != expected_node
+                        or current_notes != expected_notes):
+                    raise JobError(409, '学习正文或节点已更新，生成结果未保存')
                 existing = self.repository.node_detail(mkey, node_id)
                 if existing:
-                    if self.scenes and self.scenes.manim:
-                        asset = (detail.get("manim_review") or {}).get("asset_id")
-                        if asset:
-                            self.scenes.manim.discard(asset)
-                    detail = existing
+                    raise JobError(409, '学习资料已由其他请求生成，本次结果未保存')
                 else:
                     self.repository.merge(mkey, {"nodeDetail": {node_id: detail}})
         except BaseException:
@@ -412,6 +440,8 @@ class LearningService:
                     self.cache.finish(gate_key, _gate, err="node save failed")
             raise
         if gate_key:
-            self.cache.put(gate_key, detail)
-            self.cache.finish(gate_key, _gate, out=detail)
+            try:
+                self.cache.put(gate_key, detail)
+            finally:
+                self.cache.finish(gate_key, _gate, out=detail)
         return (200, detail)

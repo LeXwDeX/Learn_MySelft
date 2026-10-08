@@ -8,7 +8,7 @@ import urllib.error
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
 from background_jobs import JobError
-from manim_service import METADATA_LIMITS, PROMPT, ManimService
+from manim_service import METADATA_LIMITS, PROMPT, ManimService, ManimGenerationError
 from manim_contracts import ManimContractError
 from manim_renderer import ManimUnavailable
 from prompts import MATH_VISUAL_TEACHING
@@ -230,3 +230,32 @@ class ManimServiceTests(unittest.TestCase):
             self.assertIn('纯标题或装饰',model.call_args_list[1].args[0][0]['content'])
         self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
         self.assertFalse(self.service.root.exists())
+
+    def test_attempt_diagnostics_contain_only_categories_without_private_feedback(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        self.repo.local=SimpleNamespace(job_id='a'*32)
+        good=self.service.model.json([{}, {'content':'generation'}])
+        bad=json.dumps({'ok':False,'issues':['PRIVATE_FEEDBACK_TOKEN_URL']})
+        with patch.object(self.service.model,'json',side_effect=[good,bad,good,bad]), \
+             self.assertLogs('manim_service',level='INFO') as captured:
+            with self.assertRaises(ManimGenerationError) as raised:self.generate()
+        self.assertEqual(raised.exception.failure_code,'visual_rejected')
+        rows=[json.loads(item.getMessage().split(' ',1)[1]) for item in captured.records]
+        self.assertEqual([row['attempt'] for row in rows],[1,2])
+        self.assertTrue(all(row['stage']=='visual_review' and row['failure_code']=='visual_rejected' for row in rows))
+        self.assertTrue(all(row['job_id']=='a'*32 and type(row['elapsed_ms']) is int for row in rows))
+        self.assertNotIn('PRIVATE_FEEDBACK_TOKEN_URL','\n'.join(captured.output))
+        self.assertNotIn('候选新正文','\n'.join(captured.output))
+        for row in rows:self.assertEqual(set(row),{'job_id','attempt','stage','failure_code','elapsed_ms','exception'})
+
+    def test_upstream_http_diagnostics_keep_status_but_not_url_or_body(self):
+        from unittest.mock import patch
+        error=urllib.error.HTTPError('https://PRIVATE_URL_TOKEN',429,'PRIVATE_BODY_TOKEN',{},None)
+        with patch.object(self.service.model,'json',side_effect=error),self.assertLogs('manim_service',level='INFO') as captured:
+            with self.assertRaises(ManimGenerationError) as raised:self.generate()
+        self.assertEqual(raised.exception.failure_code,'model_unavailable')
+        row=json.loads(captured.records[0].getMessage().split(' ',1)[1])
+        self.assertEqual(row['upstream_http_status'],429)
+        self.assertEqual(row['stage'],'model_generation')
+        self.assertNotIn('PRIVATE_','\n'.join(captured.output))

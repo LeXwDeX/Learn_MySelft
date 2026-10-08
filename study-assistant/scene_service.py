@@ -7,6 +7,7 @@ from generation_contracts import _json_block
 from prompts import SCENE_SUPPLEMENT
 from scene_contracts import MAX_NOTES, MAX_SOURCE, SceneContractError, scenes_in, validate_scene
 from manim_contracts import references_in, strip_generated_scenes
+from manim_service import ManimGenerationError
 import quiz_harness as harness
 
 
@@ -71,17 +72,37 @@ class SceneService:
                 continue
         raise JobError(502, "图示生成未通过检查，原正文已保留，请重试")
 
-    def enrich_candidate(self, candidate, node, *, key=None, actor=None):
+    def prepare_candidate(self, candidate):
+        """Remove model-supplied publication claims before lesson verification."""
+        candidate.pop('manim_review', None)
+        candidate.pop('sceneSupplement', None)
+        if self.manim:
+            candidate['study_notes'] = strip_generated_scenes(candidate.get('study_notes') or '')
+        return candidate
+
+    def enrich_candidate(self, candidate, node, *, key=None, actor=None, cancelled=lambda: False):
         """A separate graphic decision covers any subject; no keyword/course gate."""
         source = candidate.get("study_notes") or ""
         if self.manim:
+            self.prepare_candidate(candidate)
             source = strip_generated_scenes(source)
             candidate["study_notes"] = source
             if source:
-                spec = self.manim.generate(key, node.get("id"), source, node,
-                                           requested=False, actor=actor)
+                try:
+                    spec = self.manim.generate(key, node.get("id"), source, node,
+                                               requested=False, actor=actor, cancelled=cancelled)
+                except ManimGenerationError as error:
+                    if cancelled():
+                        raise JobError(409, '动画请求已取消，结果未保存') from error
+                    candidate['manim_review'] = dict(status='failed',retryable=True,failure_code=error.failure_code)
+                    return candidate
                 if spec:
-                    candidate["study_notes"] = source.rstrip() + "\n\n" + self.manim.public_fence(spec)
+                    notes = source.rstrip() + "\n\n" + self.manim.public_fence(spec)
+                    if len(notes) > MAX_NOTES:
+                        self.manim.discard(spec['asset_id'])
+                        candidate['manim_review'] = dict(status='failed',retryable=True,failure_code='output_too_long')
+                        return candidate
+                    candidate["study_notes"] = notes
                     candidate["manim_review"] = {"status": "passed", "asset_id": spec["asset_id"]}
             return candidate
         if not source or scenes_in(source):
@@ -114,7 +135,8 @@ class SceneService:
                     self.manim.asset(actor, key.split("/", 1)[0], existing["asset_id"], "manifest")
                     return 200, {"node_id": node_id, "study_notes": source,
                                  "source_notes": source, "reused": True,
-                                 "sceneSupplement": detail.get("sceneSupplement")}
+                                 "sceneSupplement": detail.get("sceneSupplement"),
+                                 "manim_review": detail.get("manim_review")}
                 except JobError:
                     continue
             lesson = strip_generated_scenes(source)
@@ -125,7 +147,9 @@ class SceneService:
                 raise JobError(400, "补充动画超出正文长度限制，原正文已保留")
             try:
                 result = self.repository.append_scene(key, node_id, source, notes,
-                                                      lambda: self.authorize(actor, key))
+                                                      lambda: self.authorize(actor, key),
+                                                      manim_review={'status':'passed','asset_id':spec['asset_id']},
+                                                      expected_node=node)
             except BaseException:
                 self.manim.discard(spec["asset_id"])
                 raise
