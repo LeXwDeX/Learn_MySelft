@@ -11,6 +11,7 @@ from service_limits import MAX_TOPIC, MAX_QUESTION, PATH_MAX_ROUNDS, GEN_WAIT_MA
 from text_utils import clip, history_messages
 from prompts import _path_system
 from scene_contracts import SceneContractError
+from job_execution import check_deadline, remaining_timeout
 from generation_contracts import (
     _json_block,
     _json_list,
@@ -281,6 +282,7 @@ class LearningService:
 
     def node(self, path, body, actor, *, cancelled=lambda: False):
         def check_cancelled():
+            check_deadline()
             if cancelled():
                 raise JobError(409, '资料生成已取消，结果未保存')
         check_cancelled()
@@ -313,7 +315,7 @@ class LearningService:
                 return (200, hit)
             _gate, _owner = self.cache.join(gate_key)
             if not _owner:
-                _gate["ev"].wait(GEN_WAIT_MAX)
+                _gate["ev"].wait(remaining_timeout(GEN_WAIT_MAX))
                 check_cancelled()
                 hit = (
                     _gate["out"]
@@ -355,6 +357,7 @@ class LearningService:
                 try:
                     check_cancelled()
                     stage = "generation"
+                    self.repository.store.job_progress(1, '生成学习正文', attempt + 1, total=5)
                     candidate = _norm_node_detail(
                         _json_block(
                             self.model.nonempty(
@@ -371,9 +374,13 @@ class LearningService:
                     if self.scenes:
                         self.scenes.prepare_candidate(candidate)
                     stage = "verification"
+                    check_cancelled()
+                    self.repository.store.job_progress(2, '独立验题', attempt + 1, total=5)
                     qs = self.verification.checked_questions(
                         candidate["quiz"]["questions"], node=True
                     )
+                    check_cancelled()
+                    self.repository.store.job_progress(3, '检查正文渲染', attempt + 1, total=5)
                     candidate["render_review"] = self.verification.review_rendered(
                         candidate
                     )
@@ -383,6 +390,7 @@ class LearningService:
                     check_cancelled()
                     if self.scenes:
                         stage = 'scene_generation'
+                        self.repository.store.job_progress(4, '生成教学动画', attempt + 1, total=5)
                         try:
                             self.scenes.enrich_candidate(candidate,node,key=mkey,actor=actor,cancelled=cancelled)
                         except SceneContractError as error:
@@ -411,6 +419,8 @@ class LearningService:
                     self.cache.finish(gate_key, _gate, err="node verification failed")
             raise
         try:
+            check_cancelled()
+            self.repository.store.job_progress(5, '保存学习资料', total=5)
             with self.repository.lock, self.repository.store.transaction():
                 check_cancelled()
                 if self.scenes:
@@ -428,7 +438,10 @@ class LearningService:
                 if existing:
                     raise JobError(409, '学习资料已由其他请求生成，本次结果未保存')
                 else:
+                    check_cancelled()
                     self.repository.merge(mkey, {"nodeDetail": {node_id: detail}})
+                    self.repository.store.record_job_effect(detail)
+                    check_cancelled()
         except BaseException:
             try:
                 if self.scenes and self.scenes.manim:

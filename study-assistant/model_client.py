@@ -7,6 +7,7 @@ import urllib.parse
 import urllib.request
 from service_limits import SEARXNG_TIMEOUT
 from text_utils import clip
+import model_transport
 
 
 class ModelClient:
@@ -45,10 +46,9 @@ class ModelClient:
             },
             method="POST",
         )
-        with urllib.request.urlopen(
-            req, timeout=timeout or self.settings.upstream_timeout
-        ) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace"))
+        raw = model_transport.post(req.full_url, payload, dict(req.header_items()),
+                                   timeout or self.settings.upstream_timeout)
+        data = json.loads(raw.decode("utf-8", "replace"))
         return (data.get("choices") or [{}])[0].get("message", {}).get(
             "content", ""
         ) or ""

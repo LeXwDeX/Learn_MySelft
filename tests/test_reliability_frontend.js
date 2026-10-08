@@ -191,5 +191,85 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   load(resume, 'shared/jobs.js');
   assert.equal((await resume.LearnJobs.run('/path/quizmap', examBody, {newOperation:true})).slug, 'exam2');
   assert.equal(examPosts.at(-1), examPosts[1], 'running work survives navigation without a new receipt');
+  const nodeJobs = environment();
+  const nodeRequests = [];
+  const nodeMessages = [];
+  const nodeSet = nodeJobs.LearnUI.set;
+  nodeJobs.LearnUI.set = (key, ...args) => { nodeMessages.push(args[0]); nodeSet(key, ...args); };
+  let nodePoll = 0;
+  const started = Date.now() - 46000;
+  nodeJobs.LearnUser.fetch = async (url, options) => {
+    nodeRequests.push({url, method:options.method, body:options.body && JSON.parse(options.body)});
+    if (options.method === 'POST') return Response.json({job:{id:'node-job', operation:'/path/node', status:'queued',
+      created_ms:1, attempt:2, attempt_started_ms:started, retry_at_ms:Date.now() + 30000, max_attempts:2,
+      auto_retry:true, progress:{step:3,total:5,label:'正文渲染'}}});
+    nodePoll++;
+    return Response.json({job:{id:'node-job', operation:'/path/node', status:nodePoll === 1 ? 'running' : 'succeeded',
+      attempt:2, attempt_started_ms:started, max_attempts:2, auto_retry:true,
+      progress:{step:4,total:5,label:'动画'}, result:{node_detail:'ready'}}});
+  };
+  load(nodeJobs, 'shared/jobs.js');
+  const nodeResult = await nodeJobs.LearnJobs.run('/path/node', {key:'u0/node', node:{id:'n1'}});
+  assert.equal(nodeResult.node_detail, 'ready');
+  assert.equal(nodeRequests.filter(item => item.method === 'POST').length, 1, 'a queued automatic retry is observed without another job submission');
+  assert(nodeRequests.slice(1).every(item => item.method === 'GET' && item.url.endsWith('/jobs/node-job')), 'watch polls the stable job id only');
+  assert(nodeMessages.some(message => message.includes('46 秒')), 'elapsed time uses the current attempt start, not the old receipt creation time');
+  const failedNode = environment(); let retryPosts = 0, jobPosts = 0;
+  failedNode.LearnUser.fetch = async (url, options) => {
+    if (options.method === 'POST' && url.endsWith('/retry')) retryPosts++;
+    if (options.method === 'POST') {
+      jobPosts++;
+      return Response.json({job:{id:'failed-node', operation:'/path/node', status:'failed', error:'模型暂时不可用',
+        error_category:'upstream_unavailable', response_status:503, attempt:2, max_attempts:2, auto_retry:true}});
+    }
+    return Response.json({job:{id:'failed-node', operation:'/path/node', status:'failed', error:'模型暂时不可用',
+      error_category:'upstream_unavailable', response_status:503, attempt:2, max_attempts:2, auto_retry:true}});
+  };
+  load(failedNode, 'shared/jobs.js');
+  await assert.rejects(failedNode.LearnJobs.run('/path/node', {key:'u0/failed', node:{id:'n2'}}), error =>
+    error.status === 'failed' && error.response_status === 503 && error.error_category === 'upstream_unavailable' && error.jobId === 'failed-node');
+  const failedReload = environment(Object.fromEntries(failedNode.storage));
+  failedReload.LearnUser.fetch = failedNode.LearnUser.fetch;
+  load(failedReload, 'shared/jobs.js');
+  await assert.rejects(failedReload.LearnJobs.run('/path/node', {key:'u0/failed', node:{id:'n2'}}));
+  assert.equal(retryPosts, 0, 'reloading a failed node does not spend the server retry budget again');
+  assert.equal(jobPosts, 2, 'recovery resubmits the stable idempotent request only');
+  const readOnlyJobs = environment(); readOnlyJobs.LearnUser.readOnly = true;
+  let readOnlyWrites = 0;
+  readOnlyJobs.LearnUser.fetch = async (url, options) => { if (options.method === 'POST') readOnlyWrites++; return Response.json({job:{id:'readonly-job', operation:'/path/node', status:'failed', error:'failed'}}); };
+  load(readOnlyJobs, 'shared/jobs.js');
+  await assert.rejects(readOnlyJobs.LearnJobs.watch({id:'readonly-job', operation:'/path/node', status:'failed'}));
+  assert.equal(readOnlyJobs.notices.get('job-readonly-job')[2], null, 'read-only watch does not expose a retry write action');
+  assert.equal(readOnlyWrites, 0, 'watch never writes for a read-only viewer');
+  const examsFail = environment(); let examRetry = 0;
+  examsFail.LearnUser.fetch = async (url, options) => {
+    if (url.endsWith('/retry')) { examRetry++; return Response.json({job:{id:'exam-failed', operation:'/path/requiz', status:'succeeded', result:{round:2}}}); }
+    if (options.method === 'POST') return Response.json({job:{id:'exam-failed', operation:'/path/requiz', status:'failed', error:'题目校验失败'}});
+    return Response.json({job:{id:'exam-failed', operation:'/path/requiz', status:'failed', error:'题目校验失败'}});
+  };
+  load(examsFail, 'shared/jobs.js');
+  assert.equal((await examsFail.LearnJobs.run('/path/requiz', {key:'u0/quiz'}, {newOperation:true})).round, 2);
+  assert.equal(examRetry, 1, 'non-node operations keep their existing automatic recovery behavior');
+  const timedWatch = environment();
+  let clock = 1000000000, timerCount = 0;
+  timedWatch.Date = class extends Date { static now() { return clock; } };
+  timedWatch.setTimeout = (callback, delay) => {
+    if (delay === 1500) { timerCount++; clock += timerCount === 1 ? 3600001 : delay; return setTimeout(callback, 1); }
+    return setTimeout(callback, delay);
+  };
+  const continuationRequests = [];
+  timedWatch.LearnUser.fetch = async (url, options) => {
+    continuationRequests.push({url, method: options.method});
+    assert.equal(options.method, 'GET', 'continuing a timed-out watch must only read the job');
+    return Response.json({job:{id:'timeout-job', operation:'/path/node', status:continuationRequests.length === 1 ? 'running' : 'succeeded', result:{restored:true}}});
+  };
+  load(timedWatch, 'shared/jobs.js');
+  await assert.rejects(timedWatch.LearnJobs.watch({id:'timeout-job', operation:'/path/node', status:'running', created_ms:1}));
+  const timeoutNotice = timedWatch.notices.get('job-timeout-job');
+  assert.equal(timeoutNotice[3], '继续读取任务');
+  assert.deepEqual(await timeoutNotice[2](), {restored:true});
+  assert.equal(timedWatch.reloaded, true, 'successful continuation refreshes so the page can restore the saved effect');
+  assert.deepEqual(continuationRequests.map(item => item.url), ['http://localhost:8101/jobs/timeout-job', 'http://localhost:8101/jobs/timeout-job']);
+  assert.equal(continuationRequests.filter(item => item.method === 'POST').length, 0, 'continuation must not submit or retry a job');
   console.log('PASS ordered saves, offline retry, protected recovery, task deduplication and reconnect');
 })().catch(error => { console.error(error); process.exitCode = 1; });

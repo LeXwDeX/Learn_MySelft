@@ -99,7 +99,9 @@ class JobDiagnosticsTests(unittest.TestCase):
             )
             self.addCleanup(self.app.close)
             store = self.app.repository.store
-            store.local.job_id = "node-diagnostics"
+            # A persisted progress row requires a real receipt, as production does.
+            receipt = JobQueue(store, lambda *args:(200,{})).submit('u0', 'node-diagnostics', '/path/node', {'key':'u0/diagnostics'})
+            store.local.job_id = receipt['id']
 
             def rejected_verification(*args, **kwargs):
                 raise harness.QuizContractError("SENSITIVE_MODEL_ANSWER")
@@ -132,7 +134,7 @@ class JobDiagnosticsTests(unittest.TestCase):
             self.assertEqual(len(originals), 3)
             self.assertTrue(
                 all(
-                    r["stage"] == "verification" and r["job_id"] == "node-diagnostics"
+                    r["stage"] == "verification" and r["job_id"] == receipt['id']
                     for r in originals
                 )
             )

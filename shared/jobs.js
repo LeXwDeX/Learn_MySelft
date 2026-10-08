@@ -51,6 +51,8 @@
       if (!response.ok || data.error) {
         var error = new Error(data.error || '任务请求失败');
         error.status = response.status;
+        error.response_status = response.status;
+        error.error_category = data.error_category || null;
         throw error;
       }
       return data;
@@ -69,10 +71,17 @@
       (progress.attempt > 1 ? '（第 ' + progress.attempt + ' 次生成）' : '');
   }
   function announce(job, callback) {
-    var elapsed = Math.max(0, Math.round((Date.now() - job.created_ms) / 1000));
-    var message = (labels[job.operation] || '学习任务') + (job.status === 'queued' ? '：排队中' : '：正在处理');
-    message += ' · 已等待 ' + elapsed + ' 秒，离开页面后仍会继续';
-    if (job.operation === '/path/requiz') message = '正在准备新的题目，目前进度：' + quizProgress(job) + '\n已等待 ' + elapsed + ' 秒，离开页面后仍会继续。';
+    var elapsed = job.attempt_started_ms ? Math.max(0, Math.round((Date.now() - job.attempt_started_ms) / 1000)) : null;
+    var message = labels[job.operation] || '学习任务';
+    if (job.status === 'queued' && job.retry_at_ms && job.retry_at_ms > Date.now()) {
+      message += '：等待自动重试（约 ' + Math.ceil((job.retry_at_ms - Date.now()) / 1000) + ' 秒）';
+    } else if (job.status === 'queued') message += '：排队中';
+    else message += '：正在处理';
+    if (elapsed !== null) message += ' · 本次尝试 ' + elapsed + ' 秒';
+    if (job.auto_retry && job.max_attempts > 1) message += ' · 自动重试 ' + Math.max(0, (job.attempt || 0) - 1) + '/' + (job.max_attempts - 1);
+    if (job.progress) message += ' · 阶段 ' + job.progress.step + '/' + job.progress.total + '：' + job.progress.label;
+    if (job.operation === '/path/requiz') message = '正在准备新的题目，目前进度：' + quizProgress(job) +
+      (elapsed === null ? '\n等待任务开始。' : '\n本次尝试 ' + elapsed + ' 秒。');
     showJob(job, message);
     if (callback) callback(message);
   }
@@ -102,16 +111,30 @@
     var job = accepted.job;
     receipt.id = job.id;
     saveReceipt(key, receipt);
-    // A fresh user operation or resumed page is one retry opportunity. Polling
-    // never resubmits a failed job on its own.
-    if (job.status === 'failed' || job.status === 'interrupted') job = (await request('/jobs/' + job.id + '/retry', {})).job;
+    // Node retries consume a server-side attempt. Only an explicit user action
+    // may spend that budget; a page reload only resumes the existing receipt.
+    if ((job.status === 'failed' || job.status === 'interrupted') &&
+        (operation !== '/path/node' || options.manualRetry)) {
+      job = (await request('/jobs/' + job.id + '/retry', {})).job;
+    }
     return watch(job, options);
   }
   async function watch(job, options) {
     var deadline = Date.now() + 3600000;
     while (job.status === 'queued' || job.status === 'running') {
       announce(job, options.onStatus);
-      if (Date.now() > deadline) throw new Error('任务仍在后台处理，请稍后从资料库继续');
+      if (Date.now() > deadline) {
+        var timeout = new Error('已停止自动读取。后台任务可能仍在处理；点击“继续读取任务”可继续查看同一任务。');
+        timeout.jobId = job.id; timeout.status = job.status; timeout.response_status = job.response_status;
+        timeout.error_category = 'watch_timeout';
+        showJob(job, timeout.message, 'error', function () {
+          return watch(job, options).then(function (result) {
+            location.reload();
+            return result;
+          });
+        }, '继续读取任务');
+        throw timeout;
+      }
       await delay(1500);
       try { job = (await request('/jobs/' + job.id)).job; }
       catch (error) {
@@ -124,12 +147,13 @@
       var detail = job.error || '任务未完成，请重试';
       if (job.response_status >= 500 && !/错误|校验/.test(detail)) detail = '服务端错误（HTTP ' + job.response_status + '）：' + detail;
       var failed = new Error(detail);
-      failed.jobId = job.id;
+      failed.jobId = job.id; failed.status = job.status;
+      failed.response_status = job.response_status; failed.error_category = job.error_category || null;
       var message = job.operation === '/path/requiz' ? '新题准备失败 · ' + quizProgress(job) + '\n' + failed.message + '\n旧题和作答已保留。' : failed.message;
-      showJob(job, message, 'error', function () {
+      showJob(job, message, 'error', context.readOnly ? null : function () {
         if (options.onRetry) return options.onRetry();
         return request('/jobs/' + job.id + '/retry', {}).then(function () { location.reload(); });
-      }, '继续原任务');
+      }, context.readOnly ? null : '继续原任务');
       throw failed;
     }
     if (job.operation === '/path/requiz') {

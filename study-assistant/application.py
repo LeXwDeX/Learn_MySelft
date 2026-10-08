@@ -30,6 +30,7 @@ from scene_service import SceneService
 from manim_renderer import ManimRenderer
 from manim_service import ManimService
 from manim_routes import ManimRoutes
+from job_execution import check_deadline
 
 
 class Application:
@@ -108,6 +109,9 @@ class Application:
         self.authorization.body(actor, user_id, operation, body)
         if self.repository.material(body["key"]) is None:
             raise JobError(404, "学习资料已删除或不存在，任务未执行")
+        if operation == '/path/node':
+            # The callback raises the deadline error; it must not become a 409.
+            return self.learning.node(operation, body, actor, cancelled=check_deadline)
         return self.dispatch(operation, body, actor)
 
     def jobs(self):
