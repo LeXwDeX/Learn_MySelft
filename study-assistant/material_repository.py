@@ -470,6 +470,11 @@ class MaterialRepository:
                             ):
                                 if field in current:
                                     obj[field] = current[field]
+                        if is_material and current:
+                            # Older clients serialize only known root fields. Keep
+                            # omitted fields after applying the existing protections.
+                            for field, stored_value in current.items():
+                                obj.setdefault(field, stored_value)
                         value = json.dumps(obj, ensure_ascii=False)
                     if len(value) > STATE_MAX_VALUE:
                         raise ValueError("state value too large")
