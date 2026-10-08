@@ -9,7 +9,7 @@ import urllib.error
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
 from background_jobs import JobError
-from manim_service import METADATA_LIMITS, PROMPT, TEACHING_REFERENCE_CODE, TEACHING_REFERENCE_ENVELOPE, SWAP_REFERENCE_ENVELOPE, ManimService, ManimGenerationError
+from manim_service import METADATA_LIMITS, PROMPT, TEACHING_REFERENCE_CODE, TEACHING_REFERENCE_ENVELOPE, SWAP_REFERENCE_ENVELOPE, validate_relation, compile_relation, ManimService, ManimGenerationError
 from manim_contracts import ManimContractError, validate_source, validate_teaching_plan
 from manim_renderer import ManimUnavailable
 from prompts import MATH_VISUAL_TEACHING
@@ -34,6 +34,13 @@ class Model:
         if isinstance(messages[1]['content'],list): return json.dumps({'ok':True,'issues':[]})
         return json.dumps({'needed':True,'reason':'展示变化','title':'角的变化','summary':'观察角旋转后两边的关系','teaching_plan':{'objective':'理解角度表示两条边的张开程度','visual_reason':'旋转一条边能表现角的大小变化','observe':'一边转动时两边张开的程度如何变化','steps':[{'change':'旋转一条边，使夹角变大','why':'角的大小取决于两条边的相对方向'}]},'code':'class LessonScene(TeachingScene):\n def construct(self):\n  self.next_step("观察")'})
 
+class Planner:
+    def __init__(self, objective='理解角度表示两条边的张开程度'):
+        self.objective = objective
+    def json(self, messages, **kwargs):
+        return json.dumps({'needed':True,'reason':'选择单一关系','objective':self.objective,
+                           'recipe':'native','parameters':{}})
+
 class Renderer:
     def __init__(self,path): self.state_dir=path; self.hook=lambda:None
     def render(self,source):
@@ -46,7 +53,7 @@ class ManimServiceTests(unittest.TestCase):
         self.repo=Repository(); self.renderer=Renderer(self.temp.name)
         def authorize(actor,key):
             if actor != key.split('/')[0]: raise JobError(403,'denied')
-        self.service=ManimService(self.repo,Model(),self.renderer,authorize)
+        self.service=ManimService(self.repo,Model(),self.renderer,authorize,planner_model=Planner())
     def generate(self): return self.service.generate('u1/learn-path-v1-a','n1','候选新正文',{'id':'n1'},actor='u1')
     def test_short_reference_passes_source_and_two_step_plan_contract(self):
         self.assertEqual(validate_source(TEACHING_REFERENCE_CODE), TEACHING_REFERENCE_CODE)
@@ -111,6 +118,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(payload['study_notes'], '候选新正文')
 
     def test_native_shear_reference_still_requires_two_media_steps_and_strict_review(self):
+        self.service.planner_model = Planner(TEACHING_REFERENCE_ENVELOPE['teaching_plan']['objective'])
         from unittest.mock import patch
         rendered = self.renderer.render('ignored')
         rendered['manifest']['steps'] = [{}, {}]
@@ -131,6 +139,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertIn('最多三位小数', PROMPT)
 
     def test_native_shear_reference_is_not_published_when_teaching_review_rejects(self):
+        self.service.planner_model = Planner(TEACHING_REFERENCE_ENVELOPE['teaching_plan']['objective'])
         from unittest.mock import patch
         rendered = self.renderer.render('ignored')
         rendered['manifest']['steps'] = [{}, {}]
@@ -403,10 +412,11 @@ class ManimServiceTests(unittest.TestCase):
 
     def test_automatic_animation_can_decline_without_render_or_review(self):
         from unittest.mock import patch
-        decision=dict(needed=False,reason='术语定义用表格更清楚',title='',summary='',teaching_plan=None,code='')
-        with patch.object(self.service.model,'json',return_value=json.dumps(decision)) as model,patch.object(self.renderer,'render') as render:
+        decision=dict(needed=False,reason='术语定义用表格更清楚',objective='',recipe=None,parameters={})
+        with patch.object(self.service.planner_model,'json',return_value=json.dumps(decision)) as model,patch.object(self.service.model,'json') as code_model,patch.object(self.renderer,'render') as render:
             self.assertIsNone(self.service.generate('u1/learn-path-v1-a','n1','正文',{},requested=False,actor='u1'))
             self.assertEqual(model.call_count,1)
+            code_model.assert_not_called()
             render.assert_not_called()
 
     def test_attempt_diagnostics_contain_only_categories_without_private_feedback(self):
@@ -578,3 +588,190 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(row['upstream_http_status'],429)
         self.assertEqual(row['stage'],'model_generation')
         self.assertNotIn('PRIVATE_','\n'.join(captured.output))
+
+
+class RelationPlannerTests(unittest.TestCase):
+    # Renderer is a fake: these tests prove orchestration, not media quality.
+    setUp = ManimServiceTests.setUp
+    generate = ManimServiceTests.generate
+    def relation(self, recipe='native', parameters=None):
+        return dict(needed=True, reason='单一关系', objective='理解角度表示两条边的张开程度',
+                    recipe=recipe, parameters={} if parameters is None else parameters)
+
+    def two_step_render(self):
+        value=self.renderer.render('ignored')
+        value['manifest']['steps']=[{},{}]
+        value['review_frames']=[dict(start=png(),middle=png(),result=png()) for _ in range(2)]
+        return value
+
+    def test_planner_default_uses_same_model_and_small_per_request_limit(self):
+        from unittest.mock import patch
+        self.service.planner_model=self.service.model
+        self.service.generation_token_limit=512
+        good=self.service.model.json([{}, {'content':'generation'}])
+        with patch.object(self.service.model,'json',side_effect=[json.dumps(self.relation()),good,'{"ok":true,"issues":[]}']) as model:
+            self.generate()
+        self.assertEqual(model.call_count,3)
+        first=model.call_args_list[0]
+        self.assertEqual(first.kwargs,dict(temperature=0,max_tokens=512,reasoning_effort='none'))
+        payload=json.loads(first.args[0][1]['content'])
+        self.assertEqual(payload['node'],self.repo.doc['plan']['nodes'][0])
+        self.assertEqual(payload['study_notes'],'候选新正文')
+        code_payload=json.loads(model.call_args_list[1].args[0][1]['content'])
+        self.assertEqual(code_payload['focus'],self.relation()['objective'])
+        self.assertEqual(model.call_args_list[2].kwargs,{'temperature':0})
+
+    def test_real_model_client_transport_planning_generation_review_payloads(self):
+        from unittest.mock import patch
+        from model_client import ModelClient
+        import model_transport
+        settings=type('Settings',(),dict(llm_model='fixture',llm_base='http://127.0.0.1',max_output_tokens=800,upstream_timeout=1))()
+        good=self.service.model.json([{}, {'content':'generation'}])
+        self.service.model=ModelClient(settings)
+        self.service.planner_model=self.service.model
+        self.service.generation_token_limit=800
+        replies=[json.dumps(self.relation()),good,'{"ok":true,"issues":[]}']
+        responses=[json.dumps({'choices':[{'message':{'content':text}}]}).encode() for text in replies]
+        with patch.object(model_transport,'post',side_effect=responses) as transport:
+            self.generate()
+        bodies=[json.loads(call.args[1]) for call in transport.call_args_list]
+        self.assertEqual([(b['max_tokens'],b['reasoning_effort']) for b in bodies],[(800,'none'),(800,'none'),(800,'max')])
+        planning=json.loads(bodies[0]['messages'][1]['content'])
+        native=json.loads(bodies[1]['messages'][1]['content'])
+        self.assertEqual(planning['node'],self.repo.doc['plan']['nodes'][0])
+        self.assertEqual(planning['study_notes'],'候选新正文')
+        self.assertEqual(native['focus'],self.relation()['objective'])
+        self.assertIsInstance(bodies[2]['messages'][1]['content'],list)
+        self.assertEqual(self.service.model.think,{'reasoning_effort':'max'})
+
+    def test_known_teaching_failure_native_repair_can_succeed(self):
+        from unittest.mock import patch
+        value=self.relation('shear_basis',{'k':1.5});expected=compile_relation(value)
+        native=json.loads(json.dumps(expected))
+        native['code']='class LessonScene(TeachingScene):\n def construct(self):\n  self.next_step("第一步")\n  self.next_step("第二步")'
+        with patch.object(self.service.planner_model,'json',return_value=json.dumps(value)),patch.object(self.service.model,'json',side_effect=['{"ok":false,"issues":["运动歧义"]}',json.dumps(native),'{"ok":true,"issues":[]}']) as model,patch.object(self.renderer,'render',return_value=self.two_step_render()) as renderer:
+            self.generate()
+        self.assertEqual(renderer.call_count,2)
+        self.assertEqual(renderer.call_args.args[0],native['code'])
+        payload=json.loads(model.call_args_list[1].args[0][1]['content'])
+        self.assertEqual(payload['focus'],expected['teaching_plan']['objective'])
+        self.assertEqual(payload['previous_teaching_plan'],expected['teaching_plan'])
+
+    def test_known_repeated_technical_failure_stops_after_second_candidate(self):
+        from unittest.mock import patch
+        value=self.relation('shear_basis',{'k':1});expected=compile_relation(value)
+        with patch.object(self.service.planner_model,'json',return_value=json.dumps(value)) as planner,patch.object(self.service.model,'json',return_value=json.dumps(expected)) as model,patch.object(self.renderer,'render',side_effect=ManimContractError('render failed')) as renderer:
+            with self.assertRaises(ManimGenerationError):self.generate()
+        self.assertEqual(planner.call_count,1);self.assertEqual(model.call_count,1);self.assertEqual(renderer.call_count,2)
+        self.assertFalse(self.service.root.exists())
+
+    def test_planner_token_limit_and_authorization_before_any_call(self):
+        from unittest.mock import patch
+        with patch.object(self.service.planner_model,'json',wraps=self.service.planner_model.json) as planner:
+            self.generate()
+        self.assertEqual(planner.call_args.kwargs['max_tokens'],2048)
+        with patch.object(self.service.planner_model,'json') as planner,patch.object(self.renderer,'render') as renderer:
+            with self.assertRaises(JobError) as raised:
+                self.service.generate('u1/learn-path-v1-a','n1','正文',{},actor='u2')
+            self.assertEqual(raised.exception.status,403)
+            planner.assert_not_called();renderer.assert_not_called()
+
+    def test_planner_invalid_fails_once_without_code_or_render(self):
+        from unittest.mock import patch
+        invalid=[dict(self.relation(),extra=True),dict(self.relation(),objective='x'*121),
+                 dict(self.relation(),recipe='unknown'),dict(self.relation(),parameters={'extra':1}),
+                 self.relation('shear_basis',{'k':True}),self.relation('shear_basis',{'k':float('nan')}),
+                 self.relation('shear_basis',{'k':float('inf')}),self.relation('shear_basis',{'k':1.0001}),
+                 self.relation('shear_basis',{'k':10**400}),self.relation('shear_basis',{'k':1,'extra':0}),
+                 self.relation('swap_components',{'values':[True,2,3]}),
+                 self.relation('swap_components',{'values':[1,1,3]}),
+                 self.relation('swap_components',{'values':[-10,9,0]}),
+                 dict(needed=False,reason='静态',objective='',recipe=None,parameters={})]
+        for value in invalid:
+            with self.subTest(value=value),patch.object(self.service.planner_model,'json',return_value=json.dumps(value)) as planner,patch.object(self.service.model,'json') as model,patch.object(self.renderer,'render') as renderer:
+                with self.assertRaises(ManimGenerationError):self.generate()
+                self.assertEqual(planner.call_count,1)
+                model.assert_not_called();renderer.assert_not_called()
+        self.assertFalse(self.service.root.exists())
+
+    def test_compiled_parameters_have_independent_mathematical_expectations(self):
+        shear=compile_relation(validate_relation(self.relation('shear_basis',{'k':1.001}),True))
+        plan=shear['teaching_plan']
+        self.assertIn('A=[[1,1.001],[0,1]]',plan['objective'])
+        self.assertIn('e2=(0,1)变为(1.001,1)',plan['objective'])
+        self.assertNotIn('(1,1)',json.dumps(plan,ensure_ascii=False))
+        call=next(n for n in ast.walk(ast.parse(shear['code'])) if isinstance(n,ast.Call))
+        self.assertEqual(ast.literal_eval(call.keywords[0].value),1.001)
+        swap=compile_relation(validate_relation(self.relation('swap_components',{'values':[-9,9,-9]}),True))
+        call=next(n for n in ast.walk(ast.parse(swap['code'])) if isinstance(n,ast.Call))
+        self.assertEqual(ast.literal_eval(call.keywords[0].value),(-9,9,-9))
+        self.assertIn('使(-9,9,-9)变为(9,-9,-9)',swap['teaching_plan']['objective'])
+        self.assertIn('第三分量-9',swap['teaching_plan']['observe'])
+        self.assertIn('建立(-9,9,-9)',swap['teaching_plan']['steps'][0]['change'])
+        self.assertIn('显示(9,-9,-9)',swap['teaching_plan']['steps'][1]['change'])
+
+    def test_known_parameters_compile_code_and_plan_then_review_only(self):
+        from unittest.mock import patch
+        for value in [self.relation('shear_basis',{'k':1.001}),self.relation('swap_components',{'values':[-9,9,-9]})]:
+            expected=compile_relation(validate_relation(value,True))
+            with self.subTest(recipe=value['recipe']),patch.object(self.service.planner_model,'json',return_value=json.dumps(value)),patch.object(self.service.model,'json',return_value='{"ok":true,"issues":[]}') as model,patch.object(self.renderer,'render',return_value=self.two_step_render()) as renderer:
+                self.generate()
+                renderer.assert_called_once_with(expected['code'])
+                self.assertEqual(model.call_count,1)
+                review=json.loads(model.call_args.args[0][1]['content'][0]['text'])
+                self.assertEqual(review['teaching_plan'],expected['teaching_plan'])
+                self.assertEqual(len(review['manifest']['steps']),2)
+                self.assertNotEqual(expected['teaching_plan']['objective'],value['objective'])
+
+    def test_known_teaching_repair_falls_back_with_same_focus_and_stops_on_repeat(self):
+        from unittest.mock import patch
+        value=self.relation('shear_basis',{'k':0.5});expected=compile_relation(value)
+        rejected='{"ok":false,"issues":["动作不清楚"]}'
+        with patch.object(self.service.planner_model,'json',return_value=json.dumps(value)) as planner,patch.object(self.service.model,'json',side_effect=[rejected,json.dumps(expected),rejected]) as model,patch.object(self.renderer,'render',return_value=self.two_step_render()) as renderer:
+            with self.assertRaises(ManimGenerationError):self.generate()
+        self.assertEqual(planner.call_count,1);self.assertEqual(renderer.call_count,2);self.assertEqual(model.call_count,3)
+        payload=json.loads(model.call_args_list[1].args[0][1]['content'])
+        self.assertEqual(payload['focus'],expected['teaching_plan']['objective'])
+        self.assertEqual(payload['previous_code'],expected['code'])
+        self.assertEqual(payload['previous_teaching_plan'],expected['teaching_plan'])
+        self.assertFalse(self.service.root.exists())
+
+    def test_known_technical_then_teaching_failure_allows_only_third_candidate(self):
+        from unittest.mock import patch
+        value=self.relation('swap_components',{'values':[3,-1,4]});expected=compile_relation(value)
+        rendered=self.two_step_render()
+        with patch.object(self.service.planner_model,'json',return_value=json.dumps(value)) as planner,patch.object(self.renderer,'render',side_effect=[ManimContractError('render failed'),rendered,rendered]) as renderer,patch.object(self.service.model,'json',side_effect=[json.dumps(expected),'{"ok":false,"issues":["重叠"]}',json.dumps(expected),'{"ok":true,"issues":[]}']) as model:
+            self.generate()
+        self.assertEqual(planner.call_count,1);self.assertEqual(renderer.call_count,3);self.assertEqual(model.call_count,4)
+        for index in [0,2]:
+            payload=json.loads(model.call_args_list[index].args[0][1]['content'])
+            self.assertEqual(payload['focus'],expected['teaching_plan']['objective'])
+
+    def test_changed_native_focus_is_rejected_before_render(self):
+        from unittest.mock import patch
+        good=json.loads(self.service.model.json([{}, {'content':'generation'}]))
+        good['teaching_plan']['objective']='额外目标'
+        with patch.object(self.service.model,'json',return_value=json.dumps(good)) as model,patch.object(self.renderer,'render') as renderer:
+            with self.assertRaises(ManimGenerationError):self.generate()
+        self.assertEqual(model.call_count,2);renderer.assert_not_called()
+
+    def test_planning_transport_deadline_and_cancel_stop_without_candidate(self):
+        from unittest.mock import patch
+        import time
+        from job_execution import execution_budget,JobDeadlineExceeded
+        with patch.object(self.service.planner_model,'json',side_effect=TimeoutError()) as planner,patch.object(self.service.model,'json') as model:
+            with self.assertRaises(ManimGenerationError) as raised:self.generate()
+            self.assertEqual(raised.exception.failure_code,'model_unavailable');self.assertEqual(planner.call_count,1);model.assert_not_called()
+        def expire(*args,**kwargs):
+            time.sleep(.04)
+            return json.dumps(self.relation())
+        with patch.object(self.service.planner_model,'json',side_effect=expire),patch.object(self.service.model,'json') as model,execution_budget(.02):
+            with self.assertRaises(JobDeadlineExceeded):self.generate()
+            model.assert_not_called()
+        cancelled=[False]
+        def cancel(*args,**kwargs):
+            cancelled[0]=True
+            return json.dumps(self.relation())
+        with patch.object(self.service.planner_model,'json',side_effect=cancel),patch.object(self.service.model,'json') as model:
+            with self.assertRaises(JobError) as raised:self.service.generate('u1/learn-path-v1-a','n1','正文',{},actor='u1',cancelled=lambda:cancelled[0])
+            self.assertEqual(raised.exception.status,409);model.assert_not_called()
