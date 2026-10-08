@@ -11,7 +11,8 @@ class Element {
   setAttribute(key, value) { this.attributes[key] = value; }
   addEventListener(key, fn) { this.listeners[key] = fn; }
   get isConnected() { return this === document.body || Boolean(this.parentElement && this.parentElement.isConnected); }
-  focus() { document.activeElement = this; }
+  focus(options) { this.focusOptions = options; document.activeElement = this; }
+  scrollIntoView(options) { this.scrollOptions = options; this.scrollCalls = (this.scrollCalls || 0) + 1; }
   querySelectorAll(selector) { const found = []; const cls = selector.slice(1); this.children.forEach(node => { if ((node.className || '').split(' ').includes(cls)) found.push(node); found.push(...node.querySelectorAll(selector)); }); return found; }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   after(node) { this.parentElement.appendChild(node); }
@@ -44,6 +45,9 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
   await flush(); assert.equal(view.button.hidden, false);
   view.button.click(); await flush();
   assert.equal(view.panel.hidden, false); assert(view.summary.textContent.includes('300 秒'));
+  assert.equal(view.panel.focusOptions.preventScroll, true, 'panel focus must not center a long panel');
+  assert.equal(view.header.scrollCalls, 1, 'explicit open positions the short header');
+  assert.equal(view.panel.scrollCalls, undefined, 'long panel is never the scroll target');
   assert.equal(view.timeline.children.length, 2);
   const requestRow = view.timeline.children[0]; const text = requestRow.querySelector('.learn-job-conversation');
   assert.equal(text.textContent, '[user]\n<img src=x onerror=attack()>'); assert(text.hidden, 'answers stay hidden before confirmation');
@@ -54,6 +58,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
   view.retry.click(); await flush();
   assert.strictEqual(view.timeline.children[0], requestRow, 'unchanged message DOM survives refresh');
   assert.equal(view.timeline.scrollTop, 91); assert.strictEqual(document.activeElement, view.reveal);
+  assert.equal(view.header.scrollCalls, 1, 'observe and read must not reposition an open panel');
   assert.equal(text.hidden, false, 'confirmation survives polling');
   assert.equal(view.timeline.children.length, 3);
   assert.equal(view.timeline.children[2].querySelector('.learn-job-error-frames').hidden, false, 'error locations do not require answer confirmation');
@@ -61,6 +66,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
   const moved = env.LearnJobDetails.mount(newHost, {key: job.key, nodeId: job.node_id, operation: job.operation, panelHost: newPanelHost});
   assert.strictEqual(view, moved, 'card rebuild reuses the open panel');
   assert.equal(panelHost.children.length, 0); assert.equal(moved.panel.hidden, false);
+  assert.equal(view.header.scrollCalls, 1, 'remount must not reposition an open panel');
   moved.panel.key('Escape'); assert(moved.panel.hidden); assert.strictEqual(document.activeElement, moved.button);
   fail = true; moved.button.click(); await flush(); assert.equal(moved.retry.hidden, false); assert(moved.note.textContent.includes('offline'));
   assert.equal(moved.timeline.children.length, 3, 'network failure retains prior evidence');

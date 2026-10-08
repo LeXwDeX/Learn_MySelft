@@ -163,6 +163,7 @@
       trigger.hidden = true; trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-controls', panel.id);
       view = {options: options, panel: panel, button: trigger, rows: new Map(), epoch: 0, open: false, revealed: false};
       var header = element('div', 'learn-job-detail-header');
+      view.header = header;
       header.appendChild(element('strong', '', '后台任务详情'));
       header.appendChild(button('收起详情', function () { close(view, true); }));
       view.summary = element('p', 'learn-job-detail-summary');
@@ -224,7 +225,10 @@
     if (standalone) view.button.hidden = true;
     if (returnFocus) view.returnFocus = returnFocus;
     view.open = true; view.panel.hidden = false;
-    view.button.setAttribute('aria-expanded', 'true'); view.panel.focus(); read(view);
+    view.button.setAttribute('aria-expanded', 'true');
+    view.panel.focus({preventScroll: true});
+    view.header.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'auto'});
+    read(view);
   }
   window.addEventListener('pagehide', function () { mounts.forEach(function (view) { close(view, false); }); });
   window.LearnJobDetails = Object.freeze({observe: observe, mount: mount, open: open});
