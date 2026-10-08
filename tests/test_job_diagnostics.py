@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import test_state_regressions
 import quiz_harness as harness
+from test_quiz_harness import questions
 from background_jobs import JobQueue, log_job_failure
 from state_store import StateStore
 
@@ -106,12 +107,12 @@ class JobDiagnosticsTests(unittest.TestCase):
             def rejected_verification(*args, **kwargs):
                 raise harness.QuizContractError("SENSITIVE_MODEL_ANSWER")
 
+            candidate = {"study_notes": "固定正文。", "key_points": ["固定要点"],
+                         "examples": [], "misconceptions": [], "quiz": {"questions": questions()}}
             with (
-                patch.object(self.app.model, "nonempty", return_value="{}"),
-                patch(
-                    "learning_service._norm_node_detail",
-                    return_value={"quiz": {"questions": []}},
-                ),
+                patch.object(self.app.model, "nonempty", side_effect=[
+                    json.dumps(candidate), json.dumps(candidate["quiz"]), json.dumps(candidate["quiz"])
+                ]) as model,
                 patch.object(
                     self.app.verification,
                     "checked_questions",
@@ -123,6 +124,13 @@ class JobDiagnosticsTests(unittest.TestCase):
                 self.app.learning.node(
                     "/path/node", {"node": {"id": "n1"}, "spec": {}}, {"id": "u0"}
                 )
+            self.assertEqual(model.call_count, 3)
+            for call in model.call_args_list[1:]:
+                self.assertIn('仅修复测验', call.args[0][0]['content'])
+                repair = json.loads(call.args[0][1]['content'])
+                self.assertEqual(repair['study_notes'], candidate['study_notes'])
+                self.assertEqual(len(repair['questions']), 6)
+                self.assertEqual(repair['validation_error'], 'SENSITIVE_MODEL_ANSWER')
             records = [
                 json.loads(r.getMessage().split(" ", 1)[1]) for r in captured.records
             ]

@@ -26,17 +26,18 @@ class Repository:
         self.doc={'plan':{'nodes':[{'id':'n1','title':'角'}]}}
     def transaction(self): return contextlib.nullcontext()
     def material(self,key): return self.doc
+    def job_progress(self,*args,**kwargs): pass
 
 class Model:
     def json(self,messages,**kwargs):
         if isinstance(messages[1]['content'],list): return json.dumps({'ok':True,'issues':[]})
-        return json.dumps({'needed':True,'reason':'展示变化','title':'角的变化','summary':'分步观察','code':'class LessonScene(TeachingScene):\n def construct(self):\n  self.next_step("观察")'})
+        return json.dumps({'needed':True,'reason':'展示变化','title':'角的变化','summary':'观察角旋转后两边的关系','teaching_plan':{'objective':'理解角度表示两条边的张开程度','visual_reason':'旋转一条边能表现角的大小变化','observe':'一边转动时两边张开的程度如何变化','steps':[{'change':'旋转一条边，使夹角变大','why':'角的大小取决于两条边的相对方向'}]},'code':'class LessonScene(TeachingScene):\n def construct(self):\n  self.next_step("观察")'})
 
 class Renderer:
     def __init__(self,path): self.state_dir=path; self.hook=lambda:None
     def render(self,source):
         self.hook()
-        return {'video':b'video','poster':b'poster','frames':[b'image'],'review_frames':[png()],'manifest':{'steps':[{}]}}
+        return {'video':b'video','poster':b'poster','frames':[b'image'],'review_frames':[dict(start=png(),middle=png(),result=png())],'manifest':{'steps':[{}]}}
 
 class ManimServiceTests(unittest.TestCase):
     def setUp(self):
@@ -55,6 +56,10 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(len(metadata['code_sha256']),64)
         self.assertEqual(metadata['engine'],{'name':'ManimGL','version':'1.7.2'})
         with self.assertRaises(JobError): self.service.asset('u1','u1',spec['asset_id'],'scene.py')
+        with self.assertRaises(JobError): self.service.asset('u1','u1',spec['asset_id'],'teaching-plan.json')
+        plan=json.loads((path.parent/'teaching-plan.json').read_text())
+        self.assertIn(plan['observe'],spec['summary'])
+        self.assertEqual((path.parent/'teaching-plan.json').stat().st_mode & 0o777,0o600)
         with self.assertRaises(JobError): self.service.asset('u2','u1',spec['asset_id'],'video.mp4')
         self.repo.doc=None
         with self.assertRaises(JobError): self.service.asset('u1','u1',spec['asset_id'],'video.mp4')
@@ -189,8 +194,12 @@ class ManimServiceTests(unittest.TestCase):
         from unittest.mock import patch
         with patch.object(self.service.model,'json',wraps=self.service.model.json) as model:
             spec=self.generate()
-        images=model.call_args_list[1].args[0][1]['content'][1:]
-        self.assertEqual(len(images),1)
+        content=model.call_args_list[1].args[0][1]['content']
+        images=[item for item in content if item['type']=='image_url']
+        self.assertEqual(len(images),3)
+        labels=[item['text'] for item in content[1:] if item['type']=='text']
+        self.assertEqual(labels,['步骤1 · 开始','步骤1 · 变化中','步骤1 · 结果'])
+        self.assertIn('teaching_plan',json.loads(content[0]['text']))
         self.assertEqual(base64.b64decode(images[0]['image_url']['url'].split(',',1)[1]),png())
         directory=self.service.root/'u1'/spec['asset_id']
         self.assertEqual((directory/'step-0.png').read_bytes(),b'image')
@@ -201,7 +210,7 @@ class ManimServiceTests(unittest.TestCase):
         self.repo.doc['nodeDetail']={'n1':{'study_notes':'原正文'}}
         original=json.dumps(self.repo.doc,sort_keys=True)
         good=self.renderer.render('ignored')
-        for reviews in (None,[],[png(1280,720)],[b'bad'],[b'x'*(256*1024+1)]):
+        for reviews in (None,[],[png(1280,720)],[b'bad'],[b'x'*(256*1024+1)],[dict(start=png(),result=png())],[dict(start=png(),middle=b'bad',result=png())]):
             with self.subTest(reviews=type(reviews).__name__):
                 broken=dict(good)
                 if reviews is None:broken.pop('review_frames')
@@ -230,6 +239,28 @@ class ManimServiceTests(unittest.TestCase):
             self.assertIn('纯标题或装饰',model.call_args_list[1].args[0][0]['content'])
         self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
         self.assertFalse(self.service.root.exists())
+
+    def test_plan_validation_precedes_render_and_matches_actual_steps(self):
+        from unittest.mock import patch
+        good=json.loads(self.service.model.json([{}, {'content':'generation'}]))
+        missing=dict(good,teaching_plan=None)
+        with patch.object(self.service.model,'json',return_value=json.dumps(missing)),patch.object(self.renderer,'render') as render:
+            with self.assertRaises(ManimGenerationError):self.generate()
+            render.assert_not_called()
+        mismatch=dict(good)
+        mismatch['teaching_plan']=dict(good['teaching_plan'],steps=good['teaching_plan']['steps']*2)
+        with patch.object(self.service.model,'json',return_value=json.dumps(mismatch)) as model:
+            with self.assertRaises(ManimGenerationError):self.generate()
+            self.assertEqual(model.call_count,2)
+        self.assertFalse(self.service.root.exists())
+
+    def test_automatic_animation_can_decline_without_render_or_review(self):
+        from unittest.mock import patch
+        decision=dict(needed=False,reason='术语定义用表格更清楚',title='',summary='',teaching_plan=None,code='')
+        with patch.object(self.service.model,'json',return_value=json.dumps(decision)) as model,patch.object(self.renderer,'render') as render:
+            self.assertIsNone(self.service.generate('u1/learn-path-v1-a','n1','正文',{},requested=False,actor='u1'))
+            self.assertEqual(model.call_count,1)
+            render.assert_not_called()
 
     def test_attempt_diagnostics_contain_only_categories_without_private_feedback(self):
         from unittest.mock import patch

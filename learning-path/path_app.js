@@ -930,14 +930,18 @@ function replayPending() {
 // serverLoad 完成后调用：结果已存在→仅清 pending；否则重放对应阶段
 
 function resumeIfPending() {
+    if (window.LearnUser.readOnly) return false;
     var p = model.state.pending;
     if (!p || !p.kind) return false;
     if (!pendingAlive(p, Date.now())) { model.state.pending = null; persistence.save(); return false; }
     if (p.kind === 'nodes') {   // 批量生成中断：剔除已完成的，继续生成剩余
-      var rem = (p.remaining || []).filter(function (id) { return id && !model.state.nodeDetail[id]; });
+      var rem = (p.remaining || []).filter(function (id) {
+        var detail = model.state.nodeDetail[id];
+        return id && (!detail || detail.manim_review && /^(pending|failed)$/.test(detail.manim_review.status));
+      });
       if (!rem.length) { model.state.pending = null; persistence.save(); hideResumeBar(); return false; }
       showResumeBar('上次批量生成未完成，继续生成剩余 ' + rem.length + ' 个节点…');
-      hooks.genAllStart(rem);
+      hooks.genAllStart(rem, {recovering: true});
       return true;
     }
     if (pendingHasResult(p, model.state)) {
@@ -947,7 +951,8 @@ function resumeIfPending() {
       return false;
     }
     showResumeBar();
-    replayPending();
+    model.session.recoveringGeneration = true;
+    try { replayPending(); } finally { model.session.recoveringGeneration = false; }
     return true;
   }
 
@@ -1090,11 +1095,6 @@ session.genAllManualRetry = false;
 
   // 缺失节点：state.plan.nodes 中 nodeDetail 为空的（含未解锁）
 
-function missingNodeIds() {
-    var nodes = (model.state.plan && model.state.plan.nodes) || [];
-    return nodes.filter(function (n) { return !model.state.nodeDetail[n.id]; }).map(function (n) { return n.id; });
-  }
-
 function genAllBtnSet(text) { var b = format.$('gen-all-btn'); if (b) b.textContent = text; }
 
 function genAllBtnIdleLater(ms, text) {
@@ -1104,10 +1104,6 @@ function genAllBtnIdleLater(ms, text) {
       session.genAllTimer = null;
       if (!session.genAllRunning) genAllBtnSet('一键生成全部节点');
     }, ms);
-  }
-
-function showGenAllError(message) {
-    if (window.LearnUI) window.LearnUI.set('gen-all-error', '批量生成失败：' + message, 'error');
   }
 
 function genAllSyncPending() {
@@ -1143,102 +1139,231 @@ function setCardGenState(id, on) {
 
 // 纯请求：生成某节点的学习材料（不含 UI，供单卡与批量复用）
 
-function requestNodeDetail(id, manualRetry) {
-    var n = domain.nodeById(id);
-    return persistence.post('/path/node', {
-      spec: model.state.spec,
-      node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
-      dep_titles: domain.depTitles(id),
-      key: format.storeKey()
-    }, manualRetry ? {manualRetry: true} : undefined);
+function visualPending(detail) {
+    return !!(detail && detail.manim_review && /^(pending|failed)$/.test(detail.manim_review.status));
+  }
+
+function readyDetail(detail) { return !!detail && !visualPending(detail); }
+
+function missingNodeIds() {
+    return ((model.state.plan && model.state.plan.nodes) || []).filter(function (node) {
+      return !readyDetail(model.state.nodeDetail[node.id]);
+    }).map(function (node) { return node.id; });
+  }
+
+function recoveryError() {
+    var error = new Error('上次任务尚未提交或无法确认。请点击重试，继续准备。');
+    error.error_category = 'recovery_required'; return error;
+  }
+
+function uncertain(error) {
+    return !!(error && (error.error_category === 'watch_timeout' || error.error_category === 'recovery_required' ||
+      error.job && (error.job.status === 'queued' || error.job.status === 'running')));
+  }
+
+function latestJob(jobs, operation, id) {
+    return (jobs || []).filter(function (job) { return job.operation === operation && job.node_id === id; }).sort(function (a, b) {
+      return (b.created_ms || 0) - (a.created_ms || 0);
+    })[0];
+  }
+
+function refreshReview(id, key) {
+    var controller = new AbortController(), timeout = setTimeout(function () { controller.abort(); }, 10000);
+    return window.LearnUser.fetch(window.LearnUser.apiBase + '/state/all', {cache: 'no-store', signal: controller.signal}).then(function (response) {
+      if (!response.ok) return;
+      return response.json();
+    }).then(function (data) {
+      if (key !== format.storeKey() || !data || !data.entries) return;
+      var raw = data.entries[key], saved;
+      try { saved = typeof raw === 'string' ? JSON.parse(raw) : null; } catch (error) { return; }
+      var remote = saved && saved.nodeDetail && saved.nodeDetail[id], current = model.state.nodeDetail[id];
+      if (remote && current && remote.study_notes === current.study_notes && remote.manim_review) current.manim_review = remote.manim_review;
+    }).catch(function () {
+      // A failed diagnostic read must not hide the material or erase the error.
+    }).finally(function () { clearTimeout(timeout); });
+  }
+
+function requestNodeDetail(id, manualRetry, options) {
+    options = options || {};
+    if (window.LearnUser.readOnly) return Promise.reject(new Error('当前视图只读'));
+    var key = format.storeKey(), node = domain.nodeById(id);
+    if (!node) return Promise.reject(new Error('单元已不存在'));
+    var recovering = !!(options.recovering || model.session.recoveringGeneration), jobsPromise;
+    var baseRequest = model.state.pending && model.state.pending.requestId;
+    function live() { return format.storeKey() === key && !!domain.nodeById(id); }
+    function jobOptions(stage) {
+      return {manualRetry: !!manualRetry, notifications: options.notifications,
+        requestId: stage === 'visual' && baseRequest ? baseRequest + ':scene:' + id : undefined,
+        onRetry: function () { return requestNodeDetail(id, true, Object.assign({}, options, {recovering: false})); },
+        onJob: function (job, notice) { if (live() && options.onJob) options.onJob(job, notice, stage); }};
+    }
+    function run(operation, body, stage) {
+      var opts = jobOptions(stage);
+      if (!recovering) return persistence.post(operation, body, opts);
+      if (!window.LearnJobs) return Promise.reject(recoveryError());
+      if (!jobsPromise) jobsPromise = window.LearnJobs.list(key);
+      return jobsPromise.then(function (jobs) {
+        if (!live()) throw recoveryError();
+        var job = latestJob(jobs, operation, id);
+        if (!job) throw recoveryError();
+        return window.LearnJobs.get(job.id).then(function (fullJob) {
+          if (!live()) throw recoveryError();
+          return window.LearnJobs.watch(fullJob, opts);
+        });
+      });
+    }
+    var existing = model.state.nodeDetail[id];
+    var material = existing ? Promise.resolve(existing) : run('/path/node', {
+      spec: model.state.spec, node: {id: node.id, title: node.title, essence: node.essence, objectives: node.objectives || []},
+      dep_titles: domain.depTitles(id), key: key, defer_visual: true
+    }, 'material');
+    return material.then(function (detail) {
+      if (!live()) throw recoveryError();
+      if (!detail || typeof detail.study_notes !== 'string') throw new Error('学习材料格式无效');
+      model.state.nodeDetail[id] = detail;
+      model.session.nodeMaterialStatus[id] = 'ready'; hooks.syncAiMaterial(id);
+      persistence.save(); if (model.session.expandedId === id) hooks.renderNodeDetail(id);
+      if (!visualPending(detail)) return detail;
+      model.session.nodeMaterialStatus[id] = 'generating-animation';
+      if (model.session.expandedId === id) hooks.renderNodeDetail(id);
+      return run('/path/node/scene', {key: key, node: {id: id}, automatic: true}, 'visual').then(function (result) {
+        if (!live()) return detail;
+        var current = model.state.nodeDetail[id];
+        if (!current || !result || result.node_id !== id || typeof result.study_notes !== 'string' ||
+          result.study_notes !== current.study_notes && result.source_notes !== current.study_notes) throw recoveryError();
+        current.study_notes = result.study_notes;
+        if (result.sceneSupplement) current.sceneSupplement = result.sceneSupplement;
+        if (result.manim_review) current.manim_review = result.manim_review;
+        else if (result.needed === false) current.manim_review = {status: 'not_needed'};
+        model.session.nodeMaterialStatus[id] = 'ready'; hooks.syncAiMaterial(id); persistence.save();
+        if (model.session.expandedId === id) hooks.renderNodeDetail(id);
+        return current;
+      }).catch(function (error) {
+        if (!live()) return detail;
+        return refreshReview(id, key).then(function () {
+          if (!live()) return detail;
+          var current = model.state.nodeDetail[id] || detail;
+          if (!uncertain(error) && current.manim_review && current.manim_review.status === 'pending') current.manim_review = Object.assign({}, current.manim_review, {status: 'failed', retryable: true});
+          model.session.nodeMaterialStatus[id] = 'ready'; hooks.syncAiMaterial(id);
+          if (options.onFailure) options.onFailure(error, 'visual');
+          if (model.session.expandedId === id) hooks.renderNodeDetail(id);
+          return current;
+        });
+      });
+    });
+  }
+
+session.batchRows = new Map();
+session.batchOutcomes = new Map();
+session.batchKey = null;
+session.batchPanel = null;
+session.batchSerial = 0;
+
+function batchPanel() {
+    if (session.batchPanel && session.batchPanel.isConnected) return session.batchPanel;
+    var anchor = format.$('resume-bar');
+    if (!anchor || !anchor.ownerDocument) return null;
+    var doc = anchor.ownerDocument, panel = doc.createElement('details'); panel.className = 'generation-task-list';
+    var summary = doc.createElement('summary'); summary.textContent = '查看批量任务';
+    var list = doc.createElement('ol'); panel.appendChild(summary); panel.appendChild(list); anchor.after(panel);
+    session.batchPanel = panel; session.batchSummary = summary; session.batchList = list; return panel;
+  }
+
+function taskRow(id, stage, job, notice) {
+    if (!batchPanel()) return;
+    var rowKey = id + ':' + stage, item = session.batchRows.get(rowKey), doc = session.batchPanel.ownerDocument;
+    if (!item) {
+      item = {row: doc.createElement('li'), text: doc.createElement('p'), button: doc.createElement('button')};
+      item.button.className = 'btn'; item.button.type = 'button'; item.button.textContent = '查看详情';
+      item.button.addEventListener('click', function (event) { if (item.job && window.LearnJobDetails) window.LearnJobDetails.open(item.job, null, event.currentTarget); });
+      item.row.appendChild(item.text); item.row.appendChild(item.button); session.batchList.appendChild(item.row); session.batchRows.set(rowKey, item);
+    }
+    if (job) item.job = job;
+    var node = domain.nodeById(id);
+    item.text.textContent = (node ? node.title : id) + ' · ' + (stage === 'visual' ? '教学动画' : '学习材料') + '：' + (notice && notice.message || '正在准备');
+    item.button.hidden = !item.job || !window.LearnJobDetails;
+  }
+
+function showBatchSummary(current) {
+    if (!window.LearnUI || !session.batchKey) return;
+    var counts = {success: 0, failed: 0, pending: 0};
+    session.batchOutcomes.forEach(function (state) { counts[state]++; });
+    session.genAllSucceeded = counts.success; session.genAllFailed = counts.failed;
+    var message = '批量准备：已完成 ' + counts.success + '/' + session.genAllTotal + '，失败 ' + counts.failed +
+      (counts.pending ? '，待确认 ' + counts.pending : '') + '。' + (current ? ' 当前：' + current : session.genAllRunning ? '' : '可展开任务列表查看结果。');
+    var retry = !session.genAllRunning && session.genAllRemaining.length && !window.LearnUser.readOnly ? function () { return genAllStart(session.genAllRemaining.slice(), {manualRetry: true}); } : null;
+    window.LearnUI.set(session.batchKey, message, counts.failed ? 'error' : session.genAllRunning || counts.pending ? 'info' : 'success', retry, '重试未完成节点', {
+      secondaryLabel: '查看任务列表', secondaryAction: function () { if (batchPanel()) { session.batchPanel.open = true; session.batchSummary.focus(); } }
+    });
+    if (session.batchSummary) session.batchSummary.textContent = '批量任务：已完成 ' + counts.success + '，失败 ' + counts.failed + (counts.pending ? '，待确认 ' + counts.pending : '');
   }
 
 function genAllStart(ids, options) {
-    if (!ids || !ids.length) return;
+    options = options || {};
+    if (window.LearnUser.readOnly || session.genAllRunning || !ids || !ids.length) return Promise.resolve();
+    var key = format.storeKey(), serial = ++session.batchSerial;
+    if (session.batchKey) window.LearnUI && window.LearnUI.clear(session.batchKey);
+    session.batchKey = 'generation-batch-' + key;
+    session.batchRows.clear(); session.batchOutcomes.clear();
+    if (batchPanel()) session.batchList.replaceChildren();
     session.genAllRunning = true; session.genAllPaused = false;
-    session.genAllQueue = ids.slice();
-    session.genAllRemaining = ids.slice();
-    ids.forEach(function (id) { model.session.nodeMaterialStatus[id] = 'generating'; hooks.syncAiMaterial(id); });
-    session.genAllTotal = ids.length;
-    session.genAllIdx = 0;
-    session.genAllSucceeded = 0;
-    session.genAllFailed = 0;
-    session.genAllLastError = '';
+    session.genAllQueue = ids.slice(); session.genAllRemaining = ids.slice(); session.genAllTotal = ids.length; session.genAllIdx = 0;
+    session.genAllSucceeded = 0; session.genAllFailed = 0; session.genAllManualRetry = !!options.manualRetry;
+    session.genAllRecovering = !!options.recovering;
     if (window.LearnUI) window.LearnUI.clear('gen-all-error');
-    session.genAllManualRetry = !!(options && options.manualRetry);
     if (session.genAllTimer) { clearTimeout(session.genAllTimer); session.genAllTimer = null; }
-    workflow.showResumeBar('正在批量生成学习材料（' + ids.length + ' 个节点）…');
-    genAllSyncPending();
-    genAllStep();
+    workflow.hideResumeBar(); genAllSyncPending(); showBatchSummary();
+    return genAllStep(key, serial);
   }
 
-function genAllStep() {
-    if (session.genAllPaused) { genAllFinish('paused'); return; }
-    while (session.genAllQueue.length && model.state.nodeDetail[session.genAllQueue[0]]) {   // 跳过已生成的
-      var doneId = session.genAllQueue.shift();
-      var ri = session.genAllRemaining.indexOf(doneId);
-      if (ri >= 0) session.genAllRemaining.splice(ri, 1);
+function genAllStep(key, serial) {
+    key = key || format.storeKey(); serial = serial || session.batchSerial;
+    if (key !== format.storeKey() || serial !== session.batchSerial) { session.genAllRunning = false; return Promise.resolve(); }
+    if (session.genAllPaused) { genAllFinish('paused'); return Promise.resolve(); }
+    while (session.genAllQueue.length && readyDetail(model.state.nodeDetail[session.genAllQueue[0]])) {
+      var doneId = session.genAllQueue.shift(), ri = session.genAllRemaining.indexOf(doneId);
+      if (ri >= 0) session.genAllRemaining.splice(ri, 1); session.batchOutcomes.set(doneId, 'success');
     }
-    if (!session.genAllQueue.length) { genAllFinish('done'); return; }
-    var id = session.genAllQueue[0];
-    session.genAllIdx++;
-    genAllBtnSet('生成中 ' + session.genAllIdx + '/' + session.genAllTotal + '（点击暂停）');
-    setCardGenState(id, true);
-    requestNodeDetail(id, session.genAllManualRetry).then(function (detail) {
-      setCardGenState(id, false);
-      model.state.nodeDetail[id] = detail;
-      hooks.syncAiMaterial(id);
-      var i0 = session.genAllRemaining.indexOf(id); if (i0 >= 0) session.genAllRemaining.splice(i0, 1);
-      session.genAllSucceeded++;
-      session.genAllQueue.shift();
-      genAllSyncPending();
-      if (model.session.expandedId === id) hooks.renderNodeDetail(id);
-      genAllStep();
+    if (!session.genAllQueue.length) { genAllFinish('done'); return Promise.resolve(); }
+    var id = session.genAllQueue[0], stageError = null;
+    session.genAllIdx++; genAllBtnSet('生成中 ' + session.genAllIdx + '/' + session.genAllTotal + '（点击暂停）'); setCardGenState(id, true);
+    function active() { return key === format.storeKey() && serial === session.batchSerial; }
+    return requestNodeDetail(id, session.genAllManualRetry, {recovering: session.genAllRecovering, notifications: false,
+      onJob: function (job, notice, stage) {
+        if (!active()) return;
+        if (window.LearnUI) window.LearnUI.clear('job-' + job.id);
+        taskRow(id, stage, job, notice); showBatchSummary((domain.nodeById(id) || {}).title + ' · ' + notice.message);
+      }, onFailure: function (error, stage) {
+        stageError = error; taskRow(id, stage, error.job, {message: uncertain(error) ? '结果尚未确认。' + error.message : '失败。' + error.message});
+      }
+    }).then(function (detail) {
+      if (!active()) return;
+      if (readyDetail(detail)) { session.batchOutcomes.set(id, 'success'); var index = session.genAllRemaining.indexOf(id); if (index >= 0) session.genAllRemaining.splice(index, 1); }
+      else session.batchOutcomes.set(id, uncertain(stageError) ? 'pending' : 'failed');
     }).catch(function (error) {
-      setCardGenState(id, false);
-      model.session.nodeMaterialStatus[id] = 'failed';
-      hooks.syncAiMaterial(id);
-      session.genAllFailed++;
-      session.genAllLastError = error && error.message ? error.message : '任务失败';
-      showGenAllError(session.genAllLastError);
-      genAllSyncPending();
-      session.genAllQueue.shift();   // 失败：留在 genAllRemaining，继续下一个
-      genAllStep();
+      if (!active()) return;
+      session.batchOutcomes.set(id, uncertain(error) ? 'pending' : 'failed');
+      model.session.nodeMaterialStatus[id] = 'failed'; hooks.syncAiMaterial(id);
+      taskRow(id, 'material', error.job, {message: error.message});
+    }).then(function () {
+      if (!active()) { session.genAllRunning = false; return; }
+      setCardGenState(id, false); session.genAllQueue.shift(); genAllSyncPending(); showBatchSummary();
+      return genAllStep(key, serial);
     });
   }
 
 function genAllFinish(reason) {
-    session.genAllRunning = false;
-    if (reason === 'paused') {
-      session.genAllRemaining.forEach(function (id) { model.session.nodeMaterialStatus[id] = 'missing'; hooks.syncAiMaterial(id); });
-      session.genAllPaused = false;
-      model.state.pending = null; persistence.save();
-      workflow.hideResumeBar();
-      genAllBtnSet('一键生成全部节点');
-      return;
-    }
-    if (session.genAllRemaining.length) {   // 结束但有失败：保留 pending，按钮短暂提示，再点=重试剩余
-      genAllSyncPending();
-      workflow.hideResumeBar();
-      genAllBtnIdleLater(6000, '成功 ' + session.genAllSucceeded + '，失败 ' + session.genAllFailed + '；重试剩余');
-    } else {
-      model.state.pending = null; persistence.save();
-      if (window.LearnUI) window.LearnUI.clear('gen-all-error');
-      workflow.hideResumeBar();
-      genAllBtnIdleLater(4000, '本轮成功 ' + session.genAllSucceeded + ' 个，失败 0 个 ✓');
-    }
+    session.genAllRunning = false; session.genAllPaused = false;
+    if (reason === 'paused') { model.state.pending = null; persistence.save(); }
+    else genAllSyncPending();
+    workflow.hideResumeBar(); genAllBtnSet(session.genAllRemaining.length ? '继续准备未完成节点' : '一键生成全部节点'); showBatchSummary();
   }
 
 function onGenAllClick() {
-    if (!(model.state.stage === 'learning' && model.state.plan)) return;
-    if (session.genAllRunning) {   // 运行中再点 = 暂停（当前节点完成后停）
-      session.genAllPaused = true;
-      genAllBtnSet('暂停中…（等待当前节点完成）');
-      return;
-    }
-    var ids = missingNodeIds();
-    if (!ids.length) { genAllBtnIdleLater(2000, '已全部生成 ✓'); return; }
-    genAllStart(ids, {manualRetry: true});
+    if (window.LearnUser.readOnly || !(model.state.stage === 'learning' && model.state.plan)) return;
+    if (session.genAllRunning) { session.genAllPaused = true; genAllBtnSet('暂停中…（等待当前节点完成）'); return; }
+    var ids = missingNodeIds(); if (!ids.length) { genAllBtnIdleLater(2000, '已全部生成 ✓'); return; }
+    return genAllStart(ids, {manualRetry: true});
   }
 
   function isRunning() { return session.genAllRunning; }
@@ -2006,13 +2131,13 @@ function sceneWorkKey(key, id) { return key + '#' + id; }
 function sceneSupplementSection(id, d) {
     if (hasLearningScene(d.study_notes, true)) return '';
     var key = format.storeKey(), work = session.sceneWork[sceneWorkKey(key, id)];
-    var busy = !!(work && work.status === 'running');
+    var busy = !!(work && work.status === 'running') || !!(model.session.nodeMaterialStatus && model.session.nodeMaterialStatus[id] === 'generating-animation');
     var notNeeded = !!(work && work.status === 'not-needed' && work.notes === d.study_notes);
     var retryAnimation = !!(d.manim_review && d.manim_review.status === 'failed' && d.manim_review.retryable === true);
     return '<div class="scene-supplement" data-scene-supplement="' + format.esc(id) + '">' +
       '<button class="btn scene-supplement-btn" type="button"' +
       (window.LearnUser.readOnly || busy || notNeeded ? ' disabled' : '') +
-      '>' + (busy ? '正在生成…' : retryAnimation ? '重试教学动画' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
+      '>' + (busy ? '正在生成…' : retryAnimation ? '重试教学动画' : d.manim_review && d.manim_review.status === 'pending' ? '继续准备教学动画' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
       '<span class="scene-supplement-status" role="status" aria-live="polite"></span></div>';
   }
 
@@ -2020,8 +2145,12 @@ function sceneSupplementMessage(id) {
     var work = session.sceneWork[sceneWorkKey(format.storeKey(), id)], detail = model.state.nodeDetail[id];
     if (work && work.status === 'not-needed' && detail && work.notes !== detail.study_notes) return '';
     if (work && work.status === 'running') return '正在生成教学动画…';
+    if (work && work.status === 'pending') return '动画任务的结果尚未确认。正文已保留，可以继续读取原任务。';
     if (work && work.status === 'error') return '动画仍未生成，可以重试。学习正文已保留。';
     if (work && work.status === 'not-needed') return work.message;
+    if (model.session.nodeMaterialStatus && model.session.nodeMaterialStatus[id] === 'generating-animation') return '学习正文已就绪，正在准备教学动画。可以先学习正文。';
+    if (detail && detail.manim_review && detail.manim_review.status === 'pending') return '学习正文已就绪，动画尚未完成。可以先学习正文，或继续准备动画。';
+    if (detail && detail.manim_review && detail.manim_review.status === 'not_needed') return '本单元的正文可直接学习，无需额外动画。';
     if (detail && detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true) return '学习材料已就绪，动画暂未生成，可单独重试。';
     return '';
   }
@@ -2145,6 +2274,7 @@ function applySceneSupplement(id, key, result) {
     if (!node || !detail || !model.state.plan) return false;
     if (!hasLearningScene(result.study_notes)) {
       if (result.needed !== false || result.study_notes !== detail.study_notes) return false;
+      if (result.manim_review) { detail.manim_review = result.manim_review; persistence.save(); assistant.syncAiMaterial(id); }
       var reason = typeof result.reason === 'string' ? result.reason.slice(0, 300) : '';
       session.sceneWork[sceneWorkKey(key, id)] = {
         status: 'not-needed',
@@ -2190,10 +2320,24 @@ function clearSceneSupplementWork(id, key, workKey) {
     if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
   }
 
-function markSceneSupplementError(id, key) {
+function markSceneSupplementError(id, key, error) {
     if (format.storeKey() !== key) return;
-    session.sceneWork[sceneWorkKey(key, id)] = {status: 'error'};
+    var pending = error && (error.error_category === 'watch_timeout' || error.job && /^(queued|running)$/.test(error.job.status));
+    session.sceneWork[sceneWorkKey(key, id)] = {status: pending ? 'pending' : 'error'};
     if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+  }
+
+function refreshSceneReview(id, key) {
+    if (!window.LearnUser.fetch) return Promise.resolve();
+    var controller = new AbortController(), timeout = setTimeout(function () { controller.abort(); }, 10000);
+    return window.LearnUser.fetch(window.LearnUser.apiBase + '/state/all', {cache: 'no-store', signal: controller.signal}).then(function (response) {
+      return response.ok ? response.json() : null;
+    }).then(function (data) {
+      if (format.storeKey() !== key || !data || !data.entries) return;
+      var saved; try { saved = JSON.parse(data.entries[key]); } catch (error) { return; }
+      var remote = saved && saved.nodeDetail && saved.nodeDetail[id], current = model.state.nodeDetail[id];
+      if (remote && current && remote.study_notes === current.study_notes && remote.manim_review) current.manim_review = remote.manim_review;
+    }).catch(function () {}).finally(function () { clearTimeout(timeout); });
   }
 
 function supplementScene(id) {
@@ -2204,17 +2348,23 @@ function supplementScene(id) {
     var work = {status: 'running'};
     session.sceneWork[workKey] = work;
     if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
-    work.promise = persistence.post('/path/node/scene', {key: key, node: {id: id}}, {
+    var staged = detail.manim_review && /^(pending|failed)$/.test(detail.manim_review.status);
+    var body = {key: key, node: {id: id}};
+    if (staged) body.automatic = true;
+    work.promise = persistence.post('/path/node/scene', body, {
+      manualRetry: true,
       newOperation: true,
       onRetry: function () { return format.storeKey() === key ? supplementScene(id) : Promise.resolve(); }
     }).then(function (result) {
       if (format.storeKey() !== key) return;
       consumeSceneSupplement(id, key, result, workKey);
     }).catch(function (error) {
-      markSceneSupplementError(id, key);
-      if (format.storeKey() === key && !error.jobId && !(detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true)) {
-        shell.showError('补充图示失败，请稍后重试。', function () { return supplementScene(id); });
-      }
+      return refreshSceneReview(id, key).then(function () {
+        markSceneSupplementError(id, key, error);
+        if (format.storeKey() === key && !error.jobId && !(detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true)) {
+          shell.showError('补充图示失败，请稍后重试。', function () { return supplementScene(id); });
+        }
+      });
     });
     return work.promise;
   }
@@ -2222,6 +2372,7 @@ function supplementScene(id) {
 function restoreSceneSupplement() {
     if (!window.LearnJobs || window.LearnUser.readOnly || !model.state.plan) return Promise.resolve();
     var key = format.storeKey();
+    if (model.state.pending && model.state.pending.kind === 'nodes') return Promise.resolve();
     return window.LearnJobs.list(key).then(function (jobs) {
       if (key !== format.storeKey()) return;
       var latest = Object.create(null);
@@ -2240,8 +2391,7 @@ function restoreSceneSupplement() {
           }).catch(function () {});
         }
         if (job.status === 'failed' || job.status === 'interrupted') {
-          markSceneSupplementError(id, key);
-          return;
+          return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key); });
         }
         if (job.status === 'cancelled') {
           clearSceneSupplementWork(id, key);
@@ -2254,8 +2404,7 @@ function restoreSceneSupplement() {
         work.promise = window.LearnJobs.get(job.id).then(function (fresh) {
           if (fresh.status === 'succeeded') return fresh.result;
           if (fresh.status === 'failed' || fresh.status === 'interrupted') {
-            markSceneSupplementError(id, key);
-            return null;
+            return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key); return null; });
           }
           if (fresh.status === 'cancelled') {
             clearSceneSupplementWork(id, key, workKey);
@@ -2269,7 +2418,9 @@ function restoreSceneSupplement() {
         }).then(function (result) {
           if (!result || format.storeKey() !== key) return;
           consumeSceneSupplement(id, key, result, workKey);
-        }).catch(function () { markSceneSupplementError(id, key); });
+        }).catch(function (error) {
+          return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key, error); });
+        });
         return work.promise;
       }));
     }).catch(function () {

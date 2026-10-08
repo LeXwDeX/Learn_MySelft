@@ -118,6 +118,23 @@ def mobile_review_frame(result, destination):
     return destination
 
 
+def step_review_frames(video, step, output, index):
+    """Sample the actual motion before its static hold, in a fresh validator."""
+    samples = {'start': step['start_frame'],
+               'middle': (step['start_frame'] + step['hold_start_frame'] - 1) // 2,
+               'result': step['result_frame']}
+    frames = {}
+    for name, frame in samples.items():
+        path = output / ('review-%d-%s.png' % (index, name))
+        run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(video),
+             '-vf', 'select=eq(n\\,%d),scale=240:135:flags=lanczos' % frame,
+             '-frames:v', '1', '-y', str(path)])
+        regular(path, 256 * 1024)
+        run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(path), '-f', 'null', '-'])
+        frames[name] = path.read_bytes()
+    return frames
+
+
 def validate(envelope):
     output = Path('/output')
     if set(envelope) != {'phase','raw_video','steps'}:
@@ -153,15 +170,13 @@ def validate(envelope):
                              stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=30,check=True)
     check_hold_frames(decoded.stdout,manifest)
     filenames = ['video.mp4']
-    review_paths = []
+    review_bundles = []
     for index, step in enumerate(steps):
         filename = 'step-%d.png' % index
         run(['ffmpeg', '-v', 'error', '-i', str(final), '-vf', 'select=eq(n\\,%d)' % step['result_frame'],
              '-frames:v', '1', '-y', str(output / filename)])
         filenames.append(filename)
-        review_path = output / ('review-%d.png' % index)
-        mobile_review_frame(output / filename, review_path)
-        review_paths.append(review_path)
+        review_bundles.append(step_review_frames(final, step, output, index))
     (output / 'poster.png').write_bytes((output / 'step-0.png').read_bytes())
     filenames.append('poster.png')
     files = {}
@@ -175,12 +190,9 @@ def validate(envelope):
         total += len(data)
         files[filename] = base64.b64encode(data).decode()
     review_frames = []
-    for path in review_paths:
-        regular(path, 256 * 1024)
-        run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(path), '-f', 'null', '-'])
-        data = path.read_bytes()
-        total += len(data)
-        review_frames.append(base64.b64encode(data).decode())
+    for bundle in review_bundles:
+        total += sum(len(data) for data in bundle.values())
+        review_frames.append({name: base64.b64encode(data).decode() for name,data in bundle.items()})
     if total > MAX_TOTAL:
         raise ValueError('output oversized')
     print(json.dumps({'manifest':manifest, 'files':files, 'review_frames':review_frames}, separators=(',', ':')))

@@ -59,8 +59,10 @@
     } finally { clearTimeout(timer); }
   }
   function delay(milliseconds) { return new Promise(function (resolve) { setTimeout(resolve, milliseconds); }); }
-  function showJob(job, message, kind, action, label) {
+  function showJob(job, message, kind, action, label, options) {
     if (window.LearnJobDetails) window.LearnJobDetails.observe(job);
+    if (options && options.onJob) options.onJob(job, {message: message, kind: kind || 'info'});
+    if (options && options.notifications === false) return;
     if (!window.LearnUI) return;
     var show = job.operation === '/path/requiz' && window.LearnUI.toast ? window.LearnUI.toast : window.LearnUI.set;
     show('job-' + job.id, message, kind, action, label, window.LearnJobDetails && !String(job.id).startsWith('prepare-') ? {
@@ -73,7 +75,7 @@
     return '步骤 ' + progress.step + '/' + progress.total + ' · ' + progress.label +
       (progress.attempt > 1 ? '（第 ' + progress.attempt + ' 次生成）' : '');
   }
-  function announce(job, callback) {
+  function announce(job, options) {
     var elapsed = job.attempt_started_ms ? Math.max(0, Math.round((Date.now() - job.attempt_started_ms) / 1000)) : null;
     var message = labels[job.operation] || '学习任务';
     if (job.status === 'queued' && job.retry_at_ms && job.retry_at_ms > Date.now()) {
@@ -85,8 +87,8 @@
     if (job.progress) message += ' · 阶段 ' + job.progress.step + '/' + job.progress.total + '：' + job.progress.label;
     if (job.operation === '/path/requiz') message = '正在准备新的题目，目前进度：' + quizProgress(job) +
       (elapsed === null ? '\n等待任务开始。' : '\n本次尝试 ' + elapsed + ' 秒。');
-    showJob(job, message);
-    if (callback) callback(message);
+    showJob(job, message, undefined, undefined, undefined, options);
+    if (options.onStatus) options.onStatus(message);
   }
   async function execute(operation, body, options) {
     var key = receiptKey(operation, body);
@@ -105,7 +107,12 @@
     if (operation === '/path/requiz') showJob(preparing, '正在准备新的题目，目前进度：步骤 0/4 · 提交任务');
     var accepted;
     try {
-      accepted = await request('/jobs', {operation: operation, body: body, request_id: receipt.requestId});
+      if (receipt.id && (options.resumeOnly || operation === '/path/node' || operation === '/path/node/scene')) {
+        accepted = await request('/jobs/' + encodeURIComponent(receipt.id));
+      } else if (options.resumeOnly) {
+        var missing = new Error('未找到原任务。请点击重试，继续准备学习材料。');
+        missing.error_category = 'recovery_required'; throw missing;
+      } else accepted = await request('/jobs', {operation: operation, body: body, request_id: receipt.requestId});
     } catch (error) {
       if (operation === '/path/requiz') showJob(preparing, (error.status ? '本程序请求错误（HTTP ' + error.status + '）' : '网络连接或超时错误') + '\n任务提交未确认，请重试；原题和作答已保留。', 'error');
       throw error;
@@ -117,7 +124,7 @@
     // Node retries consume a server-side attempt. Only an explicit user action
     // may spend that budget; a page reload only resumes the existing receipt.
     if ((job.status === 'failed' || job.status === 'interrupted') &&
-        (operation !== '/path/node' || options.manualRetry)) {
+        !options.resumeOnly && ((operation !== '/path/node' && operation !== '/path/node/scene') || options.manualRetry)) {
       job = (await request('/jobs/' + job.id + '/retry', {})).job;
     }
     return watch(job, options);
@@ -126,24 +133,24 @@
     var deadline = Date.now() + 3600000;
     if (window.LearnJobDetails) window.LearnJobDetails.observe(job);
     while (job.status === 'queued' || job.status === 'running') {
-      announce(job, options.onStatus);
+      announce(job, options);
       if (Date.now() > deadline) {
         var timeout = new Error('已停止自动读取。后台任务可能仍在处理；点击“继续读取任务”可继续查看同一任务。');
-        timeout.jobId = job.id; timeout.status = job.status; timeout.response_status = job.response_status;
+        timeout.job = job; timeout.jobId = job.id; timeout.status = job.status; timeout.response_status = job.response_status;
         timeout.error_category = 'watch_timeout';
         showJob(job, timeout.message, 'error', function () {
           return watch(job, options).then(function (result) {
             location.reload();
             return result;
           });
-        }, '继续读取任务');
+        }, '继续读取任务', options);
         throw timeout;
       }
       await delay(1500);
       try { job = (await request('/jobs/' + job.id)).job; }
       catch (error) {
-        if (error.status && error.status < 500) throw error;
-        showJob(job, '网络连接或超时错误：暂时无法读取任务进度，后台任务仍会继续；正在重新连接…', 'error');
+        if (error.status && error.status < 500) { error.job = job; error.jobId = job.id; throw error; }
+        showJob(job, '网络连接或超时错误：暂时无法读取任务进度，后台任务仍会继续；正在重新连接…', 'error', undefined, undefined, options);
         await delay(3500);
       }
     }
@@ -152,15 +159,16 @@
       var detail = job.error || '任务未完成，请重试';
       if (job.response_status >= 500 && !/错误|校验/.test(detail)) detail = '服务端错误（HTTP ' + job.response_status + '）：' + detail;
       var failed = new Error(detail);
-      failed.jobId = job.id; failed.status = job.status;
+      failed.job = job; failed.jobId = job.id; failed.status = job.status;
       failed.response_status = job.response_status; failed.error_category = job.error_category || null;
       var message = job.operation === '/path/requiz' ? '新题准备失败 · ' + quizProgress(job) + '\n' + failed.message + '\n旧题和作答已保留。' : failed.message;
       showJob(job, message, 'error', context.readOnly ? null : function () {
         if (options.onRetry) return options.onRetry();
         return request('/jobs/' + job.id + '/retry', {}).then(function () { location.reload(); });
-      }, context.readOnly ? null : '继续原任务');
+      }, context.readOnly ? null : '继续原任务', options);
       throw failed;
     }
+    if (options.onJob) options.onJob(job, {message: '任务已完成', kind: 'success'});
     if (job.operation === '/path/requiz') {
       showJob(job, '新的题目已准备好，目前进度：步骤 4/4 · 保存完成', 'success');
       setTimeout(function () { if (window.LearnUI) window.LearnUI.clear('job-' + job.id); }, 8000);

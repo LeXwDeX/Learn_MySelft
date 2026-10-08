@@ -21,6 +21,7 @@ TERMINAL = frozenset({'succeeded', 'failed', 'interrupted', 'cancelled'})
 REQUEST_ID = re.compile(r'^[A-Za-z0-9:_-]{8,120}$')
 LOGGER = logging.getLogger(__name__)
 NODE_MAX_ATTEMPTS = 2
+LEARNING_OPERATIONS = frozenset({'/path/node', '/path/node/scene'})
 JOB_EXECUTION_SECONDS = 300
 NODE_EXECUTION_SECONDS = JOB_EXECUTION_SECONDS
 NODE_RETRY_SECONDS = 5
@@ -81,6 +82,9 @@ def retryable_failure(error):
     """Only known transport failures; content, permissions and conflicts stop."""
     if isinstance(error, urllib.error.HTTPError):
         return error.code in TRANSIENT_HTTP
+    if isinstance(error, JobError) and getattr(error, 'failure_code', None) == 'model_unavailable':
+        cause = error.__cause__
+        return cause is not None and retryable_failure(cause)
     return isinstance(error, (JobDeadlineExceeded, TimeoutError, urllib.error.URLError))
 
 
@@ -143,9 +147,9 @@ class JobQueue:
         result.update(attempt=attempt['attempt'] if attempt else 0,
                       attempt_started_ms=attempt['started_ms'] if attempt else None,
                       retry_at_ms=attempt['retry_at_ms'] if attempt else None,
-                      auto_retry=row['operation'] == '/path/node',
-                      max_attempts=NODE_MAX_ATTEMPTS if row['operation'] == '/path/node' else 1,
-                      timeout_seconds=self.node_timeout if row['operation'] == '/path/node' else self.job_timeout)
+                      auto_retry=row['operation'] in LEARNING_OPERATIONS,
+                      max_attempts=NODE_MAX_ATTEMPTS if row['operation'] in LEARNING_OPERATIONS else 1,
+                      timeout_seconds=self.node_timeout if row['operation'] in LEARNING_OPERATIONS else self.job_timeout)
         if 'result' in row.keys() and row['result'] and row['status'] != 'succeeded':
             failure = json.loads(row['result'])
             result['failure_phase'] = failure.get('failure_phase')
@@ -320,7 +324,7 @@ class JobQueue:
                 if row['effect']:
                     status, result = 200, json.loads(row['effect'])
                 else:
-                    budget = execution_budget(self.node_timeout if row['operation'] == '/path/node' else self.job_timeout)
+                    budget = execution_budget(self.node_timeout if row['operation'] in LEARNING_OPERATIONS else self.job_timeout)
                     with budget:
                         status, result = self.execute(row['user_id'], row['operation'], json.loads(row['body']))
                         check_deadline()
@@ -330,9 +334,9 @@ class JobQueue:
                 category, message = failure_detail(error)
                 phase = getattr(self.store.local, 'phase', '任务处理')
                 if category == 'deadline':
-                    retrying = row['operation'] == '/path/node' and row['attempt'] < NODE_MAX_ATTEMPTS
+                    retrying = row['operation'] in LEARNING_OPERATIONS and row['attempt'] < NODE_MAX_ATTEMPTS
                     message += ' 阶段：%s。尝试 %s/%s。%s' % (
-                        phase, row['attempt'], NODE_MAX_ATTEMPTS if row['operation'] == '/path/node' else 1,
+                        phase, row['attempt'], NODE_MAX_ATTEMPTS if row['operation'] in LEARNING_OPERATIONS else 1,
                         '等待自动重试。' if retrying else '本次执行已停止，可手动重试。')
                 result = {'error': message, 'error_category': category, 'failure_phase': phase}
                 result = sanitize(result, self.store.diagnostic_secrets)
@@ -341,7 +345,7 @@ class JobQueue:
                     error_recorded = True
                 except Exception:
                     pass
-                can_retry = row['operation'] == '/path/node' and retryable_failure(error)
+                can_retry = row['operation'] in LEARNING_OPERATIONS and retryable_failure(error)
             finally:
                 phase = getattr(self.store.local, 'phase', '任务处理')
                 del self.store.local.job_id

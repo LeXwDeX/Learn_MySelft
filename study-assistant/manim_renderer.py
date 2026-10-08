@@ -101,15 +101,21 @@ class ManimRenderer:
             if not isinstance(reviews,list) or len(reviews) != len(manifest['steps']):
                 raise ManimContractError('手机复核图数量无效')
             review_frames = []
-            for encoded in reviews:
-                if not isinstance(encoded,str) or len(encoded) > MAX_REVIEW_IMAGE*4//3+8:
-                    raise ManimContractError('手机复核图编码或长度无效')
-                try:
-                    value = review_png(base64.b64decode(encoded,validate=True))
-                except ValueError as error:
-                    raise ManimContractError('手机复核图编码或格式无效') from error
-                total += len(value)
-                review_frames.append(value)
+            for bundle in reviews:
+                if not isinstance(bundle,dict) or set(bundle) != {'start','middle','result'}:
+                    raise ManimContractError('手机复核图必须包含开始、中间和结果')
+                frames = {}
+                for name in ('start','middle','result'):
+                    encoded = bundle[name]
+                    if not isinstance(encoded,str) or len(encoded) > MAX_REVIEW_IMAGE*4//3+8:
+                        raise ManimContractError('手机复核图编码或长度无效')
+                    try:
+                        value = review_png(base64.b64decode(encoded,validate=True))
+                    except ValueError as error:
+                        raise ManimContractError('手机复核图编码或格式无效') from error
+                    total += len(value)
+                    frames[name] = value
+                review_frames.append(frames)
             if total > MAX_TOTAL:
                 raise ManimContractError('动画产物总量无效')
             return dict(video=decoded['video.mp4'],poster=decoded['poster.png'],

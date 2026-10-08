@@ -23,7 +23,7 @@ class FakeRenderer(ManimRenderer):
         if envelope['phase']=='render': return {'raw_video':base64.b64encode(b'untrusted').decode(),'steps':[]}
         files={'video.mp4':base64.b64encode(b'normalized').decode(),'poster.png':base64.b64encode(b'png').decode(),'step-0.png':base64.b64encode(b'png').decode()}
         if self.bad: files['../../escape']=files['poster.png']
-        return {'manifest':dict(version=1,fps=30,width=1280,height=720,duration=1,engine={'name':'ManimGL','version':'1.7.2'},steps=[dict(caption='观察',start_frame=0,end_frame=30,result_frame=29,hold_start_frame=9)]),'files':files,'review_frames':[base64.b64encode(png()).decode()]}
+        return {'manifest':dict(version=1,fps=30,width=1280,height=720,duration=1,engine={'name':'ManimGL','version':'1.7.2'},steps=[dict(caption='观察',start_frame=0,end_frame=30,result_frame=29,hold_start_frame=9)]),'files':files,'review_frames':[{name:base64.b64encode(png()).decode() for name in ('start','middle','result')}]}
 
 class RendererTests(unittest.TestCase):
     def setUp(self):
@@ -59,7 +59,7 @@ class RendererTests(unittest.TestCase):
         result=renderer._phase('',{'phase':'validate'},0,0)
         encoded=lambda value:base64.b64encode(value).decode()
         corrupt=bytearray(png());corrupt[-5]^=1
-        for reviews in (None,[],[encoded(png()),encoded(png())],[encoded(png(1280,720))],['%%%'],[encoded(b'bad')],[encoded(png()[:-1])],[encoded(bytes(corrupt))],[encoded(b'x'*(256*1024+1))]):
+        for reviews in (None,[],[encoded(png()),encoded(png())],[encoded(png(1280,720))],['%%%'],[encoded(b'bad')],[encoded(png()[:-1])],[encoded(bytes(corrupt))],[encoded(b'x'*(256*1024+1))],[{'start':encoded(png()),'result':encoded(png())}],[{name:encoded(png(1280,720) if name=='middle' else png()) for name in ('start','middle','result')}]):
             with self.subTest(value=type(reviews).__name__):
                 broken=dict(result)
                 if reviews is None:broken.pop('review_frames')

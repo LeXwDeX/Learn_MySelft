@@ -46,7 +46,9 @@ class JobDetailsTests(unittest.TestCase):
             receipt = queue.submit('u%d' % index, 'request-budget-%d' % index,
                                    operation, {'key': 'u%d/example' % index})
             self.assertEqual(receipt['timeout_seconds'], 300)
-            self.assertEqual(receipt['auto_retry'], operation == '/path/node')
+            learning = operation in ('/path/node', '/path/node/scene')
+            self.assertEqual(receipt['auto_retry'], learning)
+            self.assertEqual(receipt['max_attempts'], 2 if learning else 1)
 
     def test_each_operation_rolls_back_when_budget_expires_before_commit(self):
         def execute(user_id, operation, body):

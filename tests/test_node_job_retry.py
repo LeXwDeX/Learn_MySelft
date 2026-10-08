@@ -196,6 +196,28 @@ class NodeJobRetryTests(unittest.TestCase):
             self.assertEqual(connection.execute('SELECT attempt FROM job_attempts WHERE job_id=?',(receipt['id'],)).fetchone()[0],1)
             self.assertEqual(connection.execute('PRAGMA quick_check').fetchone()[0],'ok')
 
+    def test_scene_transport_failure_retries_same_receipt_once(self):
+        calls=[]
+        def execute(*args):
+            calls.append(self.store.local.job_id)
+            if len(calls)==1:
+                raise TimeoutError('transport')
+            return 200, {'manim_review':{'status':'not_needed'}}
+        queue=self.queue(execute)
+        receipt=self.submit(queue,'/path/node/scene')
+        queue.start()
+        result=self.wait(queue,receipt,'succeeded')
+        self.assertEqual(calls,[receipt['id'],receipt['id']])
+        self.assertEqual(result['attempt'],2)
+
+    def test_wrapped_model_failure_only_retries_known_transport_cause(self):
+        from background_jobs import retryable_failure
+        from manim_service import ManimGenerationError
+        for cause,wanted in [(TimeoutError(),True),(urllib.error.HTTPError('x',401,'denied',{},None),False),(ValueError(),False)]:
+            error=ManimGenerationError(503,'model_unavailable');error.__cause__=cause
+            self.assertEqual(retryable_failure(error),wanted)
+        self.assertFalse(retryable_failure(ManimGenerationError(503,'renderer_unavailable')))
+
 
 if __name__=='__main__':
     unittest.main()
