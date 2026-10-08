@@ -5,13 +5,15 @@ import sqlite3
 import sys
 import tempfile
 import time
+import threading
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'study-assistant'))
 from application import create_application
-from background_jobs import JobQueue
+from background_jobs import JobQueue, JobError
 from manim_service import ManimGenerationError
+from job_execution import execution_budget, check_deadline, JobDeadlineExceeded
 
 
 class SceneFailurePhaseTests(unittest.TestCase):
@@ -70,7 +72,7 @@ class SceneFailurePhaseTests(unittest.TestCase):
             self.store.local.phase = '保存学习资料'
             raise sqlite3.OperationalError('storage unavailable')
         with patch.object(self.app.manim, 'generate', side_effect=error), \
-             patch.object(self.app.repository, 'update_scene_review', side_effect=metadata_failure), \
+             patch.object(self.app.repository, 'fail_scene_review', side_effect=metadata_failure), \
              patch.object(self.store, 'record_job_effect') as effect:
             with self.assertRaises(ManimGenerationError) as raised:
                 self.supplement()
@@ -85,7 +87,7 @@ class SceneFailurePhaseTests(unittest.TestCase):
             self.store.local.phase = '保存学习资料'
             raise sqlite3.OperationalError('storage unavailable')
         with patch.object(self.app.manim, 'generate', side_effect=ManimGenerationError(502, 'visual_rejected')), \
-             patch.object(self.app.repository, 'update_scene_review', side_effect=metadata_failure):
+             patch.object(self.app.repository, 'fail_scene_review', side_effect=metadata_failure):
             with self.assertRaises(ManimGenerationError):
                 self.supplement()
         self.assertFalse(hasattr(self.store.local, 'phase'))
@@ -102,6 +104,118 @@ class SceneFailurePhaseTests(unittest.TestCase):
         finally:
             del self.store.local.job_id
             del self.store.local.phase
+
+    def expire(self):
+        time.sleep(.03)
+        check_deadline()
+
+    def test_real_expiry_saves_only_failure_and_preserves_revision_and_phase(self):
+        before = self.store.record(self.key)
+        self.store.local.phase = self.phase
+        with patch.object(self.app.manim, 'generate', side_effect=lambda *a, **k: self.expire()), \
+             patch.object(self.store, 'record_job_effect') as effect, \
+             execution_budget(.01):
+            with self.assertRaises(JobDeadlineExceeded):
+                self.supplement()
+            self.assertEqual(self.store.local.phase, self.phase)
+            with self.assertRaises(JobDeadlineExceeded):
+                check_deadline()
+            effect.assert_not_called()
+        after = self.store.record(self.key)
+        self.assertEqual(after['revision'], before['revision'] + 1)
+        self.assertGreaterEqual(after['updated_ms'], before['updated_ms'])
+        saved = json.loads(after['value'])['nodeDetail']['n1']
+        self.assertEqual(saved['manim_review'], {'status': 'failed', 'retryable': True, 'failure_code': 'deadline'})
+        for field in ('study_notes', 'quiz', 'unknown'):
+            self.assertEqual(saved[field], self.detail[field])
+
+    def test_late_success_and_not_needed_still_obey_business_deadline(self):
+        before = self.store.record(self.key)
+        for spec in (None, {'asset_id': 'a' * 32, 'version': 1, 'title': '动画', 'summary': '变化'}):
+            def late(*args, **kwargs):
+                time.sleep(.03)
+                return spec
+            with patch.object(self.app.manim, 'generate', side_effect=late), \
+                 patch.object(self.app.manim, 'discard'), execution_budget(.01):
+                with self.assertRaises(JobDeadlineExceeded):
+                    self.supplement()
+            self.assertEqual(self.store.record(self.key), before)
+
+    def test_expired_failure_does_not_override_deleted_changed_or_unauthorized_data(self):
+        original = self.store.record(self.key)['value']
+        for mode in ('delete', 'node', 'notes', 'passed', 'new_failed', 'permission'):
+            with self.subTest(mode=mode):
+                self.app.repository.write_key(self.key, original)
+                authorize = self.app.scenes.authorize
+                changed = []
+                def generation(*args, **kwargs):
+                    material = self.app.repository.material(self.key)
+                    if mode == 'delete':
+                        with self.store.transaction() as connection:
+                            connection.execute('DELETE FROM documents WHERE key=?', (self.key,))
+                    elif mode == 'permission':
+                        self.app.scenes.authorize = lambda *a: (_ for _ in ()).throw(JobError(403, 'denied'))
+                    else:
+                        if mode == 'node': material['plan']['nodes'][0]['title'] = 'changed'
+                        elif mode == 'notes': material['nodeDetail']['n1']['study_notes'] = 'new notes'
+                        elif mode == 'passed': material['nodeDetail']['n1']['manim_review'] = {'status': 'passed'}
+                        else: material['nodeDetail']['n1']['manim_review'] = {'status': 'failed', 'failure_code': 'visual_rejected'}
+                        self.app.repository.write_key(self.key, json.dumps(material))
+                    changed.append(self.store.record(self.key))
+                    self.expire()
+                try:
+                    with patch.object(self.app.manim, 'generate', side_effect=generation), execution_budget(.02):
+                        with self.assertRaises(JobDeadlineExceeded): self.supplement()
+                    self.assertEqual(self.store.record(self.key), changed[0])
+                finally:
+                    self.app.scenes.authorize = authorize
+
+    def test_failure_lock_wait_is_bounded_and_does_not_mask_expiry(self):
+        locked = threading.Event()
+        release = threading.Event()
+        def holder():
+            with self.app.repository.lock:
+                locked.set()
+                release.wait(3)
+        thread = threading.Thread(target=holder)
+        thread.start()
+        self.assertTrue(locked.wait(1))
+        before = self.store.record(self.key)
+        started = time.monotonic()
+        try:
+            with patch.object(self.app.manim, 'generate', side_effect=lambda *a, **k: self.expire()), execution_budget(.01):
+                with self.assertRaises(JobDeadlineExceeded): self.supplement()
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertEqual(self.store.record(self.key), before)
+        finally:
+            release.set()
+            thread.join(1)
+
+    def test_failure_api_rejects_arbitrary_status_codes(self):
+        before = self.store.record(self.key)
+        with self.assertRaises(ValueError):
+            self.app.repository.fail_scene_review(self.key, 'n1', self.detail['study_notes'], self.node,
+                                                 self.detail['manim_review'], 'passed', lambda: None)
+        self.assertEqual(self.store.record(self.key), before)
+
+    def test_diagnostic_sqlite_lock_wait_is_bounded_after_real_expiry(self):
+        before = self.store.record(self.key)
+        blocker = sqlite3.connect(self.store.path, isolation_level=None)
+        blocker.execute('BEGIN IMMEDIATE')
+        try:
+            started = time.monotonic()
+            with execution_budget(.01):
+                time.sleep(.03)
+                with self.assertRaises(sqlite3.OperationalError):
+                    self.app.repository.fail_scene_review(
+                        self.key, 'n1', self.detail['study_notes'], self.node,
+                        self.detail['manim_review'], 'deadline', lambda: None)
+                with self.assertRaises(JobDeadlineExceeded): check_deadline()
+            self.assertLess(time.monotonic() - started, 2)
+        finally:
+            blocker.rollback()
+            blocker.close()
+        self.assertEqual(self.store.record(self.key), before)
 
 
 if __name__ == '__main__':
