@@ -31,7 +31,7 @@ class TeachingScene(Scene):
             raise ValueError("shear_basis requires a finite number from 0.5 to 1.5")
         if _Decimal(str(k)).normalize().as_tuple().exponent < -3:
             raise ValueError("shear_basis allows at most three decimal places")
-        if self.mobjects or self.step_records or self.time != 0:
+        if any(mob is not self.camera.frame for mob in self.mobjects) or self.step_records or self.time != 0:
             raise ValueError("shear_basis requires a new empty scene")
         value = format(k, ".3f").rstrip("0").rstrip(".")
         origin = [-3, -1.5, 0]

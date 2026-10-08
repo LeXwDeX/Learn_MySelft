@@ -19,7 +19,9 @@ class ShearBasisInputTests(unittest.TestCase):
         namespace = {}
         exec(PRELUDE, namespace)
         self.scene = namespace['TeachingScene']()
-        self.scene.mobjects = []
+        self.scene.camera = types.SimpleNamespace(frame=object())
+        # Real ManimGL starts with its internal camera frame in mobjects.
+        self.scene.mobjects = [self.scene.camera.frame]
         self.scene.step_records = []
         self.scene.time = 0
 
@@ -38,7 +40,7 @@ class ShearBasisInputTests(unittest.TestCase):
         self.assertEqual(self.graphics.call_count, 7)
 
     def test_existing_content_steps_or_elapsed_time_are_rejected(self):
-        for field, value in (('mobjects', [object()]), ('step_records', [{}]), ('time', 0.1)):
+        for field, value in (('mobjects', [self.scene.camera.frame, object()]), ('step_records', [{}]), ('time', 0.1)):
             original = getattr(self.scene, field)
             setattr(self.scene, field, value)
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'new empty scene'):
