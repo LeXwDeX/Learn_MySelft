@@ -80,7 +80,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(model.call_count, 4)
         for index in (0, 2):
             self.assertEqual(model.call_args_list[index].kwargs,
-                             {'temperature': 0.3, 'max_tokens': 16384, 'reasoning_effort': 'medium'})
+                             {'temperature': 0.3, 'max_tokens': 16384, 'reasoning_effort': 'none'})
         for index in (1, 3):
             self.assertEqual(model.call_args_list[index].kwargs, {'temperature': 0})
 

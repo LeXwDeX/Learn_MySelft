@@ -217,10 +217,10 @@ class JobDetailsTests(unittest.TestCase):
         messages = [{'role': 'user', 'content': 'test'}]
         raw = b'{"choices":[{"message":{"content":"result"}}]}'
         with patch.object(model_transport, 'post', return_value=raw) as transport:
-            client.json(messages, max_tokens=16384, reasoning_effort='medium')
+            client.json(messages, max_tokens=16384, reasoning_effort='none')
             client.json(messages)
         override, default = [json.loads(call.args[1]) for call in transport.call_args_list]
-        self.assertEqual((override['reasoning_effort'], override['max_tokens']), ('medium', 16384))
+        self.assertEqual((override['reasoning_effort'], override['max_tokens']), ('none', 16384))
         self.assertEqual((default['reasoning_effort'], default['max_tokens']), ('max', 393216))
         self.assertEqual(client.think, {'reasoning_effort': 'max'})
         self.assertEqual(client.reasoning_effort, 'max')
