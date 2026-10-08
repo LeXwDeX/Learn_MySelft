@@ -63,11 +63,21 @@ class ManimServiceTests(unittest.TestCase):
             self.assertLessEqual(len(example[name]), limit)
         plan = example['teaching_plan']
         self.assertEqual(validate_teaching_plan(plan, step_count=2), plan)
-        steps = [node for node in ast.walk(ast.parse(example['code']))
-                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                 and node.func.attr == 'next_step']
-        self.assertEqual(len(steps), len(plan['steps']))
+        calls = [node for node in ast.walk(ast.parse(example['code']))
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)]
+        self.assertEqual([node.func.attr for node in calls], ['shear_basis'])
+        self.assertEqual(len(calls[0].keywords), 1)
+        self.assertEqual(calls[0].keywords[0].arg, 'k')
+        self.assertEqual(ast.literal_eval(calls[0].keywords[0].value), 1)
         self.assertTrue(all(set(step) == {'change', 'why'} for step in plan['steps']))
+        self.assertIn('蓝色终点Dot', plan['steps'][0]['change'])
+        self.assertIn('固定原点O', plan['steps'][0]['change'])
+        self.assertIn('固定灰色水平参照线连续右移', plan['steps'][1]['change'])
+        self.assertIn('同原点Transform', plan['steps'][1]['change'])
+        self.assertIn('灰色原态留存', plan['steps'][1]['change'])
+        self.assertIn('y仍为1', plan['steps'][1]['why'])
+        self.assertIn('终点Dot沿线连续右移', PROMPT)
+        self.assertIn('结束后显示Ae2和目标坐标', PROMPT)
 
     def test_generation_receives_reference_without_changing_user_topic(self):
         from unittest.mock import patch
@@ -82,6 +92,41 @@ class ManimServiceTests(unittest.TestCase):
         payload = json.loads(messages[1]['content'])
         self.assertEqual(payload['node']['title'], '角')
         self.assertEqual(payload['study_notes'], '候选新正文')
+
+    def test_native_shear_reference_still_requires_two_media_steps_and_strict_review(self):
+        from unittest.mock import patch
+        rendered = self.renderer.render('ignored')
+        rendered['manifest']['steps'] = [{}, {}]
+        rendered['review_frames'] = [dict(start=png(), middle=png(), result=png()) for _ in range(2)]
+        with patch.object(self.service.model, 'json', side_effect=[json.dumps(TEACHING_REFERENCE_ENVELOPE),
+                                                                '{"ok":true,"issues":[]}']) as model, \
+             patch.object(self.renderer, 'render', return_value=rendered) as renderer:
+            result = self.generate()
+        self.assertTrue(result['asset_id'])
+        self.assertEqual(renderer.call_args.args[0], TEACHING_REFERENCE_CODE)
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_args_list[1].kwargs, {'temperature': 0})
+        context = json.loads(model.call_args_list[1].args[0][1]['content'][0]['text'])
+        self.assertEqual(context['teaching_plan'], TEACHING_REFERENCE_ENVELOPE['teaching_plan'])
+        self.assertEqual(len(context['manifest']['steps']), 2)
+        self.assertIn('其他课程禁止套用', PROMPT)
+        self.assertIn('空场景且尚无步骤', PROMPT)
+        self.assertIn('最多三位小数', PROMPT)
+
+    def test_native_shear_reference_is_not_published_when_teaching_review_rejects(self):
+        from unittest.mock import patch
+        rendered = self.renderer.render('ignored')
+        rendered['manifest']['steps'] = [{}, {}]
+        rendered['review_frames'] = [dict(start=png(), middle=png(), result=png()) for _ in range(2)]
+        code = json.dumps(TEACHING_REFERENCE_ENVELOPE)
+        rejected = '{"ok":false,"issues":["坐标标签在手机复核图上重叠"]}'
+        with patch.object(self.service.model, 'json', side_effect=[code, rejected, code, rejected]) as model, \
+             patch.object(self.renderer, 'render', return_value=rendered):
+            with self.assertRaises(ManimGenerationError) as raised:
+                self.generate()
+        self.assertEqual(raised.exception.failure_code, 'visual_rejected')
+        self.assertEqual(model.call_count, 4)
+        self.assertFalse(self.service.root.exists())
 
     def test_generation_and_repair_use_stage_budget_but_review_keeps_defaults(self):
         from unittest.mock import patch

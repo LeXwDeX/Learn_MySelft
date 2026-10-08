@@ -2,7 +2,51 @@ import sys
 from pathlib import Path
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
-from manim_worker import check_hold_frames
+from manim_worker import PRELUDE, check_hold_frames
+
+class ShearBasisInputTests(unittest.TestCase):
+    def setUp(self):
+        import types
+        from unittest.mock import Mock, patch
+        # Only test rejection before graphics creation. Real Manim rendering is
+        # a separate runtime check, not represented by this minimal Scene.
+        module = types.ModuleType('manimlib')
+        module.Scene = type('Scene', (), {})
+        self.graphics = Mock(side_effect=RuntimeError('graphics boundary'))
+        module.Dot = self.graphics
+        self.module_patch = patch.dict(sys.modules, {'manimlib': module})
+        self.module_patch.start(); self.addCleanup(self.module_patch.stop)
+        namespace = {}
+        exec(PRELUDE, namespace)
+        self.scene = namespace['TeachingScene']()
+        self.scene.camera = types.SimpleNamespace(frame=object())
+        # Real ManimGL starts with its internal camera frame in mobjects.
+        self.scene.mobjects = [self.scene.camera.frame]
+        self.scene.step_records = []
+        self.scene.time = 0
+
+    def test_invalid_parameters_fail_before_any_graphics_or_steps(self):
+        for value in (True, False, None, '1', [], 0, -1, 10**400, 0.499, 1.501,
+                      float('nan'), float('inf'), float('-inf'), 1.0001):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.scene.shear_basis(value)
+        self.graphics.assert_not_called()
+        self.assertEqual(self.scene.step_records, [])
+
+    def test_supported_bounds_and_decimals_reach_the_graphics_boundary(self):
+        for value in (0.5, 1, 1.0, 1.5, 0.501, 1.001, 1.499):
+            with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, 'graphics boundary'):
+                self.scene.shear_basis(value)
+        self.assertEqual(self.graphics.call_count, 7)
+
+    def test_existing_content_steps_or_elapsed_time_are_rejected(self):
+        for field, value in (('mobjects', [self.scene.camera.frame, object()]), ('step_records', [{}]), ('time', 0.1)):
+            original = getattr(self.scene, field)
+            setattr(self.scene, field, value)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'new empty scene'):
+                self.scene.shear_basis()
+            setattr(self.scene, field, original)
+        self.graphics.assert_not_called()
 
 class HoldFrameTests(unittest.TestCase):
     def test_decoded_static_hold_and_small_compression_noise(self):

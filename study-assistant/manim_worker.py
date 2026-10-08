@@ -16,6 +16,8 @@ from manim_contracts import FPS, HEIGHT, MAX_IMAGE, MAX_SOURCE, MAX_TOTAL, MAX_V
 PRELUDE = '''from manimlib import *
 import json as _json
 from pathlib import Path as _Path
+from decimal import Decimal as _Decimal
+from math import isfinite as _isfinite
 class TeachingScene(Scene):
     default_camera_config = {"background_color": "#f5f5f5"}
     def label(self, text, color="#2d3142", size=96):
@@ -24,6 +26,36 @@ class TeachingScene(Scene):
         super().setup()
         self.step_records = []
         self.step_start = 0
+    def shear_basis(self, k=1):
+        if type(k) not in (int, float) or not 0.5 <= k <= 1.5 or not _isfinite(k):
+            raise ValueError("shear_basis requires a finite number from 0.5 to 1.5")
+        if _Decimal(str(k)).normalize().as_tuple().exponent < -3:
+            raise ValueError("shear_basis allows at most three decimal places")
+        if any(mob is not self.camera.frame for mob in self.mobjects) or self.step_records or self.time != 0:
+            raise ValueError("shear_basis requires a new empty scene")
+        value = format(k, ".3f").rstrip("0").rstrip(".")
+        origin = [-3, -1.5, 0]
+        first = [-3, 1.5, 0]
+        last = [-3 + 3*k, 1.5, 0]
+        dot = Dot(origin, radius=0.1).set_color("#2d3142")
+        origin_label = self.label("O").next_to(dot, DOWN, buff=0.35)
+        arrow = Arrow(origin, first, buff=0, thickness=5).set_color("#245b83")
+        endpoint = Dot(first, radius=0.1).set_color("#245b83")
+        name = self.label("e2").next_to(arrow, LEFT, buff=0.45)
+        coordinate = self.label("(0,1)").next_to(first, UP, buff=0.35)
+        self.play(FadeIn(dot), FadeIn(origin_label), FadeIn(VGroup(arrow, name, coordinate)), FadeIn(endpoint), run_time=1.2)
+        self.next_step("每1数学单位画成3画面单位。蓝点是e2的终点(0,1)，原点O固定")
+        original = arrow.copy().set_color("#757575")
+        original_name = name.copy().set_color("#757575")
+        original_coordinate = coordinate.copy().set_color("#757575")
+        guide = Line(first, last).set_color("#757575")
+        target = Arrow(origin, last, buff=0, thickness=5).set_color("#c74f20")
+        target_name = self.label("Ae2", color="#c74f20").next_to(target, RIGHT, buff=0.5)
+        target_coordinate = self.label("(" + value + ",1)", color="#c74f20").next_to(last, RIGHT, buff=0.35)
+        self.play(FadeOut(name), FadeOut(coordinate), FadeIn(guide), run_time=0.4)
+        self.play(FadeIn(original), FadeIn(original_name), FadeIn(original_coordinate), Transform(arrow, target), endpoint.animate.move_to(last).set_color("#c74f20"), run_time=2.4)
+        self.play(FadeIn(target_name), FadeIn(target_coordinate), run_time=0.4)
+        self.next_step("终点沿灰色水平线从(0,1)移到(" + value + ",1)。x增加" + value + "，y仍为1，原点O不动")
     def next_step(self, caption):
         if len(self.step_records) >= 8:
             raise ValueError("too many steps")
