@@ -72,7 +72,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertTrue(all(set(step) == {'change', 'why'} for step in plan['steps']))
         self.assertIn('蓝色终点Dot', plan['steps'][0]['change'])
         self.assertIn('固定原点O', plan['steps'][0]['change'])
-        self.assertIn('固定灰色水平参照线连续右移', plan['steps'][1]['change'])
+        self.assertIn('固定灰色粗水平参照线连续右移', plan['steps'][1]['change'])
         self.assertIn('同原点Transform', plan['steps'][1]['change'])
         self.assertIn('灰色原态留存', plan['steps'][1]['change'])
         self.assertIn('y仍为1', plan['steps'][1]['why'])
