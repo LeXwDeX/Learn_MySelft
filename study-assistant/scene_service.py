@@ -136,11 +136,10 @@ class SceneService:
             local = self.repository.store.local
             had_phase = hasattr(local, 'phase')
             failure_phase = getattr(local, 'phase', None)
-            review = {'status': 'failed', 'retryable': True,
-                      'failure_code': getattr(error, 'failure_code', 'deadline')}
             try:
-                self.repository.update_scene_review(key, node_id, source, node, expected_review,
-                                                    review, lambda: self.authorize(actor, key))
+                self.repository.fail_scene_review(key, node_id, source, node, expected_review,
+                                                  getattr(error, 'failure_code', 'deadline'),
+                                                  lambda: self.authorize(actor, key))
             except Exception:
                 # A control/storage failure must not replace the original exception.
                 pass

@@ -4,6 +4,7 @@ import json
 import hashlib
 import re
 import threading
+import time
 import path_hierarchy
 import flywheel
 import quiz_harness as harness
@@ -158,6 +159,38 @@ class MaterialRepository:
             if effect:
                 self.store.record_job_effect(result)
             return result
+
+    def fail_scene_review(self, key, node_id, expected_notes, expected_node, expected_review,
+                          failure_code, validate):
+        """Persist only failure diagnostics after expiry; never extend business work."""
+        if failure_code not in ('deadline', 'model_unavailable', 'renderer_unavailable',
+                                'source_invalid', 'render_failed', 'media_invalid',
+                                'visual_invalid', 'visual_rejected', 'output_too_long'):
+            raise ValueError('invalid animation failure category')
+        if not self.lock.acquire(timeout=1):
+            raise JobError(503, '动画失败状态暂时无法保存')
+        try:
+            with self.store.transaction(enforce_deadline=False) as connection:
+                validate()
+                row = connection.execute('SELECT value,revision FROM documents WHERE key=?', (key,)).fetchone()
+                material = json.loads(row['value']) if row else None
+                detail = ((material or {}).get('nodeDetail') or {}).get(node_id)
+                node = next((n for n in ((material or {}).get('plan') or {}).get('nodes', [])
+                             if isinstance(n, dict) and n.get('id') == node_id), None)
+                if not isinstance(detail, dict) or node is None:
+                    raise JobError(404, '学习资料或节点已删除，动画状态未保存')
+                if (node != expected_node or detail.get('study_notes') != expected_notes
+                        or detail.get('manim_review') != expected_review
+                        or (detail.get('manim_review') or {}).get('status') in ('passed', 'not_needed')):
+                    raise JobError(409, '学习内容或动画状态已更新，本次状态未保存')
+                detail['manim_review'] = {'status': 'failed', 'retryable': True, 'failure_code': failure_code}
+                updated = connection.execute(
+                    'UPDATE documents SET value=?,updated_ms=?,revision=revision+1 WHERE key=? AND revision=?',
+                    (json.dumps(material, ensure_ascii=False), int(time.time() * 1000), key, row['revision']))
+                if updated.rowcount != 1:
+                    raise JobError(409, '学习资料已更新，本次状态未保存')
+        finally:
+            self.lock.release()
 
     def append_refinement(self, key, fallback_plan, units, receipt=None, validate=None):
         """Allocate ids and append to the latest plan under the same state lock."""
