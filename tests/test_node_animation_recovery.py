@@ -273,6 +273,8 @@ class NodeAnimationRecoveryTests(unittest.TestCase):
              patch('learning_service._issued_quiz') as issue:
             with self.assertRaises(harness.QuizContractError):
                 self.app.learning.node('/path/node',{'key':self.key,'node':self.node,'defer_visual':True},self.actor)
-        self.assertEqual(model.call_count,1)
+        self.assertEqual(model.call_count,3)
+        for call in model.call_args_list:
+            self.assertIn('学习材料 JSON', call.args[0][-1]['content'])
         issue.assert_not_called()
         self.assertNotIn('nodeDetail',self.app.repository.material(self.key))

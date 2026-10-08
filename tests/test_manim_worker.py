@@ -14,6 +14,11 @@ class ShearBasisInputTests(unittest.TestCase):
         module.Scene = type('Scene', (), {})
         self.graphics = Mock(side_effect=RuntimeError('graphics boundary'))
         module.Dot = self.graphics
+        graphics = self.graphics
+        class BoundaryVector:
+            def __mul__(self, other):
+                return graphics()
+        module.LEFT = BoundaryVector()
         self.module_patch = patch.dict(sys.modules, {'manimlib': module})
         self.module_patch.start(); self.addCleanup(self.module_patch.stop)
         namespace = {}
@@ -33,7 +38,7 @@ class ShearBasisInputTests(unittest.TestCase):
         self.graphics.assert_not_called()
         self.assertEqual(self.scene.step_records, [])
 
-    def test_supported_bounds_and_decimals_reach_the_graphics_boundary(self):
+    def test_supported_parameters_reach_the_graphics_boundary(self):
         for value in (0.5, 1, 1.0, 1.5, 0.501, 1.001, 1.499):
             with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, 'graphics boundary'):
                 self.scene.shear_basis(value)
@@ -45,6 +50,34 @@ class ShearBasisInputTests(unittest.TestCase):
             setattr(self.scene, field, value)
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'new empty scene'):
                 self.scene.shear_basis()
+            setattr(self.scene, field, original)
+        self.graphics.assert_not_called()
+
+class SwapComponentsInputTests(ShearBasisInputTests):
+    def test_invalid_parameters_fail_before_any_graphics_or_steps(self):
+        for values in (None, '314', {}, (), (1, 2), (1, 2, 3, 4), (True, 2, 3),
+                       (1, False, 3), (1, 2, True), (1, 1, 3), (-10, 2, 3),
+                       (1, 10, 3), (1, 2, -10), (1.0, 2, 3), (1, 2, float('inf'))):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                self.scene.swap_components(values)
+        self.graphics.assert_not_called()
+        self.assertEqual(self.scene.step_records, [])
+
+    def test_supported_parameters_reach_the_graphics_boundary(self):
+        # The first vector multiplication stops at the graphics boundary.
+        # This proves validation, not graphics or frame rendering.
+        for values in ((-9, 9, -9), (3, -1, 4), [0, -1, 9]):
+            with self.subTest(values=values), self.assertRaisesRegex(RuntimeError, 'graphics boundary'):
+                self.scene.swap_components(values)
+        self.assertEqual(self.graphics.call_count, 3)
+        self.assertEqual(self.scene.step_records, [])
+
+    def test_existing_content_steps_or_elapsed_time_are_rejected(self):
+        for field, value in (('mobjects', [self.scene.camera.frame, object()]), ('step_records', [{}]), ('time', 0.1)):
+            original = getattr(self.scene, field)
+            setattr(self.scene, field, value)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'new empty scene'):
+                self.scene.swap_components()
             setattr(self.scene, field, original)
         self.graphics.assert_not_called()
 
