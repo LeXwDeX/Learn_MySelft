@@ -66,3 +66,97 @@ class RendererTests(unittest.TestCase):
                 else:broken['review_frames']=reviews
                 with patch.object(renderer,'_phase',side_effect=[{'raw_video':'AAAA','steps':[]},broken]):
                     with self.assertRaises(ManimContractError):renderer.render(SOURCE)
+
+
+class RendererQueueTests(unittest.TestCase):
+    setUp = RendererTests.setUp
+    def test_real_threads_wait_over_one_second_without_parallel_rendering(self):
+        import threading,time
+        from unittest.mock import patch
+        import manim_renderer
+        entered=threading.Event();release=threading.Event();waiting=threading.Event()
+        state={'active':0,'max_active':0};lock=threading.Lock();errors=[];results=[]
+        class BlockingRenderer(FakeRenderer):
+            def _phase(inner,image,envelope,limit,timeout):
+                with lock:
+                    state['active']+=1;state['max_active']=max(state['max_active'],state['active'])
+                try:
+                    if inner is first and envelope['phase']=='render':
+                        entered.set()
+                        if not release.wait(4):raise RuntimeError('test release missing')
+                    return super()._phase(image,envelope,limit,timeout)
+                finally:
+                    with lock:state['active']-=1
+        first=BlockingRenderer(self.path);second=BlockingRenderer(self.path)
+        def run(renderer,callback=None):
+            try:results.append(renderer.render(SOURCE,check_cancelled=callback))
+            except BaseException as error:errors.append(error)
+        with patch.object(manim_renderer,'_SLOTS',threading.BoundedSemaphore(1)):
+            a=threading.Thread(target=run,args=(first,));b=threading.Thread(target=run,args=(second,waiting.set))
+            a.start()
+            self.assertTrue(entered.wait(2));b.start()
+            self.assertTrue(waiting.wait(2))
+            try:
+                time.sleep(1.1)
+                self.assertTrue(b.is_alive());self.assertEqual(second.inputs,[])
+            finally:
+                release.set();a.join(3);b.join(3)
+            self.assertFalse(a.is_alive());self.assertFalse(b.is_alive())
+        self.assertEqual(errors,[]);self.assertEqual(len(results),2);self.assertEqual(state['max_active'],1)
+
+    def test_wait_cancel_deadline_and_wait_limit_do_not_release_unowned_slot(self):
+        import threading
+        from unittest.mock import patch
+        import manim_renderer
+        from background_jobs import JobError
+        from job_execution import execution_budget,JobDeadlineExceeded
+        for mode in ('cancel','deadline','wait_limit'):
+            semaphore=threading.BoundedSemaphore(1);semaphore.acquire()
+            renderer=FakeRenderer(self.path);checked=threading.Event();cancel=threading.Event();errors=[]
+            def check():
+                checked.set()
+                if cancel.is_set():raise JobError(409,'cancelled')
+            def run():
+                try:
+                    if mode=='deadline':
+                        with execution_budget(.08):renderer.render(SOURCE)
+                    else:renderer.render(SOURCE,check_cancelled=check)
+                except BaseException as error:errors.append(error)
+            with self.subTest(mode=mode),patch.object(manim_renderer,'_SLOTS',semaphore),patch.object(manim_renderer,'_SLOT_WAIT_SECONDS',.1 if mode=='wait_limit' else 300):
+                thread=threading.Thread(target=run);thread.start()
+                if mode=='cancel':
+                    self.assertTrue(checked.wait(1));cancel.set()
+                thread.join(2);self.assertFalse(thread.is_alive())
+                self.assertEqual(renderer.inputs,[])
+                self.assertFalse(semaphore.acquire(blocking=False),'waiter must not release holder slot')
+                semaphore.release()
+                self.assertEqual(renderer.render(SOURCE)['video'],b'normalized')
+            self.assertEqual(len(errors),1)
+            self.assertIsInstance(errors[0],JobError if mode=='cancel' else JobDeadlineExceeded if mode=='deadline' else ManimUnavailable)
+
+    def test_acquired_slot_released_on_cancel_and_phase_deadline(self):
+        import threading,time
+        from unittest.mock import patch
+        import manim_renderer
+        from background_jobs import JobError
+        from job_execution import execution_budget,JobDeadlineExceeded
+        semaphore=threading.BoundedSemaphore(1);renderer=FakeRenderer(self.path);checks=[0]
+        def cancel_after_acquire():
+            checks[0]+=1
+            if checks[0]==3:raise JobError(409,'cancelled')
+        with patch.object(manim_renderer,'_SLOTS',semaphore):
+            with self.assertRaises(JobError):renderer.render(SOURCE,check_cancelled=cancel_after_acquire)
+            self.assertEqual(renderer.inputs,[])
+            self.assertTrue(semaphore.acquire(blocking=False));semaphore.release()
+            original=renderer._phase
+            def expire(*args):
+                time.sleep(.04)
+                return original(*args)
+            with patch.object(renderer,'_phase',side_effect=expire),execution_budget(.02):
+                with self.assertRaises(JobDeadlineExceeded):renderer.render(SOURCE)
+            self.assertTrue(semaphore.acquire(blocking=False));semaphore.release()
+            renderer.bad=True
+            with self.assertRaises(ManimContractError):renderer.render(SOURCE)
+            self.assertTrue(semaphore.acquire(blocking=False));semaphore.release()
+            renderer.bad=False
+            self.assertEqual(renderer.render(SOURCE)['video'],b'normalized')

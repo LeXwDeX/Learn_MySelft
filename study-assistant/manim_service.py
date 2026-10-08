@@ -19,7 +19,7 @@ from manim_contracts import ManimContractError, valid_asset_id, validate_source,
 from manim_renderer import ManimUnavailable, review_png
 from prompts import MATH_VISUAL_TEACHING
 from text_utils import clip
-from job_execution import JobDeadlineExceeded, check_deadline
+from job_execution import JobDeadlineExceeded, check_deadline, execution_budget
 
 METADATA_LIMITS = {'reason': 200, 'title': 80, 'summary': 400}
 FAILURE_CODES = frozenset({'model_unavailable', 'renderer_unavailable', 'source_invalid',
@@ -232,6 +232,10 @@ class ManimService:
         return node, notes
 
     def generate(self, key, node_id, source, node, requested=True, actor=None, cancelled=lambda: False, question=''):
+        with execution_budget(300):
+            return self._generate(key, node_id, source, node, requested, actor, cancelled, question)
+
+    def _generate(self, key, node_id, source, node, requested=True, actor=None, cancelled=lambda: False, question=''):
         def check_cancelled():
             check_deadline()
             if cancelled():
@@ -316,7 +320,7 @@ class ManimService:
                 validate_source(envelope['code'])
                 stage = 'rendering'
                 self.repository.store.job_progress(2, '渲染并检查真实动画', attempt+1, total=5)
-                rendered = self.renderer.render(envelope['code'])
+                rendered = self.renderer.render(envelope['code'], check_cancelled=check_cancelled)
                 check_cancelled()
                 stage = 'media_validation'
                 self.repository.store.job_progress(3, '核对教学步骤与抽样画面', attempt+1, total=5)
