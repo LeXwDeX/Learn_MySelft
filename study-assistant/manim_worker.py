@@ -3,12 +3,15 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import stat
 import subprocess
 import sys
+import tempfile
+import threading
 
-from manim_contracts import FPS, HEIGHT, MAX_IMAGE, MAX_SOURCE, MAX_TOTAL, MAX_VIDEO, WIDTH, validate_manifest, validate_source
+from manim_contracts import FPS, HEIGHT, MAX_IMAGE, MAX_SOURCE, MAX_TOTAL, MAX_VIDEO, WIDTH, validate_manifest, validate_source, validate_render_diagnostic
 
 PRELUDE = '''from manimlib import *
 import json as _json
@@ -35,6 +38,87 @@ class TeachingScene(Scene):
         _Path("/output/steps.json").write_text(_json.dumps(self.step_records))
         super().tear_down()
 '''
+
+MAX_RENDER_STDERR = 64 * 1024
+
+
+class SceneRenderFailure(ValueError):
+    def __init__(self, diagnostic=None):
+        super().__init__('render failed')
+        self.diagnostic = diagnostic
+
+
+def render_diagnostic(tail, source_lines):
+    """Parse stderr locally; omit object class names, free-form text and paths."""
+    if not isinstance(tail, bytes) or len(tail) > MAX_RENDER_STDERR:
+        return None
+    text = tail.decode('utf-8', errors='replace')
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    matches = list(re.finditer(r'(?m)^([A-Za-z][A-Za-z0-9_]{0,63}):([^\r\n]*)$', text))
+    if not matches:
+        return None
+    last = matches[-1]
+    if last[1] not in ('TypeError', 'AttributeError', 'NameError', 'ValueError'):
+        return None
+    value = {'exception_type': last[1]}
+    frames = re.findall(r'File "/tmp/lesson\.py", line ([0-9]{1,6}), in [A-Za-z_][A-Za-z0-9_]*', text[:last.start()])
+    for number in reversed(frames):
+        line = int(number) - (PRELUDE + '\n').count('\n')
+        if 1 <= line <= source_lines:
+            value['line'] = line
+            break
+    patterns = {
+        'TypeError': ('keyword', r"got an unexpected keyword argument '([A-Za-z_][A-Za-z0-9_]{0,63})'"),
+        'AttributeError': ('attribute', r"has no attribute '([A-Za-z_][A-Za-z0-9_]{0,63})'"),
+        'NameError': ('name', r"name '([A-Za-z_][A-Za-z0-9_]{0,63})' is not defined"),
+    }
+    if last[1] in patterns:
+        field, pattern = patterns[last[1]]
+        match = re.search(pattern + r'$', last[2])
+        if match:
+            value[field] = match[1]
+    return validate_render_diagnostic(value, source_lines)
+
+
+def render_process(command, env, source_lines):
+    """Continuously drain stderr into a bounded anonymous temporary tail file."""
+    with tempfile.TemporaryFile() as capture:
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE, env=env, start_new_session=True)
+        def collect():
+            try:
+                while True:
+                    chunk = process.stderr.read(8192)
+                    if not chunk:
+                        break
+                    size = capture.tell()
+                    if size + len(chunk) > MAX_RENDER_STDERR:
+                        capture.seek(max(0, size - (MAX_RENDER_STDERR - len(chunk))))
+                        retained = capture.read(MAX_RENDER_STDERR - len(chunk))
+                        capture.seek(0)
+                        capture.write(retained)
+                        capture.truncate()
+                    capture.write(chunk)
+            except (OSError, ValueError):
+                pass  # Capture failure never changes the sandbox or exposes raw logs.
+            finally:
+                process.stderr.close()
+        reader = threading.Thread(target=collect, daemon=True)
+        reader.start()
+        try:
+            process.wait(timeout=120)
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            reader.join(timeout=5)
+        if process.returncode:
+            diagnostic = None
+            if not reader.is_alive():
+                capture.seek(0)
+                diagnostic = render_diagnostic(capture.read(MAX_RENDER_STDERR), source_lines)
+            raise SceneRenderFailure(diagnostic)
 
 
 def run(command, timeout=30):
@@ -79,21 +163,10 @@ def render(envelope):
     lesson = Path('/tmp/lesson.py')
     lesson.write_text(PRELUDE + '\n' + source)
     env = dict(os.environ, HOME='/tmp', XDG_CACHE_HOME='/tmp/cache', LIBGL_ALWAYS_SOFTWARE='1')
-    process = subprocess.Popen(['xvfb-run', '-a', 'manimgl', str(lesson), 'LessonScene',
+    render_process(['xvfb-run', '-a', 'manimgl', str(lesson), 'LessonScene',
                                 '-w', '--video_dir', '/output/raw', '--file_name', 'lesson',
                                 '--resolution', '1280x720'],
-                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, env=env, start_new_session=True)
-    try:
-        process.wait(timeout=120)
-        if process.returncode:
-            raise ValueError('render failed')
-    finally:
-        # End the entire Scene process group before independent decoding and collection.
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+                   env, len(source.splitlines()))
     step_file = regular(output / 'steps.json', 12000)
     steps = json.loads(step_file.read_text())
     videos = list((output / 'raw').rglob('*.mp4'))
@@ -207,8 +280,11 @@ def main():
     if envelope.get('phase') == 'render' and set(envelope)=={'phase','source'}:
         try:
             render(envelope)
-        except (ValueError, KeyError, TypeError, subprocess.CalledProcessError):
-            print(json.dumps({'error':'scene_render_failed'}))
+        except (ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+            failure = {'error':'scene_render_failed'}
+            if isinstance(error, SceneRenderFailure) and error.diagnostic is not None:
+                failure['diagnostic'] = error.diagnostic
+            print(json.dumps(failure))
     elif envelope.get('phase') == 'validate':
         try:
             validate(envelope)

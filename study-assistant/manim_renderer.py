@@ -10,7 +10,7 @@ import threading
 import struct
 import zlib
 import uuid
-from manim_contracts import MAX_IMAGE, MAX_TOTAL, MAX_VIDEO, ManimContractError, validate_manifest, validate_source
+from manim_contracts import MAX_IMAGE, MAX_TOTAL, MAX_VIDEO, ManimContractError, validate_manifest, validate_source, validate_render_diagnostic
 
 MAX_REVIEW_IMAGE = 256 * 1024
 
@@ -69,8 +69,22 @@ class ManimRenderer:
                 raise ManimUnavailable('动画镜像必须固定版本')
             phase = 'rendering'
             raw = self._phase(image, {'phase':'render','source':source}, MAX_VIDEO*4//3+65536, 180)
-            if raw == {'error':'scene_render_failed'}:
-                raise ManimContractError('真实ManimGL场景运行失败，请核对API、对象和每步动画')
+            if isinstance(raw, dict) and raw.get('error') == 'scene_render_failed':
+                if not set(raw) <= {'error', 'diagnostic'}:
+                    raise ManimContractError('动画诊断无效')
+                message = '真实ManimGL场景运行失败，请核对API、对象和每步动画'
+                diagnostic = None
+                if 'diagnostic' in raw:
+                    diagnostic = validate_render_diagnostic(raw['diagnostic'], len(source.splitlines()))
+                    message += '。安全诊断：' + diagnostic['exception_type']
+                    if 'line' in diagnostic:
+                        message += '，生成代码第%d行' % diagnostic['line']
+                    for field, label in (('keyword', '不支持的参数'), ('attribute', '不存在的属性'), ('name', '未定义的名称')):
+                        if field in diagnostic:
+                            message += '，' + label + ' ' + diagnostic[field]
+                error = ManimContractError(message)
+                error.render_diagnostic = diagnostic
+                raise error
             if not isinstance(raw,dict) or set(raw) != {'raw_video','steps'} or not isinstance(raw['raw_video'],str):
                 raise ManimContractError('动画原始产物无效')
             if len(raw['raw_video']) > MAX_VIDEO*4//3+8 or len(json.dumps(raw['steps'])) > 12000:

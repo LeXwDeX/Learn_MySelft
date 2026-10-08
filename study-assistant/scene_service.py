@@ -133,6 +133,9 @@ class SceneService:
         expected_review = json.loads(json.dumps(detail.get("manim_review")))
         automatic = body.get("automatic") is True
         def save_failure(error):
+            local = self.repository.store.local
+            had_phase = hasattr(local, 'phase')
+            failure_phase = getattr(local, 'phase', None)
             review = {'status': 'failed', 'retryable': True,
                       'failure_code': getattr(error, 'failure_code', 'deadline')}
             try:
@@ -141,6 +144,12 @@ class SceneService:
             except Exception:
                 # A control/storage failure must not replace the original exception.
                 pass
+            finally:
+                # Metadata persistence is cleanup, not the failed business stage.
+                if had_phase:
+                    local.phase = failure_phase
+                elif hasattr(local, 'phase'):
+                    del local.phase
         self.authorize(actor, key)
         if automatic and (expected_review or {}).get("status") == "not_needed":
             return 200, {"node_id": node_id, "study_notes": source, "source_notes": source,
