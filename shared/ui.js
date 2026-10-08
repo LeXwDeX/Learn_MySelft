@@ -62,12 +62,19 @@
         button.onclick = function () {
           button.disabled = true;
           Promise.resolve().then(item.action).catch(function (error) {
-            (item.toast ? window.LearnUI.toast : window.LearnUI.set)(key, error.message, 'error', item.action, item.label);
+            (item.toast ? window.LearnUI.toast : window.LearnUI.set)(key, error.message, 'error', item.action, item.label, item.options);
           }).finally(function () {
             if (items.get(key) === item) button.disabled = false;
           });
         };
         row.appendChild(button);
+      }
+      if (item.options && item.options.secondaryAction) {
+        var secondary = document.createElement('button');
+        secondary.type = 'button'; secondary.className = 'learn-action learn-job-detail-button';
+        secondary.textContent = item.options.secondaryLabel || '查看详情';
+        secondary.onclick = item.options.secondaryAction;
+        row.appendChild(secondary);
       }
       if (item.toast && item.kind !== 'info') {
         var dismiss = document.createElement('button'); dismiss.className = 'learn-action';
@@ -78,12 +85,12 @@
     });
   }
   window.LearnUI = {
-    set: function (key, message, kind, action, label) {
-      items.set(key, {message: message, kind: kind || 'info', action: action, label: label});
+    set: function (key, message, kind, action, label, options) {
+      items.set(key, {message: message, kind: kind || 'info', action: action, label: label, options: options});
       render();
     },
-    toast: function (key, message, kind, action, label) {
-      items.set(key, {message: message, kind: kind || 'info', action: action, label: label, toast: true});
+    toast: function (key, message, kind, action, label, options) {
+      items.set(key, {message: message, kind: kind || 'info', action: action, label: label, options: options, toast: true});
       render();
     },
     clear: function (key) { items.delete(key); render(); },

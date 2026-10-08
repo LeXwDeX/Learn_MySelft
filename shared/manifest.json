@@ -42,11 +42,20 @@
       ]
     },
     {
+      "source": "job-details.js",
+      "global": "LearnJobDetails",
+      "dependencies": [
+        "LearnUser",
+        "LearnUI"
+      ]
+    },
+    {
       "source": "jobs.js",
       "global": "LearnJobs",
       "dependencies": [
         "LearnUser",
-        "LearnUI"
+        "LearnUI",
+        "LearnJobDetails"
       ]
     },
     {

@@ -47,9 +47,11 @@ class Application:
     ):
         self.settings = settings
         self.accounts = AccountStore(settings.state_dir + "-accounts", initial_password)
-        self.repository = MaterialRepository(StateStore(settings.state_dir))
+        self.repository = MaterialRepository(StateStore(
+            settings.state_dir, diagnostic_secrets=(model_key, initial_password)))
         self.cache = GenerationCache()
-        self.model = ModelClient(settings, model_key, reasoning_effort, search_engines)
+        self.model = ModelClient(settings, model_key, reasoning_effort, search_engines,
+                                 detail_store=self.repository.store)
         self.verification = QuizGeneration(self.model)
         self.authorization = RequestAuthorization(self.accounts)
         self.tutor_rendering = TutorRendering(validate_mermaid)
@@ -103,12 +105,20 @@ class Application:
         return handler(operation, body, actor)
 
     def run_job(self, user_id, operation, body):
+        check_deadline()
+        self.repository.store.job_progress(1, '核对用户与学习资料', total=5)
         actor = self.accounts.get_user(user_id)
         if not actor["active"]:
             raise JobError(403, "用户已停用，任务未执行")
         self.authorization.body(actor, user_id, operation, body)
         if self.repository.material(body["key"]) is None:
             raise JobError(404, "学习资料已删除或不存在，任务未执行")
+        labels = {'/path/intake': '整理学习需求', '/path/research': '检索和核验参考来源',
+                  '/path/plan': '生成学习路径', '/path/node': '生成单元内容',
+                  '/path/node/scene': '生成教学动画', '/path/requiz': '生成并校验新题',
+                  '/path/quizmap': '生成并校验综合测验', '/path/refine': '生成补习路径',
+                  '/path/gaps': '诊断学习缺漏', '/path/quiz': '评估作答'}
+        self.repository.store.job_progress(2, labels.get(operation, '处理学习任务'), total=5)
         if operation == '/path/node':
             # The callback raises the deadline error; it must not become a 409.
             return self.learning.node(operation, body, actor, cancelled=check_deadline)

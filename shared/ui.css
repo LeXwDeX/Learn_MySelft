@@ -103,3 +103,21 @@ dialog::backdrop { background: #28314266; }
   .learn-status { font-size: 13px; }
   dialog { max-width: calc(100vw - 20px); max-height: calc(100dvh - 24px); overflow: auto; }
 }
+/* Inline diagnostics keep their own DOM while progress banners update. */
+.learn-job-detail-button { min-height: 26px; height: 26px; padding: 2px 9px; font: 12px/1.2 var(--learn-font); border-color: var(--learn-border); color: var(--learn-ink); background: var(--learn-surface); white-space: nowrap; }
+.learn-job-detail-button:hover { border-color: var(--learn-accent); }
+.node-state:has(.learn-job-detail-button) { display: flex; flex-wrap: wrap; align-items: center; gap: var(--learn-space-2); }
+.learn-job-details-host { max-width: 1240px; margin: 10px auto; padding: 0 20px; }
+.learn-job-detail-panel { width: 100%; min-width: 0; margin-top: var(--learn-space-3); padding: var(--learn-space-3); border: 1px solid var(--learn-border); border-radius: var(--learn-radius); background: var(--learn-surface); color: var(--learn-ink); font: 13px/1.6 var(--learn-font); cursor: default; }
+.learn-job-detail-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--learn-space-2); }
+.learn-job-detail-header .learn-action, .learn-job-disclosure .learn-action { min-height: 26px; padding: 3px 9px; font-size: 12px; }
+.learn-job-detail-panel p { margin: 6px 0; overflow-wrap: anywhere; }
+.learn-job-detail-summary, .learn-job-detail-note, .learn-job-event-label { color: var(--learn-muted); }
+.learn-job-detail-error { color: var(--learn-danger); white-space: pre-wrap; }
+.learn-job-disclosure { margin: var(--learn-space-3) 0; padding: var(--learn-space-2) 0; border-block: 1px solid var(--learn-border); }
+.learn-job-timeline { max-height: 420px; overflow: auto; padding: 0 0 0 22px; margin: var(--learn-space-3) 0 0; scrollbar-color: var(--learn-border) var(--learn-surface); }
+.learn-job-event { padding: 0 0 var(--learn-space-3); overflow-wrap: anywhere; }
+.learn-job-event-title { font-weight: 600; font-variant-numeric: tabular-nums; }
+.learn-job-conversation, .learn-job-error-frames { max-width: 100%; margin: 8px 0; padding: var(--learn-space-2); border-radius: var(--learn-radius-control); background: var(--learn-paper); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font: 12px/1.6 var(--learn-mono); }
+.learn-job-detail-panel ::selection { color: var(--learn-ink); background: var(--learn-accent-tint); }
+@media (max-width: 580px) { .learn-job-details-host { padding: 0 12px; } .learn-job-detail-panel { padding: var(--learn-space-2); } }

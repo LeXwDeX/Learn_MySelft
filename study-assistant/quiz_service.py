@@ -7,6 +7,7 @@ import flywheel
 import quiz_harness as harness
 from material_titles import document_title
 from service_limits import GEN_WAIT_MAX
+from job_execution import remaining_timeout, check_deadline
 from text_utils import clip
 from prompts import _path_system
 from generation_contracts import (
@@ -41,7 +42,8 @@ class QuizService:
         gate_key = key + "#requiz#" + node_id + "#" + expected
         gate, owner = self.cache.join(gate_key)
         if not owner:
-            gate["ev"].wait(GEN_WAIT_MAX)
+            gate["ev"].wait(remaining_timeout(GEN_WAIT_MAX))
+            check_deadline()
             if gate["out"] is not None:
                 return (200, gate["out"])
             else:
@@ -101,7 +103,7 @@ class QuizService:
                 return json.loads(json.dumps(quiz))
 
             self.repository.store.job_progress(4, "保存新题并保留历史作答", attempt + 1)
-            result = self.repository.quiz_update(key, node_id, append)
+            result = self.repository.quiz_update(key, node_id, append, record_effect=True)
             self.cache.finish(gate_key, gate, out=result)
             return (200, result)
         except Exception:
@@ -124,7 +126,8 @@ class QuizService:
         gate_key = "quizmap:" + key
         _gate, _owner = self.cache.join(gate_key)
         if not _owner:
-            _gate["ev"].wait(GEN_WAIT_MAX)
+            _gate["ev"].wait(remaining_timeout(GEN_WAIT_MAX))
+            check_deadline()
             hit = _gate["out"]
             if hit is not None:
                 return (200, hit)
@@ -511,4 +514,4 @@ class QuizService:
                 "round_id": issued["id"],
             }
 
-        return (200, self.repository.quiz_update(key, node_id, record))
+        return (200, self.repository.quiz_update(key, node_id, record, record_effect=True))

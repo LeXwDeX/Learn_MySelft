@@ -7,6 +7,7 @@ import path_hierarchy
 import flywheel
 from background_jobs import JobError
 from service_limits import GEN_WAIT_MAX
+from job_execution import remaining_timeout, check_deadline
 from text_utils import clip
 from prompts import _path_system
 from generation_contracts import _json_block, _str_list, _norm_gaps, _norm_refine_units
@@ -77,8 +78,9 @@ class FlywheelService:
                     temperature=0.4,
                 )
             )
-        except Exception as e:
-            return (502, {"error": "%s: %s" % (type(e).__name__, e)})
+        except Exception:
+            # Queue failures retain the typed deadline/transport category.
+            raise
         res = _norm_gaps(obj)
         if res is None:
             return (502, {"error": "gap analysis failed"})
@@ -176,7 +178,8 @@ class FlywheelService:
         if gate_key:
             _gate, _owner = self.cache.join(gate_key)
             if not _owner:
-                _gate["ev"].wait(GEN_WAIT_MAX)
+                _gate["ev"].wait(remaining_timeout(GEN_WAIT_MAX))
+                check_deadline()
                 hit = _gate["out"] or self.cache.get(gate_key)
                 if hit:
                     return (200, hit)

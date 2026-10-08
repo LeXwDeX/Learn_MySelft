@@ -2,12 +2,14 @@
 
 import json
 import ssl
+import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
 from service_limits import SEARXNG_TIMEOUT
 from text_utils import clip
 import model_transport
+from job_execution import JobDeadlineExceeded, check_deadline
 
 
 class ModelClient:
@@ -17,12 +19,23 @@ class ModelClient:
         key="",
         reasoning_effort="max",
         search_engines="brave,google cse,wikipedia",
+        *, detail_store=None,
     ):
         self.settings = settings
         self.key = key
         self.reasoning_effort = reasoning_effort
         self.think = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
         self.search_engines = search_engines
+        self.detail_store = detail_store
+
+    def _event(self, kind, label, **fields):
+        try:
+            if self.detail_store is not None:
+                if kind == 'phase' and getattr(self.detail_store.local, 'job_id', None):
+                    self.detail_store.local.phase = label
+                self.detail_store.job_event(kind, label, known_secrets=(self.key,), **fields)
+        except Exception:
+            pass
 
     def json(self, messages, max_tokens=None, temperature=0.7, timeout=None):
         max_tokens = (
@@ -46,12 +59,30 @@ class ModelClient:
             },
             method="POST",
         )
-        raw = model_transport.post(req.full_url, payload, dict(req.header_items()),
-                                   timeout or self.settings.upstream_timeout)
-        data = json.loads(raw.decode("utf-8", "replace"))
-        return (data.get("choices") or [{}])[0].get("message", {}).get(
-            "content", ""
-        ) or ""
+        check_deadline()
+        call_id = secrets.token_hex(8)
+        # Record only actual role/content messages. Hidden reasoning and gateway
+        # envelope fields are never copied into the task database.
+        recorded = [{'role': item.get('role', ''), 'content': item.get('content', '')}
+                    for item in messages if isinstance(item, dict) and item.get('role') in ('system', 'user', 'assistant', 'tool')]
+        self._event('model_request', '向模型发送请求', call_id=call_id, messages=recorded)
+        try:
+            raw = model_transport.post(req.full_url, payload, dict(req.header_items()),
+                                       timeout or self.settings.upstream_timeout)
+            data = json.loads(raw.decode("utf-8", "replace"))
+            content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+            self._event('model_response', '模型最终回复', call_id=call_id, content=content)
+            check_deadline()
+            return content
+        except Exception as error:
+            category = ('deadline' if isinstance(error, JobDeadlineExceeded) else
+                        'remote_api' if isinstance(error, urllib.error.HTTPError) else
+                        'network' if isinstance(error, (TimeoutError, urllib.error.URLError)) else 'program')
+            fields = {'call_id': call_id, 'error_category': category}
+            if isinstance(error, urllib.error.HTTPError):
+                fields['http_status'] = error.code
+            self._event('model_error', '模型请求未完成', **fields)
+            raise
 
     def stream(self, messages):
         body = {
@@ -102,8 +133,11 @@ class ModelClient:
             req = urllib.request.Request(
                 url, headers={"User-Agent": "study-assistant/1.1"}
             )
-            with urllib.request.urlopen(req, timeout=SEARXNG_TIMEOUT) as resp:
-                data = json.loads(resp.read().decode("utf-8", "replace"))
+            self._event('phase', '请求搜索服务')
+            data = json.loads(model_transport.post(req.full_url, None, dict(req.header_items()),
+                                                  SEARXNG_TIMEOUT, method='GET').decode('utf-8', 'replace'))
+        except JobDeadlineExceeded:
+            raise
         except Exception as error:
             raise RuntimeError("搜索服务暂时不可用，请重试研究") from error
         if not isinstance(data, dict) or not isinstance(data.get("results"), list):

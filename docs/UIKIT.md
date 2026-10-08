@@ -53,6 +53,14 @@ UI Kit 为首页、学习路径、测验地图和测验窗口提供共享样式�
 
 状态 API 用一个稳定 key 更新同一条消息，避免轮询或重试时不断新增重复提示。错误可附带重试回调。操作失败会保留错误并允许再次点击。
 
+### 后台任务详情
+
+`shared/job-details.js` 提供 `LearnJobDetails.mount(host, {key, nodeId, operation})`。页面把 `host` 放在任务状态旁边。控件显示“查看详情”按钮和内嵌面板，不使用 modal。详情接口为 `GET /jobs/{id}/details`。
+
+面板可查看任务阶段事件。模型请求和回复默认隐藏。面板提示其中可能包含参考答案和评分标准。用户点击“确认显示模型对话”后才显示正文。请求消息和回复内容均作为纯文本写入 DOM；不能拼接进 HTML。面板关闭时停止详情轮询。关闭后焦点返回按钮，面板中的滚动位置保留。按 Escape 关闭也执行相同的焦点处理。
+
+旧任务没有详情记录时，面板说明历史详情不可用。截断的详情要显示截断状态。任务详情不能绕过服务端的任务归属检查。
+
 ## 样式归属
 
 | 文件 | 归属 | 内容 |
@@ -81,6 +89,7 @@ UI Kit 为首页、学习路径、测验地图和测验窗口提供共享样式�
 <script src="/learn/assets/user-shell.js"></script>
 <script src="/learn/assets/user-session.js"></script>
 <script src="/learn/assets/saves.js"></script>
+<script src="/learn/assets/job-details.js"></script>
 <script src="/learn/assets/jobs.js"></script>
 <script src="/learn/assets/titles.js"></script>
 <script src="/learn/assets/materials.js"></script>

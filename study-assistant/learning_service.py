@@ -36,6 +36,10 @@ class LearningService:
         try:
             job_id = getattr(self.repository.store.local, "job_id", None)
             log_job_failure(job_id, "/path/node", error, stage)
+            from job_details import locations
+            self.repository.store.job_event('error', '生成内容未通过处理检查',
+                                           frames=locations(error), exception=type(error).__name__,
+                                           failure_stage=stage)
         except Exception:
             pass
 
@@ -125,7 +129,8 @@ class LearningService:
                 return (200, hit)
             _gate, _owner = self.cache.join(gate_key)
             if not _owner:
-                _gate["ev"].wait(GEN_WAIT_MAX)
+                _gate["ev"].wait(remaining_timeout(GEN_WAIT_MAX))
+                check_deadline()
                 hit = (
                     _gate["out"]
                     or self.cache.get(gate_key)
@@ -215,7 +220,8 @@ class LearningService:
                 return (200, hit)
             _gate, _owner = self.cache.join(gate_key)
             if not _owner:
-                _gate["ev"].wait(GEN_WAIT_MAX)
+                _gate["ev"].wait(remaining_timeout(GEN_WAIT_MAX))
+                check_deadline()
                 hit = (
                     _gate["out"]
                     or self.cache.get(gate_key)
