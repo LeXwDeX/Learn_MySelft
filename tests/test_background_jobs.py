@@ -154,6 +154,7 @@ class QueueTests(unittest.TestCase):
         with self.assertRaises(JobError) as conflict:
             queue.submit("u0", "request-one", "/path/intake", {"key": "u0/other"})
         self.assertEqual(conflict.exception.status, 409)
+        self.assertEqual(conflict.exception.error_category, 'request_id_conflict')
         with self.assertRaises(JobError) as full:
             queue.submit("u0", "request-two", "/path/intake", {"key": "u0/other"})
         self.assertEqual(full.exception.status, 429)
@@ -235,6 +236,39 @@ class JobHttpTests(unittest.TestCase):
 
     def stop_jobs(self):
         self.app.close()
+
+    def test_http_old_node_receipt_conflict_is_typed_without_rewriting_old_job(self):
+        key = self.put(self.alice, self.alice_cookie)
+        old_body = {"key": key, "node": {"id": "n1"}}
+        old_request = {"request_id": "old-batch:n1", "operation": "/path/node", "body": old_body}
+        with patch.object(self.app, "run_job", return_value=(200, {"cached": True})):
+            status, first, _ = self.request("/jobs", old_request, self.alice_cookie)
+            self.assertEqual(status, 202, first)
+            old_id = first['job']['id']
+            self.assertEqual(self.request("/jobs", old_request, self.alice_cookie)[1]['job']['id'], old_id)
+            current = {**old_request, "body": {**old_body, "defer_visual": True}}
+            status, conflict, _ = self.request("/jobs", current, self.alice_cookie)
+            self.assertEqual(status, 409)
+            self.assertEqual(conflict, {
+                "ok": False, "error": "同一任务回执不能用于不同内容",
+                "error_category": "request_id_conflict",
+            })
+            self.assertEqual(self.request("/jobs", old_request, self.alice_cookie)[1]['job']['id'], old_id)
+            accepted_status, accepted, _ = self.request("/jobs", {
+                **current, "request_id": "current-content:n1",
+            }, self.alice_cookie)
+            self.assertEqual(accepted_status, 202, accepted)
+            self.assertNotEqual(accepted['job']['id'], old_id)
+            with self.app.repository.store.connection() as connection:
+                stored = connection.execute('SELECT body FROM jobs WHERE id=?', (old_id,)).fetchone()
+            self.assertEqual(json.loads(stored['body']), old_body)
+            forbidden_status, forbidden, _ = self.request("/jobs", current, self.bob_cookie)
+            self.assertEqual(forbidden_status, 403)
+            self.assertNotIn('error_category', forbidden)
+            with patch.object(self.app.jobs(), 'submit', side_effect=JobError(409, 'another conflict')):
+                status, other, _ = self.request("/jobs", current, self.alice_cookie)
+                self.assertEqual(status, 409)
+                self.assertNotIn('error_category', other)
 
     def test_http_receipt_ownership_and_io_does_not_block_saving(self):
         self.addCleanup(self.stop_jobs)

@@ -25,6 +25,14 @@
     }
     return (a >>> 0).toString(16) + '-' + (b >>> 0).toString(16) + '-' + text.length;
   }
+  function learningOperation(operation) {
+    return operation === '/path/node' || operation === '/path/node/scene';
+  }
+  function boundRequestId(base, operation, body) {
+    // Fits the server's 8..120 character request ID contract. SHA-256 on
+    // the server remains authoritative if this local fingerprint collides.
+    return 'learning:' + fingerprint(stable([base, operation, body]));
+  }
   function requestId() {
     var bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
@@ -37,7 +45,7 @@
     try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (error) { return null; }
   }
   function saveReceipt(key, receipt) {
-    try { localStorage.setItem(key, JSON.stringify(receipt)); } catch (error) { /* Server receipt remains authoritative. */ }
+    try { localStorage.setItem(key, JSON.stringify(receipt)); return true; } catch (error) { return false; /* Server receipt remains authoritative. */ }
   }
   async function request(path, body) {
     var controller = new AbortController();
@@ -92,8 +100,13 @@
   }
   async function execute(operation, body, options) {
     var key = receiptKey(operation, body);
-    var receipt = readReceipt(key) || {requestId: requestId(), created: Date.now()};
-    if (options.newOperation && receipt.id) {
+    var receipt = readReceipt(key);
+    if (!receipt) {
+      receipt = {requestId: options.requestId && learningOperation(operation) ?
+        boundRequestId(options.requestId, operation, body) : requestId(), created: Date.now()};
+      if (options.requestId && learningOperation(operation)) receipt.baseRequestId = options.requestId;
+    }
+    if (options.newOperation && receipt.id && !learningOperation(operation)) {
       // Only an explicit next exam rotates a completed receipt. Unconfirmed,
       // running and failed work stays resumable with its original identity.
       var previous = (await request('/jobs/' + encodeURIComponent(receipt.id))).job;
@@ -101,21 +114,37 @@
         receipt = {requestId: requestId(), created: Date.now()};
       }
     }
-    if (options.requestId) receipt.requestId = options.requestId;
+    if (options.requestId && !learningOperation(operation)) receipt.requestId = options.requestId;
     saveReceipt(key, receipt);
     var preparing = {id: 'prepare-' + receipt.requestId, operation: operation};
     if (operation === '/path/requiz') showJob(preparing, '正在准备新的题目，目前进度：步骤 0/4 · 提交任务');
-    var accepted;
+    var accepted, submitted = false;
     try {
       if (receipt.id && (options.resumeOnly || operation === '/path/node' || operation === '/path/node/scene')) {
         accepted = await request('/jobs/' + encodeURIComponent(receipt.id));
       } else if (options.resumeOnly) {
         var missing = new Error('未找到原任务。请点击重试，继续准备学习材料。');
         missing.error_category = 'recovery_required'; throw missing;
-      } else accepted = await request('/jobs', {operation: operation, body: body, request_id: receipt.requestId});
+      } else {
+        submitted = true;
+        accepted = await request('/jobs', {operation: operation, body: body, request_id: receipt.requestId});
+      }
     } catch (error) {
-      if (operation === '/path/requiz') showJob(preparing, (error.status ? '本程序请求错误（HTTP ' + error.status + '）' : '网络连接或超时错误') + '\n任务提交未确认，请重试；原题和作答已保留。', 'error');
-      throw error;
+      if (submitted && learningOperation(operation) && error.status === 409 &&
+          error.error_category === 'request_id_conflict') {
+        var base = receipt.baseRequestId || options.requestId || receipt.requestId;
+        var rebound = boundRequestId(base, operation, body);
+        if (rebound === receipt.requestId) throw error;
+        var replacement = {requestId: rebound, baseRequestId: base, created: receipt.created};
+        // A lost acknowledgement must reload this exact identity. Never submit
+        // the replacement if local persistence failed.
+        if (!saveReceipt(key, replacement)) throw error;
+        receipt = replacement;
+        accepted = await request('/jobs', {operation: operation, body: body, request_id: receipt.requestId});
+      } else {
+        if (operation === '/path/requiz') showJob(preparing, (error.status ? '本程序请求错误（HTTP ' + error.status + '）' : '网络连接或超时错误') + '\n任务提交未确认，请重试；原题和作答已保留。', 'error');
+        throw error;
+      }
     }
     if (window.LearnUI) window.LearnUI.clear('job-' + preparing.id);
     var job = accepted.job;

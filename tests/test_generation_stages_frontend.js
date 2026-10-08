@@ -21,10 +21,10 @@ function all(node) { return [node,...node.children.flatMap(all)]; }
 const flush=async()=>{for(let i=0;i<24;i++)await Promise.resolve();};
 function deferred(){let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});return {promise,resolve,reject};}
 function detail(id,status='pending'){return {study_notes:id+' 正文',quiz:{round_id:'quiz-'+id,questions:[{answer:'saved'}]},unknown:'preserved',manim_review:{status,retryable:true}};}
-function harness({failNodes=[],failScenes=[],readOnly=false}={}) {
+function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=false,nodeCount=3}={}) {
   const doc={createElement(tag){return new Element(tag,doc);},addEventListener(){},getElementById(id){return all(doc.body).find(n=>n.id===id)||null;},querySelector(selector){return doc.body.querySelector(selector);}};
   doc.body=doc.createElement('body');const anchor=doc.createElement('div');anchor.id='resume-bar';doc.body.appendChild(anchor);const gen=doc.createElement('button');gen.id='gen-all-btn';doc.body.appendChild(gen);
-  const model={state:{stage:'learning',plan:{nodes:['n1','n2','n3'].map(id=>({id,title:id+' 课程',objectives:[]}))},spec:{},nodeDetail:{},pending:null},session:{nodeMaterialStatus:{},expandedId:'n1'}};
+  const model={state:{stage:'learning',plan:{nodes:Array.from({length:nodeCount},(_,i)=>'n'+(i+1)).map(id=>({id,title:id+' 课程',objectives:[]}))},spec:{},nodeDetail:{},pending:null},session:{nodeMaterialStatus:{},expandedId:'n1'}};
   const calls=[],jobs=new Map(),storage=new Map(),observed=[],opened=[],renders=[];let serial=0,clock=Date.now(),timer=0,currentKey='u0/material';
   const env={document:doc,console,Response,AbortController,Uint8Array,crypto:webcrypto,location:{reload(){}},
     Date:class extends Date {static now(){return clock;}},setTimeout(fn,ms){const id=++timer;if(ms===1500||ms===3500){if(env.expireWatch)clock+=3600001;queueMicrotask(fn);}return id;},clearTimeout(){},
@@ -52,10 +52,16 @@ function harness({failNodes=[],failScenes=[],readOnly=false}={}) {
     return Response.json({job:{...job,status:env.keepRunning?'running':job.finalStatus}});
   };
   for(const file of ['shared/ui.js','shared/jobs.js'])vm.runInContext(fs.readFileSync(file,'utf8'),env);
-  const persistence={save(){env.saves=(env.saves||0)+1;},post(path,body,options){return env.LearnJobs.run(path,body,options);}};
+  let persistence={save(){env.saves=(env.saves||0)+1;},post(path,body,options){return env.LearnJobs.run(path,body,options);}};
   const format={$:id=>doc.getElementById(id),storeKey:()=>currentKey};
   const domain={nodeById:id=>model.state.plan.nodes.find(n=>n.id===id),depTitles:()=>[]};
   const hooks={syncAiMaterial(){},renderNodeDetail(id){renders.push({id,detail:model.state.nodeDetail[id]});}};
+  if(realPersistence) {
+    env.addEventListener=()=>{};env.Blob=Blob;model.session.API='http://api';
+    const ports={'path.model':model,'path.format':format,'path.hooks':hooks};
+    env.define=(name,names,factory)=>{persistence=factory(ports);};
+    vm.runInContext(fs.readFileSync('learning-path/modules/path-persistence.js','utf8'),env);
+  }
   const deps={'path.model':model,'path.format':format,'path.persistence':persistence,'path.domain':domain,'path.workflow':{hideResumeBar(){}},'path.hooks':hooks};
   env.define=(name,names,factory)=>{env.generation=factory(deps);};
   vm.runInContext(fs.readFileSync('learning-path/modules/path-generation.js','utf8'),env);
@@ -133,6 +139,25 @@ function harness({failNodes=[],failScenes=[],readOnly=false}={}) {
     assert.equal(h.workflow.resumeIfPending(),true);assert.deepEqual(Array.from(recovered.ids),['n2'],'pending animation survives batch recovery while legacy bodies stay complete');assert.equal(recovered.options.recovering,true);
     h.model.state.nodeDetail={};h.model.state.pending={kind:'node',nid:'n1',at:Date.now()};h.workflow.resumeIfPending();assert.equal(flag,true,'single-node recovery is explicitly read-only task recovery');assert.equal(h.model.session.recoveringGeneration,false);
     h.env.LearnUser.readOnly=true;assert.equal(h.workflow.resumeIfPending(),false);
+  }
+  {
+    const h=harness({realPersistence:true,nodeCount:6});
+    h.model.state.pending={kind:'nodes',requestId:'legacy-six-node-base',remaining:['n1','n2','n3','n4','n5','n6']};
+    const originalFetch=h.env.LearnUser.fetch;
+    h.env.LearnUser.fetch=async(url,options)=>{
+      if(url.endsWith('/jobs')&&options.method==='POST'&&JSON.parse(options.body).request_id.startsWith('legacy-six-node-base:')) {
+        return Response.json({error:'old nondeferred receipt has another body',error_category:'request_id_conflict'},{status:409});
+      }
+      return originalFetch(url,options);
+    };
+    await h.generation.genAllStart(['n1','n2','n3','n4','n5','n6']);
+    const submitted=h.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/jobs'));
+    assert.equal(submitted.filter(c=>c.body.operation==='/path/node').length,6);
+    assert.equal(submitted.filter(c=>c.body.operation==='/path/node/scene').length,6);
+    assert(submitted.filter(c=>c.body.operation==='/path/node').every(c=>c.body.body.defer_visual===true));
+    assert.equal(new Set(submitted.map(c=>c.body.request_id)).size,12);
+    assert.equal(Object.keys(h.model.state.nodeDetail).length,6);
+    assert.equal(h.model.state.pending,null);
   }
   console.log('PASS two-stage material readiness, animation-only retry, one batch summary, stable details/focus, GET-only recovery and read-only');
 })().catch(error=>{console.error(error);process.exitCode=1;});

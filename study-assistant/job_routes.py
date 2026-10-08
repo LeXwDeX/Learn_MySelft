@@ -40,7 +40,11 @@ class JobRoutes:
                 raise JobError(404, "任务操作不存在")
             request._json(202, {"ok": True, "job": job})
         except (AccountError, JobError, material_parser.MaterialError) as error:
-            request._json(error.status, {"ok": False, "error": str(error)})
+            response = {"ok": False, "error": str(error)}
+            if (isinstance(error, JobError) and error.status == 409 and
+                    getattr(error, "error_category", None) == "request_id_conflict"):
+                response["error_category"] = "request_id_conflict"
+            request._json(error.status, response)
         except (ValueError, TypeError):
             request._json(400, {"ok": False, "error": "无效的任务请求"})
         except (OSError, sqlite3.Error):
