@@ -1081,6 +1081,11 @@ session.genAllIdx = 0;
 
 session.genAllTimer = null;
 
+// Counts for the current batch summary.
+session.genAllSucceeded = 0;
+session.genAllFailed = 0;
+session.genAllManualRetry = false;
+
 // 按钮短暂文案计时器
 
   // 缺失节点：state.plan.nodes 中 nodeDetail 为空的（含未解锁）
@@ -1099,6 +1104,10 @@ function genAllBtnIdleLater(ms, text) {
       session.genAllTimer = null;
       if (!session.genAllRunning) genAllBtnSet('一键生成全部节点');
     }, ms);
+  }
+
+function showGenAllError(message) {
+    if (window.LearnUI) window.LearnUI.set('gen-all-error', '批量生成失败：' + message, 'error');
   }
 
 function genAllSyncPending() {
@@ -1133,17 +1142,17 @@ function setCardGenState(id, on) {
 
 // 纯请求：生成某节点的学习材料（不含 UI，供单卡与批量复用）
 
-function requestNodeDetail(id) {
+function requestNodeDetail(id, manualRetry) {
     var n = domain.nodeById(id);
     return persistence.post('/path/node', {
       spec: model.state.spec,
       node: { id: n.id, title: n.title, essence: n.essence, objectives: n.objectives || [] },
       dep_titles: domain.depTitles(id),
       key: format.storeKey()
-    });
+    }, manualRetry ? {manualRetry: true} : undefined);
   }
 
-function genAllStart(ids) {
+function genAllStart(ids, options) {
     if (!ids || !ids.length) return;
     session.genAllRunning = true; session.genAllPaused = false;
     session.genAllQueue = ids.slice();
@@ -1151,6 +1160,11 @@ function genAllStart(ids) {
     ids.forEach(function (id) { model.session.nodeMaterialStatus[id] = 'generating'; hooks.syncAiMaterial(id); });
     session.genAllTotal = ids.length;
     session.genAllIdx = 0;
+    session.genAllSucceeded = 0;
+    session.genAllFailed = 0;
+    session.genAllLastError = '';
+    if (window.LearnUI) window.LearnUI.clear('gen-all-error');
+    session.genAllManualRetry = !!(options && options.manualRetry);
     if (session.genAllTimer) { clearTimeout(session.genAllTimer); session.genAllTimer = null; }
     workflow.showResumeBar('正在批量生成学习材料（' + ids.length + ' 个节点）…');
     genAllSyncPending();
@@ -1169,19 +1183,24 @@ function genAllStep() {
     session.genAllIdx++;
     genAllBtnSet('生成中 ' + session.genAllIdx + '/' + session.genAllTotal + '（点击暂停）');
     setCardGenState(id, true);
-    requestNodeDetail(id).then(function (detail) {
+    requestNodeDetail(id, session.genAllManualRetry).then(function (detail) {
       setCardGenState(id, false);
       model.state.nodeDetail[id] = detail;
       hooks.syncAiMaterial(id);
       var i0 = session.genAllRemaining.indexOf(id); if (i0 >= 0) session.genAllRemaining.splice(i0, 1);
+      session.genAllSucceeded++;
       session.genAllQueue.shift();
       genAllSyncPending();
       if (model.session.expandedId === id) hooks.renderNodeDetail(id);
       genAllStep();
-    }).catch(function () {
+    }).catch(function (error) {
       setCardGenState(id, false);
       model.session.nodeMaterialStatus[id] = 'failed';
       hooks.syncAiMaterial(id);
+      session.genAllFailed++;
+      session.genAllLastError = error && error.message ? error.message : '任务失败';
+      showGenAllError(session.genAllLastError);
+      genAllSyncPending();
       session.genAllQueue.shift();   // 失败：留在 genAllRemaining，继续下一个
       genAllStep();
     });
@@ -1200,11 +1219,12 @@ function genAllFinish(reason) {
     if (session.genAllRemaining.length) {   // 结束但有失败：保留 pending，按钮短暂提示，再点=重试剩余
       genAllSyncPending();
       workflow.hideResumeBar();
-      genAllBtnIdleLater(4000, '生成完成（' + session.genAllRemaining.length + ' 个失败，可重试）');
+      genAllBtnIdleLater(6000, '成功 ' + session.genAllSucceeded + '，失败 ' + session.genAllFailed + '；重试剩余');
     } else {
       model.state.pending = null; persistence.save();
+      if (window.LearnUI) window.LearnUI.clear('gen-all-error');
       workflow.hideResumeBar();
-      genAllBtnIdleLater(2000, '已全部生成 ✓');
+      genAllBtnIdleLater(4000, '本轮成功 ' + session.genAllSucceeded + ' 个，失败 0 个 ✓');
     }
   }
 
@@ -1217,7 +1237,7 @@ function onGenAllClick() {
     }
     var ids = missingNodeIds();
     if (!ids.length) { genAllBtnIdleLater(2000, '已全部生成 ✓'); return; }
-    genAllStart(ids);
+    genAllStart(ids, {manualRetry: true});
   }
 
   function isRunning() { return session.genAllRunning; }
@@ -1346,12 +1366,12 @@ function selectUnit(id) {
 
 // 展开卡片（手风琴：不切换）
 
-function expandCard(id) {
+function expandCard(id, options) {
     var n = domain.nodeById(id);
     if (!n) return;
     model.session.expandedId = id;
     applyCardStates();
-    renderCardContent(id);
+    renderCardContent(id, options);
     requestAnimationFrame(drawEdges);
   }
 
@@ -1369,7 +1389,7 @@ function onCardClick(id) {
     if (model.session.expandedId === id) { collapseCard(); return; }
     var n = domain.nodeById(id);
     if (!n) return;
-    expandCard(id);
+    expandCard(id, {manualRetry: true});
   }
 
 // 明确聚焦某单元的卡（恢复重放/显式打开用，不 toggle）
@@ -1381,7 +1401,7 @@ function selectNode(id) {
 
 function openAiView(id) {
     selectUnit(id);
-    expandCard(id);
+    expandCard(id, {manualRetry: true});
     hooks.showAgent();
   }
 
@@ -1392,7 +1412,7 @@ function cardContentEl(id) {
     return card ? card.querySelector('.node-content') : null;
   }
 
-function renderCardContent(id) {
+function renderCardContent(id, options) {
     var scope = cardContentEl(id);
     if (!scope) return;
     model.session.activeScope = scope;
@@ -1423,7 +1443,7 @@ function renderCardContent(id) {
     model.session.nodeMaterialStatus[id] = 'generating';
     hooks.syncAiMaterial(id);
     workflow.setPending('node', id);
-    hooks.requestNodeDetail(id).then(function (detail) {
+    hooks.requestNodeDetail(id, options && options.manualRetry ? true : false).then(function (detail) {
       model.session.generatingNode = null;
       model.state.nodeDetail[id] = detail;
       hooks.syncAiMaterial(id);
@@ -1444,10 +1464,10 @@ function renderCardContent(id) {
       var rb = scope.querySelector('.reload-node');
       if (rb) rb.addEventListener('click', function (e2) {
         e2.stopPropagation();
-        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id);
+        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id, {manualRetry: true});
       });
       shell.showError('学习材料生成失败：' + e.message, function () {
-        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id);
+        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id, {manualRetry: true});
       });
     });
   }

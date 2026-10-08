@@ -18,6 +18,7 @@ from manim_contracts import ManimContractError, valid_asset_id, validate_source
 from manim_renderer import ManimUnavailable, review_png
 from prompts import MATH_VISUAL_TEACHING
 from text_utils import clip
+from job_execution import JobDeadlineExceeded, check_deadline
 
 METADATA_LIMITS = {'reason': 200, 'title': 80, 'summary': 400}
 FAILURE_CODES = frozenset({'model_unavailable', 'renderer_unavailable', 'source_invalid',
@@ -100,6 +101,7 @@ class ManimService:
 
     def generate(self, key, node_id, source, node, requested=True, actor=None, cancelled=lambda: False, question=''):
         def check_cancelled():
+            check_deadline()
             if cancelled():
                 raise JobError(409, '动画请求已取消，原正文已保留')
         check_cancelled()
@@ -167,6 +169,8 @@ class ManimService:
                     raise ManimContractError('；'.join(review['issues'])[:800] or '独立复核未通过')
                 self._diagnostic(attempt+1,stage,'passed',started)
                 break
+            except JobDeadlineExceeded:
+                raise
             except ManimUnavailable as error:
                 self._diagnostic(attempt+1,getattr(error,'diagnostic_stage',stage),'renderer_unavailable',started,error)
                 raise ManimGenerationError(503, 'renderer_unavailable') from error
@@ -221,6 +225,7 @@ class ManimService:
                 temporary = directory/'metadata.tmp'
                 temporary.write_text(json.dumps(metadata))
                 temporary.replace(directory/'metadata.json')
+                check_cancelled()
             self._diagnostic(attempt+1,'publish','passed',started)
             return spec
         except BaseException as error:

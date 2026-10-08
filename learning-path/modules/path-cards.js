@@ -119,12 +119,12 @@ function selectUnit(id) {
 
 // 展开卡片（手风琴：不切换）
 
-function expandCard(id) {
+function expandCard(id, options) {
     var n = domain.nodeById(id);
     if (!n) return;
     model.session.expandedId = id;
     applyCardStates();
-    renderCardContent(id);
+    renderCardContent(id, options);
     requestAnimationFrame(drawEdges);
   }
 
@@ -142,7 +142,7 @@ function onCardClick(id) {
     if (model.session.expandedId === id) { collapseCard(); return; }
     var n = domain.nodeById(id);
     if (!n) return;
-    expandCard(id);
+    expandCard(id, {manualRetry: true});
   }
 
 // 明确聚焦某单元的卡（恢复重放/显式打开用，不 toggle）
@@ -154,7 +154,7 @@ function selectNode(id) {
 
 function openAiView(id) {
     selectUnit(id);
-    expandCard(id);
+    expandCard(id, {manualRetry: true});
     hooks.showAgent();
   }
 
@@ -165,7 +165,7 @@ function cardContentEl(id) {
     return card ? card.querySelector('.node-content') : null;
   }
 
-function renderCardContent(id) {
+function renderCardContent(id, options) {
     var scope = cardContentEl(id);
     if (!scope) return;
     model.session.activeScope = scope;
@@ -196,7 +196,7 @@ function renderCardContent(id) {
     model.session.nodeMaterialStatus[id] = 'generating';
     hooks.syncAiMaterial(id);
     workflow.setPending('node', id);
-    hooks.requestNodeDetail(id).then(function (detail) {
+    hooks.requestNodeDetail(id, options && options.manualRetry ? true : false).then(function (detail) {
       model.session.generatingNode = null;
       model.state.nodeDetail[id] = detail;
       hooks.syncAiMaterial(id);
@@ -217,10 +217,10 @@ function renderCardContent(id) {
       var rb = scope.querySelector('.reload-node');
       if (rb) rb.addEventListener('click', function (e2) {
         e2.stopPropagation();
-        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id);
+        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id, {manualRetry: true});
       });
       shell.showError('学习材料生成失败：' + e.message, function () {
-        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id);
+        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id, {manualRetry: true});
       });
     });
   }

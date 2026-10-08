@@ -5,6 +5,7 @@ failures are recorded as unavailable, never as a successful content inspection.
 """
 import hashlib
 import json
+from job_execution import JobDeadlineExceeded, check_deadline, remaining_timeout
 import os
 import signal
 from pathlib import Path
@@ -38,7 +39,8 @@ def markdown(candidate):
 
 
 def _capture(config, path, source, *, check_only=False):
-    if not _CAPTURE_SLOTS.acquire(timeout=1):
+    if not _CAPTURE_SLOTS.acquire(timeout=remaining_timeout(1)):
+        check_deadline()
         raise TimeoutError('renderer busy')
     try:
         return _capture_worker(config, path, source, check_only=check_only)
@@ -51,15 +53,27 @@ def _capture_worker(config, path, source, *, check_only=False):
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, start_new_session=True)
     try:
-        stdout, _ = process.communicate(json.dumps({'source': source, 'check_only': check_only}), timeout=75)
+        stdout, _ = process.communicate(json.dumps({'source': source, 'check_only': check_only}), timeout=remaining_timeout(75))
     except subprocess.TimeoutExpired:
         # The browser and driver are descendants; kill the whole isolated session.
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        process.communicate()
+        process.communicate(timeout=5)
+        check_deadline()
         raise
+    except JobDeadlineExceeded as deadline_error:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            raise deadline_error from None
+        raise
+    check_deadline()
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, 'render_worker')
     return json.loads(stdout)
@@ -94,6 +108,8 @@ def validate_mermaid(source, config_path=None):
         config = json.loads(path.read_text())
         rendered = _capture(config, path, fence + 'mermaid\n' + normalized + '\n' + fence,
                             check_only=True)
+    except JobDeadlineExceeded:
+        raise
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         return {'status': 'unavailable', 'reason': 'renderer_unavailable'}
     if rendered.get('errors'):
@@ -125,6 +141,8 @@ def review(candidate, ask, config_path=None):
     try:
         config = json.loads(path.read_text())
         rendered = _capture(config, path, source)
+    except JobDeadlineExceeded:
+        raise
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         return dict(report, status='unavailable', reason='renderer_unavailable')
     if rendered.get('errors'):
@@ -147,6 +165,8 @@ def review(candidate, ask, config_path=None):
             raise ValueError('invalid review contract')
         if not all(isinstance(issue, str) and issue.strip() for issue in answer['issues']):
             raise ValueError('invalid issues')
+    except JobDeadlineExceeded:
+        raise
     except urllib.error.HTTPError as error:
         return dict(report, status='unavailable', reason='model_http_error', http_status=error.code)
     except (TimeoutError, subprocess.TimeoutExpired):

@@ -58,21 +58,33 @@ class StateStore:
                     job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
                     value TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS job_attempts (
+                    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+                    attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+                    started_ms INTEGER,
+                    retry_at_ms INTEGER
+                );
                 CREATE TABLE IF NOT EXISTS task_titles (
                     user_id TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL,
                     PRIMARY KEY(user_id, key)
                 );
             ''')
+            # Existing attempts count once. Never reset a retry budget on restart.
+            connection.execute('''INSERT OR IGNORE INTO job_attempts(job_id,attempt,started_ms)
+                SELECT id, CASE WHEN status='queued' THEN 0 ELSE 1 END,
+                    CASE WHEN status='queued' THEN NULL ELSE updated_ms END FROM jobs''')
+            # Optional task metadata is additive. Older code can still read the
+            # same document/job envelope during a code-only release rollback.
             connection.execute('PRAGMA user_version=1')
         self._import_legacy()
         with self.transaction() as connection:
             migrate_titles(connection)
 
-    def job_progress(self, step, label, attempt=1):
+    def job_progress(self, step, label, attempt=1, total=4):
         job_id = getattr(self.local, 'job_id', None)
         if not job_id:
             return
-        value = json.dumps({'step': step, 'total': 4, 'label': label, 'attempt': attempt}, ensure_ascii=False)
+        value = json.dumps({'step': step, 'total': total, 'label': label, 'attempt': attempt}, ensure_ascii=False)
         with self.transaction() as connection:
             connection.execute('INSERT INTO job_progress(job_id,value) VALUES (?,?) '
                                'ON CONFLICT(job_id) DO UPDATE SET value=excluded.value', (job_id, value))

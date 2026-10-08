@@ -1,9 +1,11 @@
 """Two fresh networkless containers separate model execution from media validation."""
 import base64
 import json
+from job_execution import JobDeadlineExceeded, check_deadline, remaining_timeout
 from pathlib import Path
 import re
 import subprocess
+import sys
 import threading
 import struct
 import zlib
@@ -56,7 +58,8 @@ class ManimRenderer:
 
     def render(self, source):
         validate_source(source)
-        if not _SLOTS.acquire(timeout=1):
+        if not _SLOTS.acquire(timeout=remaining_timeout(1)):
+            check_deadline()
             raise ManimUnavailable('动画渲染繁忙')
         phase = 'runtime_configuration'
         try:
@@ -112,6 +115,8 @@ class ManimRenderer:
             return dict(video=decoded['video.mp4'],poster=decoded['poster.png'],
                         frames=[decoded['step-%d.png'%i] for i in range(len(manifest['steps']))],
                         review_frames=review_frames,manifest=manifest)
+        except JobDeadlineExceeded:
+            raise
         except ManimUnavailable as error:
             error.diagnostic_stage = phase
             raise
@@ -149,22 +154,28 @@ class ManimRenderer:
             reader,writer = threading.Thread(target=collect,daemon=True),threading.Thread(target=send,daemon=True)
             reader.start(); writer.start()
             try:
-                process.wait(timeout=timeout)
+                process.wait(timeout=remaining_timeout(timeout))
             except subprocess.TimeoutExpired as error:
-                process.kill(); process.wait()
+                process.kill(); process.wait(timeout=5)
+                check_deadline()
                 raise ManimUnavailable('动画处理超时') from error
-            reader.join(timeout=5); writer.join(timeout=5)
+            reader.join(timeout=remaining_timeout(5)); writer.join(timeout=remaining_timeout(5))
+            check_deadline()
             if reader.is_alive() or writer.is_alive() or errors or not chunks:
                 raise ManimUnavailable('动画产物收集失败')
             if len(chunks[0])>limit: raise ManimContractError('动画产物超出限制')
             if process.returncode: raise ManimUnavailable('动画处理失败')
             return json.loads(chunks[0])
         finally:
-            if process is not None and process.poll() is None:
-                process.kill(); process.wait()
+            execution_error = sys.exc_info()[1]
             try:
+                if process is not None and process.poll() is None:
+                    process.kill(); process.wait(timeout=5)
                 removed = subprocess.run(['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15,check=False)
                 if removed.returncode:
                     raise ManimUnavailable('动画容器清理失败')
-            except (OSError,subprocess.SubprocessError) as error:
+            except (OSError,subprocess.SubprocessError,ManimUnavailable) as error:
+                if isinstance(execution_error, JobDeadlineExceeded):
+                    raise execution_error from None
+                check_deadline()
                 raise ManimUnavailable('动画容器清理失败') from error
