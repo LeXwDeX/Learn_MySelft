@@ -154,7 +154,7 @@ class ManimService:
             try:
                 self.repository.store.job_progress(1, '规划教学变化与动画代码', attempt+1, total=5)
                 envelope = _json_block(self.model.json(messages, temperature=0.3,
-                                                       max_tokens=self.generation_token_limit, reasoning_effort="medium"))
+                                                       max_tokens=self.generation_token_limit, reasoning_effort="none"))
                 check_cancelled()
                 stage = 'envelope_validation'
                 if not isinstance(envelope, dict) or set(envelope) != {'needed','reason','title','summary','teaching_plan','code'} or type(envelope['needed']) is not bool:
