@@ -57,6 +57,31 @@ class TeachingScene(Scene):
         self.play(FadeIn(original), FadeIn(original_name), FadeIn(original_coordinate), Transform(arrow, target), endpoint.animate.move_to(last).set_color("#c74f20"), run_time=2.4)
         self.play(FadeIn(target_name), FadeIn(target_coordinate), run_time=0.4)
         self.next_step("终点沿灰色水平线从(0,1)移到(" + value + ",1)。x增加" + value + "，y仍为1，原点O不动")
+    def swap_components(self, values=(3, -1, 4)):
+        if type(values) not in (tuple, list) or len(values) != 3 or any(type(value) is not int or not -9 <= value <= 9 for value in values) or values[0] == values[1]:
+            raise ValueError("swap_components requires three integers from -9 to 9 with distinct first two values")
+        if any(mob is not self.camera.frame for mob in self.mobjects) or self.step_records or self.time != 0:
+            raise ValueError("swap_components requires a new empty scene")
+        original_tuple = "(" + ",".join(str(value) for value in values) + ")"
+        swapped_tuple = "(" + ",".join(str(values[index]) for index in (1, 0, 2)) + ")"
+        positions = [LEFT*3, ORIGIN, RIGHT*3]
+        slots = VGroup(*[Rectangle(width=2.2, height=1.2).move_to(position).set_color("#757575") for position in positions])
+        indices = VGroup(*[self.label(str(index+1)).move_to(position+DOWN*1.5) for index, position in enumerate(positions)])
+        dimension = self.label("维度3").move_to(RIGHT*4.2+UP*2.3)
+        first = self.label(str(values[0]), color="#245b83", size=120).move_to(positions[0]+UP*1.6)
+        second = self.label(str(values[1]), color="#c74f20", size=120).move_to(positions[1]+UP*1.6)
+        third = self.label(str(values[2]), size=120).move_to(positions[2]+UP*1.6)
+        original = self.label(original_tuple).move_to(LEFT*1.5+UP*2.5)
+        self.add(slots, indices, dimension, first, second, third, original)
+        self.play(first.animate.move_to(positions[0]), second.animate.move_to(positions[1]), third.animate.move_to(positions[2]), run_time=1.5)
+        self.next_step("数字落入第1、2、3个固定槽位，建立有序向量" + original_tuple + "，维度是3")
+        original.set_color("#757575")
+        upper = ArcBetweenPoints(positions[0], positions[1], angle=-PI/2)
+        lower = ArcBetweenPoints(positions[1], positions[0], angle=-PI/2)
+        self.play(MoveAlongPath(first, upper), MoveAlongPath(second, lower), run_time=2.4)
+        result = self.label(swapped_tuple).move_to(DOWN*2.5)
+        self.play(FadeIn(result), run_time=0.4)
+        self.next_step("前两数字交换位置，得到" + swapped_tuple + "。第三分量" + str(values[2]) + "不动，维度仍是3")
     def next_step(self, caption):
         if len(self.step_records) >= 8:
             raise ValueError("too many steps")

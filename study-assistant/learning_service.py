@@ -417,16 +417,19 @@ class LearningService:
                     detail = candidate
                     break
                 except harness.QuizContractError as error:
-                    if stage == 'render_review':
-                        raise
                     if self.scenes and self.scenes.manim and candidate:
                         asset = (candidate.get("manim_review") or {}).get("asset_id")
                         if asset:
                             self.scenes.manim.discard(asset)
                     self.log_node_failure(error, stage)
                     last_error = str(error)
+                    if stage == 'render_review':
+                        # A rejected lesson must be regenerated, not repaired as
+                        # quiz-only data. Reuse the same bounded candidate loop.
+                        candidate = None
             if detail is None:
-                raise harness.QuizContractError("出题校验失败：" + last_error)
+                prefix = "正文渲染复核失败：" if stage == 'render_review' else "出题校验失败："
+                raise harness.QuizContractError(prefix + last_error)
         except BaseException as error:
             try:
                 if self.scenes and self.scenes.manim and candidate:

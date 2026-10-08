@@ -9,7 +9,7 @@ import urllib.error
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
 from background_jobs import JobError
-from manim_service import METADATA_LIMITS, PROMPT, TEACHING_REFERENCE_CODE, TEACHING_REFERENCE_ENVELOPE, ManimService, ManimGenerationError
+from manim_service import METADATA_LIMITS, PROMPT, TEACHING_REFERENCE_CODE, TEACHING_REFERENCE_ENVELOPE, SWAP_REFERENCE_ENVELOPE, ManimService, ManimGenerationError
 from manim_contracts import ManimContractError, validate_source, validate_teaching_plan
 from manim_renderer import ManimUnavailable
 from prompts import MATH_VISUAL_TEACHING
@@ -78,6 +78,23 @@ class ManimServiceTests(unittest.TestCase):
         self.assertIn('y仍为1', plan['steps'][1]['why'])
         self.assertIn('终点Dot沿线连续右移', PROMPT)
         self.assertIn('结束后显示Ae2和目标坐标', PROMPT)
+
+    def test_swap_reference_has_valid_envelope_source_and_two_step_plan(self):
+        example = SWAP_REFERENCE_ENVELOPE
+        self.assertEqual(set(example), {'needed', 'reason', 'title', 'summary', 'teaching_plan', 'code'})
+        self.assertIs(example['needed'], True)
+        for name, limit in METADATA_LIMITS.items():
+            self.assertTrue(example[name].strip())
+            self.assertLessEqual(len(example[name]), limit)
+        self.assertEqual(validate_source(example['code']), example['code'])
+        self.assertEqual(validate_teaching_plan(example['teaching_plan'], step_count=2), example['teaching_plan'])
+        calls = [node for node in ast.walk(ast.parse(example['code'])) if isinstance(node, ast.Call)]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].func.attr, 'swap_components')
+        self.assertEqual(calls[0].keywords[0].arg, 'values')
+        self.assertEqual(ast.literal_eval(calls[0].keywords[0].value), (3, -1, 4))
+        prompt_examples = [json.loads(line) for line in PROMPT.splitlines() if line.startswith('{"needed":')]
+        self.assertEqual(prompt_examples, [SWAP_REFERENCE_ENVELOPE, TEACHING_REFERENCE_ENVELOPE])
 
     def test_generation_receives_reference_without_changing_user_topic(self):
         from unittest.mock import patch
