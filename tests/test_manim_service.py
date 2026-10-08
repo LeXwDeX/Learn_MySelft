@@ -43,7 +43,8 @@ class Planner:
 
 class Renderer:
     def __init__(self,path): self.state_dir=path; self.hook=lambda:None
-    def render(self,source):
+    def render(self,source,*,check_cancelled=None):
+        if check_cancelled is not None: check_cancelled()
         self.hook()
         return {'video':b'video','poster':b'poster','frames':[b'image'],'review_frames':[dict(start=png(),middle=png(),result=png())],'manifest':{'steps':[{}]}}
 
@@ -259,7 +260,9 @@ class ManimServiceTests(unittest.TestCase):
              patch.object(self.renderer, 'render', wraps=self.renderer.render) as render:
             spec = self.generate()
             self.assertTrue(spec['asset_id'])
-            render.assert_called_once_with(good['code'])
+            self.assertEqual(render.call_args.args, (good['code'],))
+            self.assertEqual(render.call_count,1)
+            self.assertTrue(callable(render.call_args.kwargs['check_cancelled']))
             payload = json.loads(model.call_args_list[1].args[0][1]['content'])
             self.assertEqual(payload['previous_code'], bad['code'])
             self.assertIn('第3行', payload['repair'])
@@ -604,6 +607,21 @@ class RelationPlannerTests(unittest.TestCase):
         value['review_frames']=[dict(start=png(),middle=png(),result=png()) for _ in range(2)]
         return value
 
+    def test_public_generate_installs_budget_without_extending_outer_deadline(self):
+        from unittest.mock import patch
+        from job_execution import budget_active,execution_budget,remaining_timeout
+        limits=[]
+        def inspect(*args):
+            self.assertTrue(budget_active())
+            limits.append(remaining_timeout(1000))
+            return None
+        with patch.object(self.service,'_generate',side_effect=inspect):
+            self.generate()
+            with execution_budget(.1):self.generate()
+        self.assertTrue(299<limits[0]<=300)
+        self.assertTrue(0<limits[1]<=.1)
+        self.assertFalse(budget_active())
+
     def test_planner_default_uses_same_model_and_small_per_request_limit(self):
         from unittest.mock import patch
         self.service.planner_model=self.service.model
@@ -716,7 +734,9 @@ class RelationPlannerTests(unittest.TestCase):
             expected=compile_relation(validate_relation(value,True))
             with self.subTest(recipe=value['recipe']),patch.object(self.service.planner_model,'json',return_value=json.dumps(value)),patch.object(self.service.model,'json',return_value='{"ok":true,"issues":[]}') as model,patch.object(self.renderer,'render',return_value=self.two_step_render()) as renderer:
                 self.generate()
-                renderer.assert_called_once_with(expected['code'])
+                self.assertEqual(renderer.call_args.args, (expected['code'],))
+                self.assertEqual(renderer.call_count,1)
+                self.assertTrue(callable(renderer.call_args.kwargs['check_cancelled']))
                 self.assertEqual(model.call_count,1)
                 review=json.loads(model.call_args.args[0][1]['content'][0]['text'])
                 self.assertEqual(review['teaching_plan'],expected['teaching_plan'])

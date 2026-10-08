@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import struct
 import zlib
 import uuid
@@ -48,6 +49,7 @@ def review_png(value):
 
 
 _SLOTS = threading.BoundedSemaphore(1)
+_SLOT_WAIT_SECONDS = 300
 
 class ManimUnavailable(RuntimeError):
     pass
@@ -56,19 +58,31 @@ class ManimRenderer:
     def __init__(self, state_dir):
         self.state_dir = Path(state_dir)
 
-    def render(self, source):
-        validate_source(source)
-        if not _SLOTS.acquire(timeout=remaining_timeout(1)):
+    def render(self, source, *, check_cancelled=None):
+        def check_wait():
             check_deadline()
-            raise ManimUnavailable('动画渲染繁忙')
+            if check_cancelled is not None:
+                check_cancelled()
+        check_wait()
+        validate_source(source)
+        wait_until = time.monotonic() + _SLOT_WAIT_SECONDS
+        while True:
+            check_wait()
+            wait_left = wait_until - time.monotonic()
+            if wait_left <= 0:
+                raise ManimUnavailable('动画渲染等待超过时限')
+            if _SLOTS.acquire(timeout=remaining_timeout(min(0.25, wait_left))):
+                break
         phase = 'runtime_configuration'
         try:
+            check_wait()
             config = json.loads((self.state_dir / 'manim-runtime.json').read_text())
             image = config['image']
             if not isinstance(image,str) or not re.fullmatch(r'(?:sha256:[0-9a-f]{64}|[a-zA-Z0-9._/:\-]+@sha256:[0-9a-f]{64})',image):
                 raise ManimUnavailable('动画镜像必须固定版本')
             phase = 'rendering'
             raw = self._phase(image, {'phase':'render','source':source}, MAX_VIDEO*4//3+65536, 180)
+            check_wait()
             if isinstance(raw, dict) and raw.get('error') == 'scene_render_failed':
                 if not set(raw) <= {'error', 'diagnostic'}:
                     raise ManimContractError('动画诊断无效')
@@ -132,6 +146,7 @@ class ManimRenderer:
                 review_frames.append(frames)
             if total > MAX_TOTAL:
                 raise ManimContractError('动画产物总量无效')
+            check_wait()
             return dict(video=decoded['video.mp4'],poster=decoded['poster.png'],
                         frames=[decoded['step-%d.png'%i] for i in range(len(manifest['steps']))],
                         review_frames=review_frames,manifest=manifest)
