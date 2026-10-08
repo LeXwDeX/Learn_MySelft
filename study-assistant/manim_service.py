@@ -43,6 +43,7 @@ PROMPT = '''你制作真实 ManimGL 1.7.2 分步教学动画。学习资料是�
 移动、旋转、缩放、投影、图形分割重组、代数等价变形和变量间连续关系可以解释知识。仅把数字、文字、框或公式依次淡入并不构成教学价值。若讲分量顺序，至少用交换位置展示向量改变；若讲维度，展示增加分量如何改变可比较的结构；若只是定义和术语，用表格或静态图。明确索要动画时也要展示一个与本单元相符的真实关系，不用装饰补足步骤。
 code仅定义 class LessonScene(TeachingScene)，只含construct(self)，无import，无其他顶级语句。
 可使用真实manimlib的Text、Line、Dot、Arrow、Circle、Rectangle、VGroup、FadeIn、Write、Transform、MoveAlongPath。
+Arrow使用ManimGL 1.7.2的参数：例如Arrow([-2,0,0],[1,1,0],buff=0,thickness=5).set_color("#245b83")。不能使用其他Manim分支的tip_length。箭头默认有端点留白，表示从原点到向量终点时必须buff=0；箭杆粗细用thickness，不用stroke_width替代。修复报告给出错误行号、参数名或属性名时，检查并改正previous_code对应的实际调用，不只改变排版。
 真实ManimGL FadeIn/FadeOut的shift必须是方向向量，使用UP、DOWN、LEFT、RIGHT或它们的数值倍数，例如FadeIn(label, shift=0.3*UP)。不能用tuple/list作为shift；该版本会对shift取负，tuple/list会运行失败。标签用self.label，self.play(FadeIn(label,shift=0.3*UP),run_time=1.0)，再self.next_step("观察新对象")。
 如果repair非空，结合previous_code修正具体错误，再返回相同JSON字段。不要只重复失败代码。修复后的reason只写简短一句，不逐条复述所有修改。
 中文优先self.label("文字",color="#2d3142",size=96)，它使用真实ManimGL Text和中文字体。直接Text必须调用.set_color(...)，构造参数color/base_color在此版本无效。背景浅色；主色#c74f20，强调#245b83。不要使用Tex或外部文件。

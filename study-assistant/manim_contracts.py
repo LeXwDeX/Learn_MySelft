@@ -17,6 +17,29 @@ class ManimContractError(ValueError):
     pass
 
 
+def validate_render_diagnostic(value, source_lines):
+    """Accept only closed failure types, source-relative lines and identifiers."""
+    fields = {'TypeError': 'keyword', 'AttributeError': 'attribute', 'NameError': 'name', 'ValueError': None}
+    if type(source_lines) is not int or not 1 <= source_lines <= MAX_SOURCE:
+        raise ManimContractError('动画诊断无效')
+    if not isinstance(value, dict) or not isinstance(value.get('exception_type'), str):
+        raise ManimContractError('动画诊断无效')
+    exception = value['exception_type']
+    if exception not in fields:
+        raise ManimContractError('动画诊断无效')
+    identifier = fields[exception]
+    allowed = {'exception_type', 'line'} | ({identifier} if identifier else set())
+    if not set(value) <= allowed:
+        raise ManimContractError('动画诊断无效')
+    if 'line' in value and (type(value['line']) is not int or not 1 <= value['line'] <= source_lines):
+        raise ManimContractError('动画诊断无效')
+    if identifier in value:
+        name = value[identifier]
+        if not isinstance(name, str) or re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,63}', name) is None:
+            raise ManimContractError('动画诊断无效')
+    return dict(value)
+
+
 def validate_teaching_plan(plan, step_count=None):
     """Require an inspectable learning purpose before rendering model code."""
     limits = {'objective': 120, 'visual_reason': 200, 'observe': 160}
