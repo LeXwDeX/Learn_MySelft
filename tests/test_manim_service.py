@@ -430,6 +430,64 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(model.call_count, 1)
         self.assertFalse(self.service.root.exists())
 
+    def test_rendered_manifest_count_mismatch_repairs_with_matching_private_plan(self):
+        from unittest.mock import patch
+        first = json.loads(self.service.model.json([{}, {'content': 'generation'}]))
+        step = first['teaching_plan']['steps'][0]
+        first['teaching_plan']['steps'] = [dict(step) for _ in range(2)]
+        fixed = json.loads(json.dumps(first))
+        fixed['teaching_plan']['steps'] = [dict(step) for _ in range(5)]
+        rendered = self.renderer.render('ignored')
+        rendered['manifest']['steps'] = [{} for _ in range(5)]
+        rendered['review_frames'] = [dict(start=png(), middle=png(), result=png()) for _ in range(5)]
+        with patch.object(self.service.model, 'json', side_effect=[json.dumps(first), json.dumps(fixed),
+                                                                '{"ok":true,"issues":[]}']) as model, \
+             patch.object(self.renderer, 'render', return_value=rendered) as render:
+            self.generate()
+        initial = json.loads(model.call_args_list[0].args[0][1]['content'])
+        repair = json.loads(model.call_args_list[1].args[0][1]['content'])
+        self.assertIsNone(initial['previous_teaching_plan'])
+        self.assertEqual(repair['previous_teaching_plan'], first['teaching_plan'])
+        self.assertEqual(repair['previous_code'], first['code'])
+        self.assertIn('教学计划2步，实际视频5步', repair['repair'])
+        self.assertIn('一一对应', repair['repair'])
+        self.assertEqual(render.call_count, 2)
+        self.assertEqual(model.call_count, 3)
+        self.assertIsInstance(model.call_args_list[2].args[0][1]['content'], list)
+        self.assertEqual(model.call_args_list[2].kwargs, {'temperature': 0})
+
+    def test_new_invalid_draft_never_reuses_previous_valid_teaching_plan(self):
+        from unittest.mock import patch
+        good = self.service.model.json([{}, {'content': 'generation'}])
+        for invalid_kind in ('root', 'extra_plan_field', 'oversized', 'missing'):
+            invalid = json.loads(good)
+            invalid['code'] += '\n  self.next_step("新稿")'
+            if invalid_kind == 'root': invalid['extra_root'] = True
+            elif invalid_kind == 'extra_plan_field': invalid['teaching_plan']['steps_count'] = 1
+            elif invalid_kind == 'oversized': invalid['teaching_plan']['objective'] = 'x' * 121
+            else: invalid['teaching_plan'] = None
+            with self.subTest(kind=invalid_kind), \
+                 patch.object(self.service.model, 'json', side_effect=[good, '{"ok":false,"issues":["对照缺失"]}',
+                                                                     json.dumps(invalid), good,
+                                                                     '{"ok":true,"issues":[]}']) as model:
+                self.generate()
+            third = json.loads(model.call_args_list[3].args[0][1]['content'])
+            self.assertIsNone(third['previous_teaching_plan'])
+            if invalid_kind != 'root': self.assertEqual(third['previous_code'], invalid['code'])
+
+    def test_unvalidated_or_missing_first_plan_is_not_sent_back_to_model(self):
+        from unittest.mock import patch
+        good = self.service.model.json([{}, {'content': 'generation'}])
+        for plan in (None, {'objective': 'x' * 20000}, {'steps_count': 9}):
+            invalid = json.loads(good)
+            invalid['teaching_plan'] = plan
+            with self.subTest(plan=type(plan).__name__), \
+                 patch.object(self.service.model, 'json', side_effect=[json.dumps(invalid), good,
+                                                                     '{"ok":true,"issues":[]}']) as model:
+                self.generate()
+            repair = json.loads(model.call_args_list[1].args[0][1]['content'])
+            self.assertIsNone(repair['previous_teaching_plan'])
+
     def test_upstream_http_diagnostics_keep_status_but_not_url_or_body(self):
         from unittest.mock import patch
         error=urllib.error.HTTPError('https://PRIVATE_URL_TOKEN',429,'PRIVATE_BODY_TOKEN',{},None)
