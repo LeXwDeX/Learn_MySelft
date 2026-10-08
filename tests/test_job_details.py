@@ -210,6 +210,32 @@ class JobDetailsTests(unittest.TestCase):
         with self.store.connection() as connection:
             self.assertIsNone(connection.execute('SELECT effect FROM jobs WHERE id=?', (receipt['id'],)).fetchone()[0])
 
+    def test_request_reasoning_override_does_not_change_following_default_payload(self):
+        settings = type('Settings', (), {'llm_model': 'test', 'llm_base': 'http://127.0.0.1',
+                                        'max_output_tokens': 393216, 'upstream_timeout': 1})()
+        client = ModelClient(settings, reasoning_effort='max')
+        messages = [{'role': 'user', 'content': 'test'}]
+        raw = b'{"choices":[{"message":{"content":"result"}}]}'
+        with patch.object(model_transport, 'post', return_value=raw) as transport:
+            client.json(messages, max_tokens=16384, reasoning_effort='medium')
+            client.json(messages)
+        override, default = [json.loads(call.args[1]) for call in transport.call_args_list]
+        self.assertEqual((override['reasoning_effort'], override['max_tokens']), ('medium', 16384))
+        self.assertEqual((default['reasoning_effort'], default['max_tokens']), ('max', 393216))
+        self.assertEqual(client.think, {'reasoning_effort': 'max'})
+        self.assertEqual(client.reasoning_effort, 'max')
+        self.assertEqual(settings.max_output_tokens, 393216)
+
+    def test_invalid_request_reasoning_never_reaches_transport(self):
+        settings = type('Settings', (), {'llm_model': 'test', 'llm_base': 'http://127.0.0.1',
+                                        'max_output_tokens': 100, 'upstream_timeout': 1})()
+        client = ModelClient(settings)
+        with patch.object(model_transport, 'post') as transport:
+            for value in ('', 'ultra', True, 1, [], {}):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    client.json([], reasoning_effort=value)
+            transport.assert_not_called()
+
     def test_actual_model_messages_and_final_reply_are_redacted_before_save(self):
         queue = JobQueue(self.store, lambda *args: (200, {}))
         receipt = self.receipt(queue)

@@ -70,6 +70,37 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(payload['node']['title'], '角')
         self.assertEqual(payload['study_notes'], '候选新正文')
 
+    def test_generation_and_repair_use_stage_budget_but_review_keeps_defaults(self):
+        from unittest.mock import patch
+        good = self.service.model.json([{}, {'content': 'generation'}])
+        rejected = '{"ok":false,"issues":["对象重叠"]}'
+        passed = '{"ok":true,"issues":[]}'
+        with patch.object(self.service.model, 'json', side_effect=[good, rejected, good, passed]) as model:
+            self.generate()
+        self.assertEqual(model.call_count, 4)
+        for index in (0, 2):
+            self.assertEqual(model.call_args_list[index].kwargs,
+                             {'temperature': 0.3, 'max_tokens': 16384, 'reasoning_effort': 'medium'})
+        for index in (1, 3):
+            self.assertEqual(model.call_args_list[index].kwargs, {'temperature': 0})
+
+    def test_application_injects_admin_cap_without_changing_model_defaults(self):
+        from application import create_application
+        from unittest.mock import patch
+        for configured, expected in ((4096, 4096), (393216, 16384)):
+            with tempfile.TemporaryDirectory() as directory:
+                app = create_application({'STATE_DIR': directory, 'DELETE_PASSWORD': 'test-password',
+                                          'MAX_OUTPUT_TOKENS': str(configured)})
+                self.addCleanup(app.close)
+                self.assertEqual(app.manim.generation_token_limit, expected)
+                self.assertEqual(app.settings.max_output_tokens, configured)
+                self.assertEqual(app.model.think, {'reasoning_effort': 'max'})
+        self.service.generation_token_limit = 4096
+        with patch.object(self.service.model, 'json', wraps=self.service.model.json) as model:
+            self.generate()
+        self.assertEqual(model.call_args_list[0].kwargs['max_tokens'], 4096)
+        self.assertEqual(model.call_args_list[1].kwargs, {'temperature': 0})
+
     def test_candidate_can_publish_before_notes_and_access_checks_live_owner(self):
         spec=self.generate()
         path,kind=self.service.asset('u1','u1',spec['asset_id'],'video.mp4')
