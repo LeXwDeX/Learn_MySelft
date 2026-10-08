@@ -282,6 +282,7 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
   .learning-workspace{grid-template-columns:minmax(0,1fr);height:auto;gap:16px}
   .learning-workspace > .panel{display:none}
   .agent-launch{display:block;position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:30;box-shadow:0 3px 15px #0002}
+  body:has(.learn-job-detail-panel:not([hidden])) .agent-launch{display:none}
   #stage-learning{padding-bottom:64px}
   .graph-wrap{padding:16px}
   .node{padding:14px}
