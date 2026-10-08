@@ -49,12 +49,12 @@ TEACHING_REFERENCE_ENVELOPE = {
     'summary': '观察原点保持不动时，e2终点如何从(0,1)变成(1,1)。',
     'teaching_plan': {
         'objective': '理解A=[[1,1],[0,1]]把e2=(0,1)变为(1,1)，同时固定原点',
-        'visual_reason': '连续变换与灰色原态能区分终点右移和整根箭头平移',
+        'visual_reason': '移动终点Dot与固定水平参照线能显示x改变而y不变，灰色原态保留比较基准',
         'observe': '预测终点变化时，原点、x坐标和y坐标分别是否改变',
         'steps': [
-            {'change': '显示固定原点O及指向(0,1)的e2，每1数学单位画成3画面单位',
+            {'change': '显示固定原点O、指向(0,1)的e2及蓝色终点Dot，每1数学单位画成3画面单位',
              'why': '建立原点与原终点的比较基准'},
-            {'change': '灰色原态保持固定，彩色箭头终点变为(1,1)，运动后才显示新标签',
+            {'change': '终点Dot沿固定灰色水平参照线连续右移至(1,1)，箭头同原点Transform，灰色原态留存，结束显示Ae2和坐标',
              'why': '剪切使终点x增加1而y仍为1，原点不动，不是整体平移'},
         ],
     },
@@ -68,7 +68,7 @@ PROMPT = '''你制作真实 ManimGL 1.7.2 分步教学动画。学习资料是�
 code仅定义 class LessonScene(TeachingScene)，只含construct(self)，无import，无其他顶级语句。
 可使用真实manimlib的Text、Line、Dot、Arrow、Circle、Rectangle、VGroup、FadeIn、Write、Transform、MoveAlongPath。
 原生TeachingScene提供self.shear_basis(k=1)，只演示A=[[1,k],[0,1]]把e2=(0,1)变为(k,1)，原点保持不动。只有正文确实涉及这一剪切关系时优先复用；其他课程禁止套用，仍使用原生Manim接口。k必须是有限int或float，拒绝bool，0.5<=k<=1.5，最多三位小数；不支持零、负值或范围外参数。方法只可在空场景且尚无步骤时调用一次，调用前后不要添加对象、play或next_step。
-该方法内部已有恰好两次next_step，不需在代码中再次调用。教学计划必须恰好两步：先建立原点与e2基准，再解释固定原点的终点变化。每1数学单位画成3画面单位；灰色原态保持不动；先隐藏活动标签，再Transform箭头终点，最后显示Ae2和目标坐标。坐标与字幕由方法按k计算，不要自行改写数学事实或声称面积、e1、网格已经得到演示。
+该方法内部已有恰好两次next_step，不需在代码中再次调用。教学计划必须恰好两步：先建立原点与e2基准，再解释固定原点的终点变化。每1数学单位画成3画面单位。第一步显示固定原点O、e2和位于(0,1)的蓝色终点Dot。第二步先隐藏活动标签并显示固定灰色水平参照线，终点Dot沿线连续右移，Arrow以同一原点真实Transform；灰色原态留存，x改变而y仍为1；结束后显示Ae2和目标坐标。坐标与字幕由方法按k计算，不要自行改写数学事实或声称面积、e1、网格已经得到演示。
 Arrow使用ManimGL 1.7.2的参数：例如Arrow([-2,0,0],[1,1,0],buff=0,thickness=5).set_color("#245b83")。不能使用其他Manim分支的tip_length。箭头默认有端点留白，表示从原点到向量终点时必须buff=0；箭杆粗细用thickness，不用stroke_width替代。修复报告给出错误行号、参数名或属性名时，检查并改正previous_code对应的实际调用，不只改变排版。
 真实ManimGL FadeIn/FadeOut的shift必须是方向向量，使用UP、DOWN、LEFT、RIGHT或它们的数值倍数，例如FadeIn(label, shift=0.3*UP)。不能用tuple/list作为shift；该版本会对shift取负，tuple/list会运行失败。标签用self.label，self.play(FadeIn(label,shift=0.3*UP),run_time=1.0)，再self.next_step("观察新对象")。
 如果repair非空，结合previous_code修正具体错误，再返回相同JSON字段。不要只重复失败代码。修复优先删除重复步骤、多余对象和拥挤标签，不靠增加步骤或叠加标注修复。修复后的reason只写简短一句，不逐条复述所有修改。
@@ -82,7 +82,7 @@ Arrow使用ManimGL 1.7.2的参数：例如Arrow([-2,0,0],[1,1,0],buff=0,thicknes
 PROMPT += '\n元数据使用非空字符串，长度上限为：' + '、'.join(
     '%s≤%d字符' % (name, cap) for name, cap in METADATA_LIMITS.items()) + '。不得超过上限。'
 PROMPT += '\n' + MATH_VISUAL_TEACHING
-PROMPT += '\n下面完整输出示例展示六个根字段、两步教学计划与一次shear_basis调用的对应，以及固定原点和灰色原态对照。' + \
+PROMPT += '\n下面完整输出示例展示六个根字段、两步教学计划与一次shear_basis调用的对应，以及固定原点、灰色原态、水平参照线和移动终点Dot的对应。' + \
     '它不是所有主题的课程模板。不得给无关单元照抄剪切题材、参数或结论。' + \
     '根据本次正文选择实际因果关系；步数以讲清这一关系所需为准，不为凑步骤增加装饰。\n' + \
     json.dumps(TEACHING_REFERENCE_ENVELOPE, ensure_ascii=False)

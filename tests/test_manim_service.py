@@ -70,6 +70,14 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(calls[0].keywords[0].arg, 'k')
         self.assertEqual(ast.literal_eval(calls[0].keywords[0].value), 1)
         self.assertTrue(all(set(step) == {'change', 'why'} for step in plan['steps']))
+        self.assertIn('蓝色终点Dot', plan['steps'][0]['change'])
+        self.assertIn('固定原点O', plan['steps'][0]['change'])
+        self.assertIn('固定灰色水平参照线连续右移', plan['steps'][1]['change'])
+        self.assertIn('同原点Transform', plan['steps'][1]['change'])
+        self.assertIn('灰色原态留存', plan['steps'][1]['change'])
+        self.assertIn('y仍为1', plan['steps'][1]['why'])
+        self.assertIn('终点Dot沿线连续右移', PROMPT)
+        self.assertIn('结束后显示Ae2和目标坐标', PROMPT)
 
     def test_generation_receives_reference_without_changing_user_topic(self):
         from unittest.mock import patch
