@@ -82,11 +82,16 @@ const nodes = ids.map((id, index) => ({
   essence:'固定合成资料。只用于检查任务回执。', objectives:['检查请求隔离。'], deps:[],
 }));
 const spec = {topic:'合成回执回归', level:'测试', goal:'检查不同节点的任务回执隔离。'};
-const completedQuiz = {round_id:'fixture-round-n1', questions:[], rounds:[]};
+const completedQuestion = {
+  q:'合成已完成题目 ' + fixtureId,
+  answer:'A', explain:'固定合成解析。',
+  options:['甲','乙','丙','丁'], points:100,
+};
+const completedQuiz = {questions:[completedQuestion]};
 const initialMaterial = {
   stage:'learning', topic:spec.topic, spec,
   plan:{title:fixtureId, summary:spec.goal, nodes},
-  nodeDetail:{n1:{study_notes:'合成已完成节点。', quiz:completedQuiz, manim_review:{status:'not_needed'}}},
+  nodeDetail:{n1:{study_notes:'合成已完成节点。', quiz:completedQuiz}},
   nodeState:{n1:{status:'review'}},
   pending:{kind:'nodes', nid:null, at:Date.now(), remaining:ids.slice(1), requestId:baseRequestId},
 };
@@ -170,6 +175,16 @@ function saveReport() {
     assert.equal(put.status(), 200, 'write isolated synthetic fixture');
     fixtureSaved = true;
 
+    activePhase = 'snapshot_precompleted_baseline';
+    const baselineResponse = await context.request.get(api + '/state/all', {headers:{'X-Learn-User':uid}});
+    assert.equal(baselineResponse.status(), 200, 'read isolated synthetic fixture baseline');
+    const baselineEntries = await baselineResponse.json();
+    const baselineMaterial = JSON.parse(baselineEntries.entries[key]);
+    const baselineCompletedDetail = baselineMaterial.nodeDetail && baselineMaterial.nodeDetail.n1;
+    const baselineCompletedState = baselineMaterial.nodeState && baselineMaterial.nodeState.n1;
+    assert(baselineCompletedDetail && baselineCompletedDetail.quiz, 'baseline contains the completed node detail');
+    assert(baselineCompletedState, 'baseline contains the completed node status');
+
     page = await context.newPage();
     page.on('pageerror', error => report.errors.push(error.name));
     const nodeBody = node => ({
@@ -233,8 +248,11 @@ function saveReport() {
         const result = {
           node_id:nodeId,
           study_notes:'合成新正文：' + nodeId,
-          quiz:{round_id:'fixture-round-' + nodeId, questions:[], rounds:[]},
-          manim_review:{status:'not_needed'},
+          quiz:{questions:[{
+            q:'合成生成题目 ' + nodeId + ' ' + fixtureId,
+            answer:'A', explain:'固定合成解析。',
+            options:['甲','乙','丙','丁'], points:100,
+          }]},
         };
         const job = {
           id:jobId, user_id:uid, request_id:requestId, operation, key, node_id:nodeId,
@@ -302,6 +320,7 @@ function saveReport() {
     casePassed('phone_viewport_has_no_horizontal_overflow', await page.evaluate(() =>
       document.documentElement.scrollWidth <= innerWidth + 1));
 
+    activePhase = 'read_final_synthetic_state';
     let finalState, stateDeadline=Date.now()+10000;
     do {
       const savedResponse = await context.request.get(api + '/state/all', {headers:{'X-Learn-User':uid}});
@@ -311,28 +330,42 @@ function saveReport() {
       if (finalState.pending === null && ids.slice(1).every(id => finalState.nodeDetail?.[id])) break;
       await new Promise(resolve => setTimeout(resolve, 200));
     } while (Date.now() < stateDeadline);
+    activePhase = 'assert_pending_cleared';
     assert.equal(finalState.pending, null, 'completed batch clears its pending marker');
+    activePhase = 'assert_six_materials_saved';
     assert(ids.slice(1).every(id => finalState.nodeDetail?.[id]), 'all missing synthetic materials were saved');
-    const completedDetail = finalState.nodeDetail && finalState.nodeDetail.n1;
-    assert(completedDetail, 'completed node remains present in saved fixture');
-    const completed = {notes:completedDetail.study_notes, round:completedDetail.quiz?.round_id,
-      review:completedDetail.manim_review?.status};
-    assert.equal(completed.notes, '合成已完成节点。');
-    assert.equal(completed.round, 'fixture-round-n1');
-    assert.equal(completed.review, 'not_needed');
+    activePhase = 'assert_precompleted_detail_matches_baseline';
+    assert.deepEqual(finalState.nodeDetail && finalState.nodeDetail.n1, baselineCompletedDetail,
+      'precompleted accepted node detail and ordinary quiz questions remain unchanged');
+    activePhase = 'assert_precompleted_status_matches_baseline';
+    assert.deepEqual(finalState.nodeState && finalState.nodeState.n1, baselineCompletedState,
+      'precompleted accepted node status remains unchanged');
     casePassed('precompleted_node_and_quiz_were_not_replaced', true);
 
+    activePhase = 'accepted_receipt_replay';
     const postsBeforeReplay = httpPosts.length;
     const replay = accepted.find(item => item.node_id === 'n2');
     const replayBody = httpPosts.find(item => item.node_id === 'n2' && item.request_id === replay.request_id).body;
     await page.evaluate(({body, requestId}) => window.LearnJobs.run('/path/node', body, {requestId}),
       {body:replayBody, requestId:replay.request_id});
+    activePhase = 'assert_accepted_receipt_replay_not_posted';
     assert.equal(httpPosts.length, postsBeforeReplay, 'same accepted local receipt is read, not resubmitted');
     casePassed('accepted_receipt_replay_does_not_post_duplicate', true);
 
+    activePhase = 'second_batch_click';
     await page.locator('#gen-all-btn').click();
-    await page.waitForFunction(() => document.getElementById('gen-all-btn')?.textContent === '已全部生成 ✓', null, {timeout:5000});
+    await page.waitForTimeout(2100);
+    activePhase = 'assert_second_batch_button_available';
+    assert.equal(await page.locator('#gen-all-btn').textContent(), '一键生成全部节点',
+      'button returns to the ready state after the no-op batch click');
+    activePhase = 'assert_second_batch_no_post';
     assert.equal(httpPosts.length, postsBeforeReplay, 'completed nodes are skipped on a second batch click');
+    activePhase = 'assert_second_batch_pending_cleared';
+    const afterSecondClickResponse = await context.request.get(api + '/state/all', {headers:{'X-Learn-User':uid}});
+    assert.equal(afterSecondClickResponse.status(), 200, 'read back the synthetic state after the no-op click');
+    const afterSecondClickEntries = await afterSecondClickResponse.json();
+    assert.equal(JSON.parse(afterSecondClickEntries.entries[key]).pending, null,
+      'no-op batch click keeps the pending marker cleared');
     casePassed('second_batch_click_skips_all_completed_nodes', true);
     assert.deepEqual(report.errors, []);
     report.posts = httpPosts.map(item => ({node_id:item.node_id, request_id:item.request_id, fingerprint:item.fingerprint}));
@@ -344,8 +377,7 @@ function saveReport() {
     saveReport();
   } catch (error) {
     report.passed = false;
-    report.failure_type = error.name;
-    report.failure_phase = activePhase;
+    report.failure_case = activePhase;
     report.errors = report.errors.slice(0,10);
     report.model_calls = blockedModelRequests;
     report.posts = httpPosts.map(item => ({node_id:item.node_id, request_id:item.request_id, fingerprint:item.fingerprint}));
@@ -367,8 +399,7 @@ function saveReport() {
       } else {
         report.fixture_deleted = false;
         report.passed = false;
-        report.failure_type = 'FixtureCleanupFailure';
-        report.failure_phase = 'fixture_cleanup';
+        report.failure_case = 'fixture_cleanup';
         process.exitCode = 1;
       }
     } else report.fixture_deleted = true;
@@ -382,12 +413,11 @@ function saveReport() {
       model_calls:report.model_calls, conflicts:conflicts.length, accepted_jobs:accepted.length,
       fixture_deleted:true, report:path.join(output,'report.json')}));
   } else {
-    console.error(JSON.stringify({passed:false, failure_type:report.failure_type || 'RegressionFailure',
-      failure_phase:report.failure_phase || activePhase, fixture_deleted:report.fixture_deleted,
+    console.error(JSON.stringify({passed:false, failure_case:report.failure_case || activePhase, fixture_deleted:report.fixture_deleted,
       report:path.join(output,'report.json')}));
   }
 })().catch(error => {
-  // Only the error type is emitted. Request and model content stay private.
-  console.error(JSON.stringify({passed:false, failure_type:error.name}));
+  // Only a fixed failure case is emitted. Request and model content stay private.
+  console.error(JSON.stringify({passed:false, failure_case:'unexpected_failure'}));
   process.exitCode = 1;
 });
