@@ -95,7 +95,7 @@ class MaterialRepository:
             self.write_key(mkey, json.dumps(material, ensure_ascii=False))
             return True
 
-    def append_scene(self, key, node_id, expected_notes, notes, validate):
+    def append_scene(self, key, node_id, expected_notes, notes, validate, *, manim_review=None, expected_node=None):
         """Append to the current node only; concurrent quiz and progress survive."""
         with self.lock, self.store.transaction():
             validate()
@@ -103,16 +103,20 @@ class MaterialRepository:
             if material is None:
                 raise JobError(404, "学习资料已删除或不存在，图示未保存")
             detail = (material.get("nodeDetail") or {}).get(node_id)
-            still_present = any(isinstance(node, dict) and node.get("id") == node_id
-                                for node in (material.get("plan") or {}).get("nodes", []))
-            if not isinstance(detail, dict) or not still_present:
+            current_node = next((node for node in (material.get("plan") or {}).get("nodes", [])
+                                 if isinstance(node,dict) and node.get('id') == node_id),None)
+            if not isinstance(detail, dict) or current_node is None:
                 raise JobError(404, "学习节点已删除，图示未保存")
+            if expected_node is not None and current_node != expected_node:
+                raise JobError(409, '学习节点已更新，图示未保存')
             current = detail.get("study_notes") or ""
             if current != expected_notes:
                 # A different request may already have committed this same supplement.
                 if current == notes:
                     result = {"node_id": node_id, "study_notes": current, "source_notes": expected_notes, "reused": True,
                               "sceneSupplement": detail.get("sceneSupplement")}
+                    if 'manim_review' in detail:
+                        result['manim_review'] = detail['manim_review']
                     self.store.record_job_effect(result)
                     return result
                 raise JobError(409, "学习正文已更新，请重新打开后补图")
@@ -121,8 +125,12 @@ class MaterialRepository:
                       "notes_sha256": hashlib.sha256(notes.encode()).hexdigest()}
             detail["study_notes"] = notes
             detail["sceneSupplement"] = marker
+            if manim_review is not None:
+                detail['manim_review'] = manim_review
             result = {"node_id": node_id, "study_notes": notes, "source_notes": expected_notes, "reused": False,
                       "sceneSupplement": marker}
+            if 'manim_review' in detail:
+                result['manim_review'] = detail['manim_review']
             self.write_key(key, json.dumps(material, ensure_ascii=False))
             self.store.record_job_effect(result)
             return result
@@ -369,6 +377,7 @@ class MaterialRepository:
                                 for detail in (obj.get("nodeDetail") or {}).values():
                                     if isinstance(detail, dict):
                                         detail.pop("sceneSupplement", None)
+                                        detail.pop("manim_review", None)
                                 for nid, state in (obj.get("nodeState") or {}).items():
                                     if not isinstance(state, dict):
                                         raise ValueError("invalid node state")
@@ -415,6 +424,8 @@ class MaterialRepository:
                                         "study_notes": detail["study_notes"],
                                         "sceneSupplement": detail["sceneSupplement"],
                                     }
+                                if 'manim_review' in detail:
+                                    merged_details[nid] = {**merged_details[nid], 'manim_review':detail['manim_review']}
                                 if (detail.get("quiz") or {}).get("rounds"):
                                     merged_details[nid] = {
                                         **merged_details[nid],

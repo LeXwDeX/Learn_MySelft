@@ -58,11 +58,13 @@ class ManimRenderer:
         validate_source(source)
         if not _SLOTS.acquire(timeout=1):
             raise ManimUnavailable('动画渲染繁忙')
+        phase = 'runtime_configuration'
         try:
             config = json.loads((self.state_dir / 'manim-runtime.json').read_text())
             image = config['image']
             if not isinstance(image,str) or not re.fullmatch(r'(?:sha256:[0-9a-f]{64}|[a-zA-Z0-9._/:\-]+@sha256:[0-9a-f]{64})',image):
                 raise ManimUnavailable('动画镜像必须固定版本')
+            phase = 'rendering'
             raw = self._phase(image, {'phase':'render','source':source}, MAX_VIDEO*4//3+65536, 180)
             if raw == {'error':'scene_render_failed'}:
                 raise ManimContractError('真实ManimGL场景运行失败，请核对API、对象和每步动画')
@@ -72,6 +74,7 @@ class ManimRenderer:
                 raise ManimContractError('动画原始产物超出限制')
             # The first container has already been force-removed. Only media bytes and
             # untrusted step data enter this fresh container; no model code enters it.
+            phase = 'media_validation'
             result = self._phase(image, {'phase':'validate','raw_video':raw['raw_video'],'steps':raw['steps']}, MAX_TOTAL*4//3+65536,120)
             if result == {'error':'media_check_failed'}:
                 raise ManimContractError('视频检查失败，请每步播放真实变化并以next_step结束，保证最后至少0.7秒静止')
@@ -109,9 +112,17 @@ class ManimRenderer:
             return dict(video=decoded['video.mp4'],poster=decoded['poster.png'],
                         frames=[decoded['step-%d.png'%i] for i in range(len(manifest['steps']))],
                         review_frames=review_frames,manifest=manifest)
+        except ManimUnavailable as error:
+            error.diagnostic_stage = phase
+            raise
         except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:
-            if isinstance(error,ManimContractError): raise
-            raise ManimUnavailable('动画渲染暂不可用') from error
+            if isinstance(error,ManimContractError):
+                error.diagnostic_stage = phase
+                error.failure_code = 'media_invalid' if phase == 'media_validation' else 'render_failed'
+                raise
+            unavailable = ManimUnavailable('动画渲染暂不可用')
+            unavailable.diagnostic_stage = phase
+            raise unavailable from error
         finally:
             _SLOTS.release()
 

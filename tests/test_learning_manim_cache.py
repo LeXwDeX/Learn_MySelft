@@ -24,8 +24,10 @@ class NodeSaveCacheTests(unittest.TestCase):
                 def review(value):
                     if mode=='deleted':app.repository.write_key(key,json.dumps({'plan':{'nodes':[]}}))
                     return {'status':'passed'}
+                def enriched(value,*args,**kwargs):
+                    value['manim_review']={'status':'passed','asset_id':'a'*32}
                 with patch('learning_service._norm_node_detail',return_value=candidate),patch('learning_service._issued_quiz',return_value={}), \
-                     patch.object(app.model,'nonempty',return_value='{}'),patch.object(app.scenes,'enrich_candidate'), \
+                     patch.object(app.model,'nonempty',return_value='{}'),patch.object(app.scenes,'enrich_candidate',side_effect=enriched), \
                      patch.object(app.verification,'checked_questions',return_value=[]),patch.object(app.verification,'review_rendered',side_effect=review), \
                      patch.object(app.cache,'finish',wraps=app.cache.finish) as finish,patch.object(app.manim,'discard') as discard, \
                      (patch.object(app.repository,'merge',side_effect=OSError('storage failed')) if mode=='storage' else contextlib.nullcontext()):

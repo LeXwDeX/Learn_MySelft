@@ -10,9 +10,9 @@ const manimNotes = '原有正文\n\n```learn-manim\n{"version":1,"asset_id":"' +
 const marker = {version: 1, source_sha256: 'a'.repeat(64), notes_sha256: 'b'.repeat(64)};
 
 function deferred() {
-  let resolve;
-  const promise = new Promise(done => { resolve = done; });
-  return {promise, resolve};
+  let resolve, reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return {promise, resolve, reject};
 }
 
 function harness({readOnly = false, key = 'u0/topic-a'} = {}) {
@@ -241,8 +241,68 @@ function assertMaterialSelected(h, message) {
       get: () => Promise.reject(new Error('Failed job must not be fetched'))
     };
     await h.api.restoreSceneSupplement();
-    assert.equal(h.status.textContent, '补充失败，可以重试。', 'restore chooses the latest failed job');
+    assert.equal(h.status.textContent, '动画仍未生成，可以重试。学习正文已保留。', 'restore chooses the latest failed job');
     assert.equal(h.detail.study_notes, '原有正文', 'older success must not override latest job state');
+  }
+
+  {
+    const h = harness();
+    h.detail.manim_review = {status: 'failed', retryable: true, failure_code: 'render_unavailable'};
+    h.api.renderNodeDetail('n1'); // simulate a page refresh: only persisted detail is available
+    assert.match(h.scope.innerHTML, /重试教学动画/);
+    assert.match(h.status.textContent, /学习材料已就绪，动画暂未生成，可单独重试。/);
+    assert.equal(h.detail.study_notes, '原有正文', 'failed animation does not hide or remove the saved body');
+    assert.doesNotMatch(h.scope.innerHTML + h.status.textContent, /render_unavailable/);
+
+    const beforeQuiz = JSON.stringify(h.quiz), beforeState = JSON.stringify(h.nodeState);
+    h.setPost(() => Promise.resolve({node_id: 'n1', source_notes: '原有正文', study_notes: manimNotes,
+      manim_review: {status: 'passed', retryable: false, asset_id: 'a'.repeat(32)}}));
+    await h.api.supplementScene('n1');
+    assert.equal(h.detail.manim_review.status, 'passed', 'retry success updates persisted animation review');
+    assert.equal(JSON.stringify(h.quiz), beforeQuiz, 'retry success preserves quiz data');
+    assert.equal(JSON.stringify(h.nodeState), beforeState, 'retry success preserves learning progress');
+
+    h.detail.study_notes = '正文已保存';
+    h.detail.manim_review = {status: 'failed', retryable: true, failure_code: 'worker_unavailable', error: '<img src=x onerror=alert(1)>'};
+    h.api.renderNodeDetail('n1');
+    const bodyBeforeFailedRetry = h.detail.study_notes;
+    const quizBeforeFailedRetry = JSON.stringify(h.quiz), stateBeforeFailedRetry = JSON.stringify(h.nodeState);
+    h.setPost(() => Promise.reject(new Error('<script>alert(1)</script>')));
+    await h.api.supplementScene('n1');
+    assert.equal(h.detail.study_notes, '正文已保存', 'a failed retry keeps the validated body');
+    assert.equal(h.detail.study_notes, bodyBeforeFailedRetry);
+    assert.equal(JSON.stringify(h.quiz), quizBeforeFailedRetry, 'retry failure preserves quiz data');
+    assert.equal(JSON.stringify(h.nodeState), stateBeforeFailedRetry, 'retry failure preserves learning progress');
+    assert.match(h.status.textContent, /动画仍未生成，可以重试。学习正文已保留。/);
+    assert.doesNotMatch(h.scope.innerHTML + h.status.textContent + h.calls.errors.join(' '), /<script>|<img|alert\(1\)|worker_unavailable/);
+    assert.doesNotMatch(h.scope.innerHTML, /scene-supplement-btn[^>]*disabled/, 'failed retry leaves the control available');
+  }
+
+  {
+    const h = harness(), pending = deferred();
+    h.detail.manim_review = {status: 'failed', retryable: true, failure_code: 'render_unavailable'};
+    h.setPost(() => pending.promise);
+    const work = h.api.supplementScene('n1');
+    assert.match(h.status.textContent, /正在生成教学动画/ , 'running work overrides persisted failure text');
+    assert.match(h.scope.innerHTML, /scene-supplement-btn[^>]*disabled/);
+    pending.reject(new Error('worker unavailable'));
+    await work;
+  }
+
+  {
+    const h = harness({readOnly: true});
+    h.detail.manim_review = {status: 'failed', retryable: true, failure_code: 'render_unavailable'};
+    h.api.renderNodeDetail('n1');
+    assert.match(h.scope.innerHTML, /scene-supplement-btn[^>]*disabled/);
+    assert.match(h.scope.innerHTML, /重试教学动画/);
+  }
+
+  {
+    const h = harness();
+    h.detail.study_notes = manimNotes;
+    h.detail.manim_review = {status: 'passed', retryable: false, asset_id: 'a'.repeat(32)};
+    h.api.renderNodeDetail('n1');
+    assert.doesNotMatch(h.scope.innerHTML, /data-scene-supplement=/, 'a valid Manim asset hides the retry control');
   }
 
   {
@@ -346,7 +406,7 @@ function assertMaterialSelected(h, message) {
       };
       await h.api.restoreSceneSupplement();
       assert.doesNotMatch(h.scope.innerHTML, /scene-supplement-btn[^>]*disabled/, listedStatus + '→' + status + ' must not leave the button locked');
-      assert.equal(h.status.textContent, status === 'cancelled' ? '' : '补充失败，可以重试。');
+      assert.equal(h.status.textContent, status === 'cancelled' ? '' : '动画仍未生成，可以重试。学习正文已保留。');
     }
   }
 

@@ -45,9 +45,13 @@ class RendererTests(unittest.TestCase):
         from unittest.mock import patch
         renderer=FakeRenderer(self.path)
         with patch.object(renderer,'_phase',return_value={'error':'scene_render_failed'}):
-            with self.assertRaises(ManimContractError):renderer.render(SOURCE)
+            with self.assertRaises(ManimContractError) as raised:renderer.render(SOURCE)
+            self.assertEqual(raised.exception.diagnostic_stage,'rendering')
+            self.assertEqual(raised.exception.failure_code,'render_failed')
         with patch.object(renderer,'_phase',side_effect=[{'raw_video':'AAAA','steps':[]},{'error':'media_check_failed'}]):
-            with self.assertRaises(ManimContractError):renderer.render(SOURCE)
+            with self.assertRaises(ManimContractError) as raised:renderer.render(SOURCE)
+            self.assertEqual(raised.exception.diagnostic_stage,'media_validation')
+            self.assertEqual(raised.exception.failure_code,'media_invalid')
 
     def test_review_frames_fail_closed_without_original_frame_fallback(self):
         from unittest.mock import patch
