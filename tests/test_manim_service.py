@@ -334,6 +334,89 @@ class ManimServiceTests(unittest.TestCase):
         self.assertNotIn('候选新正文','\n'.join(captured.output))
         for row in rows:self.assertEqual(set(row),{'job_id','attempt','stage','failure_code','elapsed_ms','exception'})
 
+    def test_distinct_failure_types_allow_third_draft_with_at_most_two_reviews(self):
+        from unittest.mock import patch
+        good = self.service.model.json([{}, {'content': 'generation'}])
+        invalid = json.loads(good)
+        invalid['teaching_plan']['steps_count'] = 1
+        invalid = json.dumps(invalid)
+        rejected = '{"ok":false,"issues":["原位置对照缺失"]}'
+        passed = '{"ok":true,"issues":[]}'
+        sequences = [(invalid, good, rejected, good, passed),
+                     (good, rejected, invalid, good, passed),
+                     (invalid, good, '{"ok":"invalid","issues":[]}', good, passed)]
+        for sequence in sequences:
+            with self.subTest(sequence=sequence[0] == invalid), \
+                 patch.object(self.service.model, 'json', side_effect=sequence) as model, \
+                 patch.object(self.renderer, 'render', wraps=self.renderer.render) as render, \
+                 self.assertLogs('manim_service', level='INFO') as logs:
+                result = self.generate()
+            self.assertTrue(result['asset_id'])
+            self.assertEqual(render.call_count, 2)
+            generation = [call for call in model.call_args_list if isinstance(call.args[0][1]['content'], str)]
+            review = [call for call in model.call_args_list if isinstance(call.args[0][1]['content'], list)]
+            self.assertEqual(len(generation), 3)
+            self.assertEqual(len(review), 2)
+            self.assertTrue(all(call.kwargs['reasoning_effort'] == 'none' for call in generation))
+            self.assertTrue(all(call.kwargs == {'temperature': 0} for call in review))
+            records = [json.loads(item.getMessage().split(' ', 1)[1]) for item in logs.records]
+            records = [item for item in records if item['stage'] != 'publish']
+            self.assertEqual([item['attempt'] for item in records], [1, 2, 3])
+            self.assertEqual(records[-1]['failure_code'], 'passed')
+            self.assertEqual(records[-1]['stage'], 'visual_review')
+            self.assertIn('steps_count', PROMPT)
+
+    def test_third_draft_failure_never_generates_fourth_or_publishes(self):
+        from unittest.mock import patch
+        good = self.service.model.json([{}, {'content': 'generation'}])
+        invalid = json.loads(good)
+        invalid['teaching_plan']['steps_count'] = 1
+        invalid = json.dumps(invalid)
+        rejected = '{"ok":false,"issues":["对象重叠"]}'
+        with patch.object(self.service.model, 'json', side_effect=[invalid, good, rejected, invalid]) as model:
+            with self.assertRaises(ManimGenerationError): self.generate()
+        self.assertEqual(model.call_count, 4)
+        self.assertFalse(self.service.root.exists())
+
+    def test_transport_failure_has_no_inner_retry(self):
+        from unittest.mock import patch
+        for error in (TimeoutError('transport'), urllib.error.URLError('transport')):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(self.service.model, 'json', side_effect=error) as model:
+                with self.assertRaises(ManimGenerationError) as raised: self.generate()
+                self.assertIs(raised.exception.__cause__, error)
+                self.assertEqual(model.call_count, 1)
+        self.assertFalse(self.service.root.exists())
+
+    def test_real_expiry_between_drafts_stops_before_another_model_call(self):
+        import time
+        from unittest.mock import patch
+        from job_execution import execution_budget, JobDeadlineExceeded
+        good = self.service.model.json([{}, {'content': 'generation'}])
+        invalid = json.loads(good)
+        invalid['teaching_plan']['steps_count'] = 1
+        with patch.object(self.service.model, 'json', return_value=json.dumps(invalid)) as model, \
+             patch.object(self.service, '_diagnostic', side_effect=lambda *a, **k: time.sleep(.08)), \
+             execution_budget(.05):
+            with self.assertRaises(JobDeadlineExceeded): self.generate()
+        self.assertEqual(model.call_count, 1)
+        self.assertFalse(self.service.root.exists())
+
+    def test_cancel_between_drafts_stops_before_another_model_call(self):
+        from unittest.mock import patch
+        good = self.service.model.json([{}, {'content': 'generation'}])
+        invalid = json.loads(good)
+        invalid['teaching_plan']['steps_count'] = 1
+        cancelled = [False]
+        with patch.object(self.service.model, 'json', return_value=json.dumps(invalid)) as model, \
+             patch.object(self.service, '_diagnostic', side_effect=lambda *a, **k: cancelled.__setitem__(0, True)):
+            with self.assertRaises(JobError) as raised:
+                self.service.generate('u1/learn-path-v1-a', 'n1', '正文', {'id': 'n1'},
+                                      actor='u1', cancelled=lambda: cancelled[0])
+        self.assertEqual(raised.exception.status, 409)
+        self.assertEqual(model.call_count, 1)
+        self.assertFalse(self.service.root.exists())
+
     def test_upstream_http_diagnostics_keep_status_but_not_url_or_body(self):
         from unittest.mock import patch
         error=urllib.error.HTTPError('https://PRIVATE_URL_TOKEN',429,'PRIVATE_BODY_TOKEN',{},None)
