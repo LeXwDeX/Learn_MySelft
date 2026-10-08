@@ -39,6 +39,7 @@
     var title = element('h4', '', ref.title), summary = element('p', 'learn-manim-summary', ref.summary);
     var screen = element('div', 'learn-manim-screen');
     var media = element('div', 'learn-manim-media');
+    media.style.opacity = '1';
     var video = element('video');
     video.preload = 'none'; video.playsInline = true; video.muted = true; video.playbackRate = playbackRate; video.crossOrigin = 'use-credentials';
     video.setAttribute('aria-label', ref.title + '，ManimGL 教学动画');
@@ -59,14 +60,13 @@
     // Keep source and surrounding teaching text available during media failures.
     figure.insertBefore(shell, figure.firstChild);
     var originalStatus = figure.querySelector('figcaption'); if (originalStatus) originalStatus.hidden = true;
-    var state = {manifest:null, index:0, awaitingIndex:null, playing:false, automatic:true, runAutomatic:false, phase:'idle', dead:false, failed:false, tick:null, frameCallback:false, epoch:0, request:null, timeout:null, phaseTimer:null, seekTimer:null, pendingFrame:null, afterSeek:null, snapshotResult:null, snapshotFileIndex:null, listeners:[], stepButtons:[]};
+    var state = {manifest:null, index:0, awaitingIndex:null, playing:false, runAutomatic:true, phase:'idle', dead:false, failed:false, tick:null, frameCallback:false, epoch:0, request:null, timeout:null, phaseTimer:null, seekTimer:null, pendingFrame:null, afterSeek:null, afterSnapshot:null, snapshotResult:null, snapshotFileIndex:null, listeners:[], stepButtons:[]};
     function on(node, event, handler) { node.addEventListener(event, handler); state.listeners.push([node, event, handler]); }
     function update() {
       var ready = !!state.manifest && !state.failed;
       previous.disabled = !ready || state.index === 0; next.disabled = !ready || state.index === state.manifest.steps.length - 1;
       play.disabled = replay.disabled = automatic.disabled = progress.disabled = !ready;
-      play.textContent = state.playing ? '暂停' : state.automatic ? '播放' : '播放本步';
-      automatic.setAttribute('aria-pressed', String(state.automatic));
+      play.textContent = state.playing ? '暂停' : '播放';
       shell.dataset.phase = state.phase;
       state.stepButtons.forEach(function (b, i) { b.setAttribute('aria-current', i === state.index ? 'step' : 'false'); b.disabled = !ready; });
       if (state.manifest) {
@@ -92,12 +92,12 @@
       state.epoch++; state.playing = false; cancelTick(); video.pause();
       if (state.phaseTimer !== null) window.clearTimeout(state.phaseTimer);
       if (state.seekTimer !== null) window.clearTimeout(state.seekTimer);
-      state.phaseTimer = state.seekTimer = null; state.afterSeek = null; state.phase = 'idle';
-      state.awaitingIndex = null; media.style.transition = 'none'; media.style.opacity = '1';
+      state.phaseTimer = state.seekTimer = null; state.afterSeek = state.afterSnapshot = null; state.phase = 'idle';
+      state.awaitingIndex = null;
       if (restoreResult && !state.dead && state.manifest) {
         // Keep the displayed step and its already requested Manim result when a
         // transition seek is cancelled. No delayed seek may switch that step.
-        seek(state.manifest.steps[state.index].result_frame);
+        seek(state.manifest.steps[state.index].result_frame, null, true);
         state.snapshotResult = state.index; showSnapshot();
       }
       if (wasPlaying && state.manifest && !state.failed) status.textContent = '已暂停。可继续播放，或观察当前画面。';
@@ -107,9 +107,9 @@
       if (state.dead) return;
       pause(); state.failed = true; status.textContent = message; retry.hidden = false; update();
     }
-    function seek(frame, done) {
-      snapshot.hidden = true; state.snapshotResult = null;
-      progress.value = String(frame);
+    function seek(frame, done, preserveResult) {
+      if (!preserveResult) { snapshot.hidden = true; state.snapshotResult = null; }
+      if (!preserveResult) progress.value = String(frame);
       if (state.seekTimer !== null) window.clearTimeout(state.seekTimer);
       state.seekTimer = null; state.pendingFrame = frame; state.afterSeek = done || null;
       var target = frame / state.manifest.fps;
@@ -132,12 +132,11 @@
       if (state.seekTimer !== null) window.clearTimeout(state.seekTimer);
       state.seekTimer = null; state.pendingFrame = null;
       var done = state.afterSeek; state.afterSeek = null;
-      if (!state.playing) media.style.opacity = '1';
       showSnapshot(); if (done) done();
     }
     function select(index) {
       if (!state.manifest || state.failed || index < 0 || index >= state.manifest.steps.length) return;
-      pause(); state.index = index; status.textContent = '观察本步说明，准备好后播放。'; update(); seek(state.manifest.steps[index].start_frame);
+      pause(); state.index = index; state.runAutomatic = true; status.textContent = '观察本步说明，准备好后播放。'; update(); seek(state.manifest.steps[index].start_frame);
     }
     function finish() {
       var step = state.manifest.steps[state.index];
@@ -146,10 +145,12 @@
       snapshot.src = mediaURL(mediaBase(ref.asset_id), 'step-' + state.index + '.png');
       showSnapshot();
       status.textContent = '本步完成。观察结果后，再进入下一步。';
+      state.runAutomatic = true;
     }
     function showSnapshot() {
-      if (!state.dead && (!state.playing || state.phase === 'hold' || state.phase === 'fadeout' || state.phase === 'gap') && !state.failed && state.snapshotResult === state.index && snapshot.complete && snapshot.naturalWidth > 0) snapshot.hidden = false;
+      if (!state.dead && (!state.playing || state.phase === 'hold' || state.phase === 'seeking') && !state.failed && state.snapshotResult === state.index && snapshotReady()) snapshot.hidden = false;
     }
+    function snapshotReady() { return snapshot.complete && snapshot.naturalWidth > 0; }
     function delay(ms, epoch, done) {
       var timer = window.setTimeout(function () {
         if (state.dead || !state.playing || epoch !== state.epoch || state.phaseTimer !== timer) return;
@@ -168,39 +169,41 @@
         schedule();
       }).catch(function () { if (!state.dead && epoch === state.epoch) fail('浏览器未能播放动画。请重新加载后重试。'); });
     }
-    function advance(frame) {
+    function advance() {
       var step = state.manifest.steps[state.index], epoch = state.epoch;
       cancelTick(); video.pause(); state.phase = 'hold'; update();
       seek(step.result_frame);
       state.snapshotResult = state.index; snapshot.src = mediaURL(mediaBase(ref.asset_id), 'step-' + state.index + '.png'); showSnapshot();
       status.textContent = '观察本步结果…';
-      // Freeze the authored result before the next frame can appear. Preserve the
-      // remainder of its authored hold instead of playing across a step boundary.
-      var hold = Math.max(1, step.end_frame - Math.max(step.hold_start_frame, Math.min(step.result_frame, frame))) / state.manifest.fps / playbackRate * 1000;
-      delay(hold, epoch, function () {
+      // The dynamic content is complete at hold_start_frame. Keep that real
+      // result for 250ms; the video's authored static tail adds no extra delay.
+      delay(250, epoch, function () {
         if (state.index === state.manifest.steps.length - 1) { finish(); status.textContent = '全部步骤完成。可重播本步，或选择其他步骤。'; return; }
-        var fade = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 150;
-        state.phase = 'fadeout'; media.style.transition = fade ? 'opacity 150ms ease-out' : 'none'; media.style.opacity = fade ? '0' : '1'; update();
-        delay(fade, epoch, function () {
-          state.phase = 'gap'; update();
-          delay(250, epoch, function () {
-            var nextIndex = state.index + 1;
-            state.awaitingIndex = nextIndex; state.phase = 'seeking'; update();
-            seek(state.manifest.steps[nextIndex].start_frame, function () {
-              if (state.dead || !state.playing || epoch !== state.epoch) return;
-              state.index = nextIndex; state.awaitingIndex = null;
-              state.phase = 'fadein'; media.style.opacity = '1'; update();
-              delay(fade, epoch, function () { resumeMedia(epoch); });
-            });
-          });
-        });
+        var nextIndex = state.index + 1;
+        state.awaitingIndex = nextIndex; state.phase = 'seeking'; status.textContent = '正在准备下一步…'; update();
+        function positionNext() {
+          if (state.dead || !state.playing || epoch !== state.epoch) return;
+          showSnapshot();
+          seek(state.manifest.steps[nextIndex].start_frame, function () {
+            if (state.dead || !state.playing || epoch !== state.epoch) return;
+            state.index = nextIndex; state.awaitingIndex = null; progress.value = String(state.manifest.steps[nextIndex].start_frame);
+            resumeMedia(epoch);
+          }, true);
+        }
+        // A real Manim result shields the seek. Keep the paused result video
+        // visible until its PNG is available rather than exposing an unready frame.
+        if (snapshotReady()) positionNext();
+        else {
+          state.afterSnapshot = positionNext;
+          delay(10000, epoch, function () { fail('动画结果画面加载失败。请重新加载。'); });
+        }
       });
     }
     function observe(time) {
       if (state.dead || !state.playing || state.phase !== 'playback' || state.pendingFrame !== null || video.seeking) return;
       var step = state.manifest.steps[state.index], frame = Math.floor(time * state.manifest.fps + 0.0001);
       progress.value = String(Math.min(step.result_frame, Math.max(step.start_frame, frame)));
-      if (frame >= step.hold_start_frame) { if (state.runAutomatic) advance(frame); else finish(); }
+      if (frame >= step.hold_start_frame) { if (state.runAutomatic) advance(); else finish(); }
     }
     function schedule() {
       if (!state.playing || state.dead || state.phase !== 'playback' || state.tick !== null) return;
@@ -209,14 +212,14 @@
       if (state.frameCallback) state.tick = video.requestVideoFrameCallback(function (now, metadata) { if (epoch !== state.epoch || state.dead) return; state.tick = null; observe(metadata.mediaTime); schedule(); });
       else state.tick = window.requestAnimationFrame(function () { if (epoch !== state.epoch || state.dead) return; state.tick = null; observe(video.currentTime); schedule(); });
     }
-    function start(restart) {
-      if (!state.manifest || state.failed || state.dead) return;
+    function start(restart, sequential) {
+      if (!state.manifest || state.failed || state.dead || state.playing) return;
       var step = state.manifest.steps[state.index];
       video.playbackRate = playbackRate;
       var needsSeek = restart || video.currentTime * state.manifest.fps >= step.hold_start_frame;
       snapshot.hidden = true;
       var epoch = ++state.epoch;
-      state.playing = true; state.runAutomatic = state.automatic && !restart;
+      state.playing = true; if (restart) state.runAutomatic = false; else if (sequential) state.runAutomatic = true;
       state.phase = 'seeking'; status.textContent = '正在准备播放…'; update();
       // The first play remains inside the click handler. Muted ManimGL video can
       // then resume after asynchronous seeks on browsers including WebKit.
@@ -244,7 +247,7 @@
       });
     }
     function load() {
-      pause(); state.failed = false; state.manifest = null; state.index = 0;
+      pause(); state.failed = false; state.manifest = null; state.index = 0; state.runAutomatic = true;
       state.pendingFrame = state.snapshotResult = state.snapshotFileIndex = null; snapshot.hidden = true;
       retry.hidden = true; status.textContent = '正在加载动画…'; update();
       if (state.request) state.request.abort();
@@ -269,7 +272,7 @@
           // These buttons live for the player lifetime and are removed on retry.
           b.onclick = function () { select(i); }; steps.appendChild(b); state.stepButtons.push(b);
         });
-        status.textContent = state.automatic ? '点击“播放”后，按顺序自动演示。可关闭“自动播放”，逐步观察。' : '按步骤观察。点击“播放本步”开始。'; progress.value = '0'; update();
+        status.textContent = '点击“自动播放”或“播放”，按顺序演示。点击“重播本步”，只演示当前步骤。'; progress.value = '0'; update();
       }).catch(function (error) {
         if (state.dead || state.request !== controller || error.name === 'AbortError') return;
         window.clearTimeout(state.timeout); state.timeout = null;
@@ -280,17 +283,24 @@
     on(next, 'click', function () { select(state.index + 1); });
     on(play, 'click', function () { if (state.playing) pause(); else start(false); });
     on(replay, 'click', function () { pause(); start(true); });
-    on(automatic, 'click', function () { pause(); state.automatic = !state.automatic; status.textContent = state.automatic ? '自动播放已开启。点击“播放”开始。' : '自动播放已关闭。点击“播放本步”，逐步观察。'; update(); });
+    on(automatic, 'click', function () { if (state.playing) { state.runAutomatic = true; if (state.phase === 'playback') status.textContent = '正在自动播放…'; return; } start(false, true); });
     on(retry, 'click', load);
-    on(progress, 'input', function () { if (state.manifest && !state.failed) { pause(); var step = state.manifest.steps[state.index]; seek(Math.min(step.result_frame, Math.max(step.start_frame, Number(progress.value)))); } });
-    on(video, 'loadedmetadata', function () { if (state.manifest && state.pendingFrame !== null) seek(state.pendingFrame, state.afterSeek); });
+    on(progress, 'input', function () { if (state.manifest && !state.failed) { pause(); state.runAutomatic = true; var step = state.manifest.steps[state.index]; seek(Math.min(step.result_frame, Math.max(step.start_frame, Number(progress.value)))); } });
+    on(video, 'loadedmetadata', function () { if (state.manifest && state.pendingFrame !== null) seek(state.pendingFrame, state.afterSeek, state.awaitingIndex !== null); });
     on(video, 'seeked', completeSeek);
     on(video, 'error', function () { fail('视频网络或解码失败。文字说明仍可阅读，请重新加载。'); });
     on(video, 'ended', function () { if (state.playing && state.phase === 'playback') { if (state.index === state.manifest.steps.length - 1) finish(); else fail('视频提前结束。请重新加载。'); } });
     on(video, 'waiting', function () { if (state.playing) status.textContent = '视频正在缓冲…'; });
     on(video, 'playing', function () { if (state.playing && state.phase === 'playback') status.textContent = state.runAutomatic ? '正在自动播放…' : '正在播放本步…'; });
-    on(snapshot, 'load', showSnapshot);
-    on(snapshot, 'error', function () { snapshot.hidden = true; });
+    on(snapshot, 'load', function () {
+      showSnapshot();
+      if (state.afterSnapshot && snapshotReady()) {
+        var done = state.afterSnapshot; state.afterSnapshot = null;
+        if (state.phaseTimer !== null) window.clearTimeout(state.phaseTimer);
+        state.phaseTimer = null; done();
+      }
+    });
+    on(snapshot, 'error', function () { snapshot.hidden = true; if (state.afterSnapshot) fail('动画结果画面加载失败。请重新加载。'); });
     on(doc, 'visibilitychange', function () { if (doc.hidden) pause(); });
     on(window, 'pagehide', function () { state.dispose(); });
     state.dispose = function () {
