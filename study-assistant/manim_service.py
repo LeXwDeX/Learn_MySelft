@@ -162,6 +162,7 @@ class ManimService:
             expected_node = json.dumps(expected_node, sort_keys=True, ensure_ascii=False)
         feedback = ''
         previous_code = ''
+        previous_teaching_plan = None
         rendered = envelope = None
         failure_code = 'source_invalid'
         seen_repairs = set()
@@ -171,17 +172,20 @@ class ManimService:
             started = time.monotonic()
             stage = 'model_generation'
             messages = [{'role':'system','content':PROMPT}, {'role':'user','content':json.dumps(
-                {'node':canonical_node,'level':learning_level,'goal':learning_goal,'study_notes':source[:20000],'question':question[:2000], 'requested':requested,'repair':feedback,'previous_code':previous_code}, ensure_ascii=False)}]
+                {'node':canonical_node,'level':learning_level,'goal':learning_goal,'study_notes':source[:20000],'question':question[:2000], 'requested':requested,'repair':feedback,'previous_code':previous_code,'previous_teaching_plan':previous_teaching_plan}, ensure_ascii=False)}]
             try:
                 self.repository.store.job_progress(1, '规划教学变化与动画代码', attempt+1, total=5)
                 envelope = _json_block(self.model.json(messages, temperature=0.3,
                                                        max_tokens=self.generation_token_limit, reasoning_effort="none"))
                 check_cancelled()
+                previous_teaching_plan = None
                 stage = 'envelope_validation'
                 if not isinstance(envelope, dict) or set(envelope) != {'needed','reason','title','summary','teaching_plan','code'} or type(envelope['needed']) is not bool:
                     raise ManimContractError('模型动画格式无效')
                 if isinstance(envelope.get('code'),str):
                     previous_code = envelope['code'][:20000]
+                else:
+                    previous_code = ''
                 if not envelope['needed']:
                     if requested or envelope['code'] != '' or envelope['teaching_plan'] is not None:
                         raise ManimContractError('必须生成指定动画')
@@ -197,6 +201,7 @@ class ManimService:
                         raise ManimContractError('动画字段 %s 长度%d字符，超过%d字符上限' % (name,len(value),cap))
                 stage = 'source_validation'
                 plan = validate_teaching_plan(envelope['teaching_plan'])
+                previous_teaching_plan = plan
                 validate_source(envelope['code'])
                 stage = 'rendering'
                 self.repository.store.job_progress(2, '渲染并检查真实动画', attempt+1, total=5)
@@ -204,7 +209,16 @@ class ManimService:
                 check_cancelled()
                 stage = 'media_validation'
                 self.repository.store.job_progress(3, '核对教学步骤与抽样画面', attempt+1, total=5)
-                validate_teaching_plan(plan, len(rendered['manifest']['steps']))
+                actual_steps = len(rendered['manifest']['steps'])
+                try:
+                    validate_teaching_plan(plan, actual_steps)
+                except ManimContractError as error:
+                    if len(plan['steps']) != actual_steps and 1 <= actual_steps <= 8:
+                        raise ManimContractError(
+                            '教学计划%d步，实际视频%d步。请对照 previous_teaching_plan 和 previous_code，'
+                            '修正计划步骤与 next_step 的一一对应，不只修改标签。' %
+                            (len(plan['steps']), actual_steps)) from error
+                    raise
                 review_frames = rendered['review_frames']
                 if not isinstance(review_frames,list) or len(review_frames) != len(rendered['manifest']['steps']):
                     raise ManimContractError('手机复核图数量无效')
