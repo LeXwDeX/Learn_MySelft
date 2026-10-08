@@ -79,7 +79,10 @@ def public_fence(spec):
 
 
 class ManimService:
-    def __init__(self, repository, model, renderer, authorize, authorize_read=None):
+    def __init__(self, repository, model, renderer, authorize, authorize_read=None, *, generation_token_limit=16384):
+        if type(generation_token_limit) is not int or not 1 <= generation_token_limit <= 16384:
+            raise ValueError('invalid animation generation token limit')
+        self.generation_token_limit = generation_token_limit
         self.repository, self.model, self.renderer, self.authorize = repository, model, renderer, authorize
         self.authorize_read = authorize_read or authorize
         self.root = Path(renderer.state_dir) / 'manim-assets'
@@ -150,7 +153,8 @@ class ManimService:
                 {'node':canonical_node,'level':learning_level,'goal':learning_goal,'study_notes':source[:20000],'question':question[:2000], 'requested':requested,'repair':feedback,'previous_code':previous_code}, ensure_ascii=False)}]
             try:
                 self.repository.store.job_progress(1, '规划教学变化与动画代码', attempt+1, total=5)
-                envelope = _json_block(self.model.json(messages, temperature=0.3))
+                envelope = _json_block(self.model.json(messages, temperature=0.3,
+                                                       max_tokens=self.generation_token_limit, reasoning_effort="medium"))
                 check_cancelled()
                 stage = 'envelope_validation'
                 if not isinstance(envelope, dict) or set(envelope) != {'needed','reason','title','summary','teaching_plan','code'} or type(envelope['needed']) is not bool:

@@ -57,7 +57,8 @@ class Application:
         self.tutor_rendering = TutorRendering(validate_mermaid)
         self.manim = ManimService(self.repository, self.model,
                                   ManimRenderer(settings.state_dir), self.authorize_scene,
-                                  authorize_read=self.authorize_asset)
+                                  authorize_read=self.authorize_asset,
+                                  generation_token_limit=min(settings.max_output_tokens, 16384))
         self.scenes = SceneService(self.repository, self.model, self.verification,
                                    self.authorize_scene, manim=self.manim)
         dependencies = (self.repository, self.model, self.cache, self.verification)
