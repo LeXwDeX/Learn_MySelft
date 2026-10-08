@@ -54,8 +54,10 @@ def log_job_failure(job_id, operation, error, stage='execute'):
 
 
 class JobError(Exception):
-    def __init__(self, status, message):
+    def __init__(self, status, message, *, error_category=None):
         self.status = status
+        if error_category is not None:
+            self.error_category = error_category
         super().__init__(message)
 
 
@@ -193,7 +195,8 @@ class JobQueue:
                                           (user_id, request_id)).fetchone()
             if existing:
                 if existing['fingerprint'] != fingerprint:
-                    raise JobError(409, '同一任务回执不能用于不同内容')
+                    raise JobError(409, '同一任务回执不能用于不同内容',
+                                   error_category='request_id_conflict')
                 return self._public(connection, existing)
             self._capacity(connection, user_id)
             job_id = secrets.token_hex(16)
