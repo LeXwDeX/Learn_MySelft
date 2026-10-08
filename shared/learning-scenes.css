@@ -65,8 +65,6 @@
 .learn-manim-controls .btn { min-height: 44px; }
 .learn-manim-progress { display: block; font-size: .875rem; color: var(--learn-muted); margin-block: var(--learn-space-2) var(--learn-space-3); }
 .learn-manim-progress input { display: block; box-sizing: border-box; margin-inline: 0; width: 100%; min-height: 32px; accent-color: var(--learn-accent); }
-.learn-manim-automatic[aria-pressed="true"] { background: var(--learn-accent); color: var(--learn-accent-ink, var(--learn-surface)); border-color: var(--learn-accent); }
 .learn-manim-automatic:focus-visible { outline: 2px solid var(--learn-accent); outline-offset: 3px; }
 .learn-manim input:focus-visible { outline: 2px solid var(--learn-accent); outline-offset: 3px; }
 @media (max-width: 420px) { .learn-manim { padding: var(--learn-space-2); } .learn-manim-controls .btn { flex: 1 1 40%; } }
-@media (prefers-reduced-motion: reduce) { .learn-manim-media { transition: none !important; } }
