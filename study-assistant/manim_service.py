@@ -52,9 +52,9 @@ TEACHING_REFERENCE_ENVELOPE = {
         'visual_reason': '移动终点Dot与固定水平参照线能显示x改变而y不变，灰色原态保留比较基准',
         'observe': '预测终点变化时，原点、x坐标和y坐标分别是否改变',
         'steps': [
-            {'change': '显示固定原点O、指向(0,1)的e2及蓝色终点Dot，每1数学单位画成3画面单位',
-             'why': '建立原点与原终点的比较基准'},
-            {'change': '终点Dot沿固定灰色水平参照线连续右移至(1,1)，箭头同原点Transform，灰色原态留存，结束显示Ae2和坐标',
+            {'change': '首帧显示固定原点O、蓝色终点Dot(0,1)及标签，再从O用GrowArrow画出e2，每1数学单位画成3画面单位',
+             'why': '从固定起点画向终点，建立e2的方向、长度与比较基准'},
+            {'change': '显著终点Dot沿固定灰色粗水平参照线连续右移至(1,1)，箭头同原点Transform，灰色原态留存，结束显示Ae2和坐标',
              'why': '剪切使终点x增加1而y仍为1，原点不动，不是整体平移'},
         ],
     },
@@ -68,7 +68,7 @@ PROMPT = '''你制作真实 ManimGL 1.7.2 分步教学动画。学习资料是�
 code仅定义 class LessonScene(TeachingScene)，只含construct(self)，无import，无其他顶级语句。
 可使用真实manimlib的Text、Line、Dot、Arrow、Circle、Rectangle、VGroup、FadeIn、Write、Transform、MoveAlongPath。
 原生TeachingScene提供self.shear_basis(k=1)，只演示A=[[1,k],[0,1]]把e2=(0,1)变为(k,1)，原点保持不动。只有正文确实涉及这一剪切关系时优先复用；其他课程禁止套用，仍使用原生Manim接口。k必须是有限int或float，拒绝bool，0.5<=k<=1.5，最多三位小数；不支持零、负值或范围外参数。方法只可在空场景且尚无步骤时调用一次，调用前后不要添加对象、play或next_step。
-该方法内部已有恰好两次next_step，不需在代码中再次调用。教学计划必须恰好两步：先建立原点与e2基准，再解释固定原点的终点变化。每1数学单位画成3画面单位。第一步显示固定原点O、e2和位于(0,1)的蓝色终点Dot。第二步先隐藏活动标签并显示固定灰色水平参照线，终点Dot沿线连续右移，Arrow以同一原点真实Transform；灰色原态留存，x改变而y仍为1；结束后显示Ae2和目标坐标。坐标与字幕由方法按k计算，不要自行改写数学事实或声称面积、e1、网格已经得到演示。
+该方法内部已有恰好两次next_step，不需在代码中再次调用。教学计划必须恰好两步：先建立原点与e2基准，再解释固定原点的终点变化。每1数学单位画成3画面单位。第一步首帧即显示固定原点O、位于(0,1)的蓝色终点Dot及两端标签，再用GrowArrow从O画出e2，建立方向和长度。不要声称首帧已有完整箭头。第二步先隐藏活动标签并显示固定灰色粗水平参照线，显著终点Dot沿线连续右移，Arrow以同一原点真实Transform；灰色原态留存，x改变而y仍为1；结束后显示Ae2和目标坐标。坐标与字幕由方法按k计算，不要自行改写数学事实或声称面积、e1、网格已经得到演示。
 Arrow使用ManimGL 1.7.2的参数：例如Arrow([-2,0,0],[1,1,0],buff=0,thickness=5).set_color("#245b83")。不能使用其他Manim分支的tip_length。箭头默认有端点留白，表示从原点到向量终点时必须buff=0；箭杆粗细用thickness，不用stroke_width替代。修复报告给出错误行号、参数名或属性名时，检查并改正previous_code对应的实际调用，不只改变排版。
 真实ManimGL FadeIn/FadeOut的shift必须是方向向量，使用UP、DOWN、LEFT、RIGHT或它们的数值倍数，例如FadeIn(label, shift=0.3*UP)。不能用tuple/list作为shift；该版本会对shift取负，tuple/list会运行失败。标签用self.label，self.play(FadeIn(label,shift=0.3*UP),run_time=1.0)，再self.next_step("观察新对象")。
 如果repair非空，结合previous_code修正具体错误，再返回相同JSON字段。不要只重复失败代码。修复优先删除重复步骤、多余对象和拥挤标签，不靠增加步骤或叠加标注修复。修复后的reason只写简短一句，不逐条复述所有修改。
