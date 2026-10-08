@@ -5,7 +5,7 @@ failures are recorded as unavailable, never as a successful content inspection.
 """
 import hashlib
 import json
-from job_execution import JobDeadlineExceeded, check_deadline, remaining_timeout
+from job_execution import JobDeadlineExceeded, budget_active, check_deadline, remaining_timeout
 import os
 import signal
 from pathlib import Path
@@ -168,8 +168,18 @@ def review(candidate, ask, config_path=None):
     except JobDeadlineExceeded:
         raise
     except urllib.error.HTTPError as error:
+        if budget_active():
+            raise
         return dict(report, status='unavailable', reason='model_http_error', http_status=error.code)
-    except (TimeoutError, subprocess.TimeoutExpired):
+    except TimeoutError:
+        if budget_active():
+            raise
+        return dict(report, status='unavailable', reason='model_timeout')
+    except urllib.error.URLError:
+        if budget_active():
+            raise
+        return dict(report, status='unavailable', reason='model_review_unavailable')
+    except subprocess.TimeoutExpired:
         return dict(report, status='unavailable', reason='model_timeout')
     except ValueError:
         return dict(report, status='unavailable', reason='model_reply_invalid')
