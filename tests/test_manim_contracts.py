@@ -2,7 +2,20 @@ import sys
 from pathlib import Path
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
-from manim_contracts import ManimContractError, references_in, strip_generated_scenes, validate_manifest, validate_source
+from manim_contracts import ManimContractError, references_in, strip_generated_scenes, validate_manifest, validate_source, validate_teaching_plan
+
+class TeachingPlanTests(unittest.TestCase):
+    def plan(self):
+        return dict(objective='理解矩阵对基向量的作用',visual_reason='连续变换能连接输入与输出',
+                    observe='单位正方形怎样变成平行四边形',
+                    steps=[dict(change='拉伸横向基向量',why='矩阵第一列是横向基向量的输出')])
+    def test_missing_purpose_or_change_cannot_reach_renderer(self):
+        plan=self.plan()
+        self.assertEqual(validate_teaching_plan(plan,1),plan)
+        for bad in (None,{},dict(plan,observe=''),dict(plan,objective='字'*121),dict(plan,steps=[]),
+                    dict(plan,steps=plan['steps']*9),dict(plan,steps=[{'change':'旋转'}]),dict(plan,unknown='x')):
+            with self.subTest(plan=bad),self.assertRaises(ManimContractError):validate_teaching_plan(bad)
+        with self.assertRaisesRegex(ManimContractError,'步骤不一致'):validate_teaching_plan(plan,2)
 
 class ManimContractsTests(unittest.TestCase):
     def manifest(self):

@@ -233,7 +233,20 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   load(failedReload, 'shared/jobs.js');
   await assert.rejects(failedReload.LearnJobs.run('/path/node', {key:'u0/failed', node:{id:'n2'}}));
   assert.equal(retryPosts, 0, 'reloading a failed node does not spend the server retry budget again');
-  assert.equal(jobPosts, 2, 'recovery resubmits the stable idempotent request only');
+  assert.equal(jobPosts, 1, 'recovery reads the original receipt without a new submission');
+  const sceneJobs = environment(); let scenePosts = 0, sceneRetries = 0;
+  const sceneBody = {key:'u0/scene',node:{id:'n2'},automatic:true};
+  sceneJobs.LearnUser.fetch = async (url, options) => {
+    if (url.endsWith('/retry')) { sceneRetries++; return Response.json({job:{id:'scene-failed',operation:'/path/node/scene',status:'succeeded',result:{needed:false}}}); }
+    if (options.method === 'POST') scenePosts++;
+    return Response.json({job:{id:'scene-failed',operation:'/path/node/scene',status:'failed',error:'动画不可用'}});
+  };
+  load(sceneJobs,'shared/jobs.js');
+  await assert.rejects(sceneJobs.LearnJobs.run('/path/node/scene',sceneBody));
+  await assert.rejects(sceneJobs.LearnJobs.run('/path/node/scene',sceneBody,{resumeOnly:true,manualRetry:true}));
+  assert.equal(scenePosts,1); assert.equal(sceneRetries,0,'restoring animation never retries even when an option requests retry');
+  assert.equal((await sceneJobs.LearnJobs.run('/path/node/scene',sceneBody,{manualRetry:true})).needed,false);
+  assert.equal(sceneRetries,1,'explicit animation retry consumes exactly one original attempt');
   const readOnlyJobs = environment(); readOnlyJobs.LearnUser.readOnly = true;
   let readOnlyWrites = 0;
   readOnlyJobs.LearnUser.fetch = async (url, options) => { if (options.method === 'POST') readOnlyWrites++; return Response.json({job:{id:'readonly-job', operation:'/path/node', status:'failed', error:'failed'}}); };

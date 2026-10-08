@@ -67,7 +67,7 @@ function harness({readOnly = false, key = 'u0/topic-a'} = {}) {
   const assistant = {setFoot() {}, syncAiMaterial(id) { calls.sync.push(id); }};
   const shell = {showError(message) { calls.errors.push(message); }, hideError() {}};
   const window = {LearnUser: {readOnly}, LearnTitles: {document: () => '测试资料'}, QuizDialog: {open(options) { window.quizDialogOptions = options; }}};
-  const context = {window, define(name, deps, factory) { context.factory = factory; }, requestAnimationFrame() {}, alert() {}, Promise, console};
+  const context = {window, define(name, deps, factory) { context.factory = factory; }, requestAnimationFrame() {}, alert() {}, Promise, console, AbortController, setTimeout, clearTimeout};
   vm.runInNewContext(source, context, {filename: 'path-assessment.js'});
   const deps = {'path.format': format, 'path.model': model, 'path.domain': domain, 'path.cards': cards,
     'path.assistant': assistant, 'path.persistence': persistence, 'path.shell': shell};
@@ -87,6 +87,31 @@ function assertMaterialSelected(h, message) {
 }
 
 (async function main() {
+  {
+    const h = harness();
+    h.detail.manim_review = {status:'pending',retryable:true};
+    let reads = 0;
+    h.window.LearnUser.fetch = async () => {
+      reads++;
+      return Response.json({entries:{'u0/topic-a':JSON.stringify({nodeDetail:{n1:{study_notes:'原有正文',manim_review:{status:'failed',retryable:true,failure_code:'render_unavailable'}}}})}});
+    };
+    h.setPost(() => Promise.reject(Object.assign(new Error('动画失败'),{jobId:'scene-job'})));
+    await h.api.supplementScene('n1');
+    assert.equal(reads,1,'scene failure refreshes authoritative review without replacing material');
+    assert.equal(h.detail.manim_review.failure_code,'render_unavailable');
+    assert.equal(h.calls.post[0][1].automatic,true,'staged retry only requests automatic animation');
+    assert.equal(h.calls.post[0][2].manualRetry,true);
+    assert.equal(h.detail.study_notes,'原有正文');
+    assert.equal(h.quiz.round_id,'r1');
+  }
+  {
+    const h = harness();
+    h.detail.manim_review = {status:'pending',retryable:true};
+    h.setPost(() => Promise.reject(Object.assign(new Error('读取超时'),{jobId:'running-scene',error_category:'watch_timeout',job:{status:'running'}})));
+    await h.api.supplementScene('n1');
+    assert.equal(h.detail.manim_review.status,'pending');
+    assert.match(h.status.textContent,/结果尚未确认/,'watch timeout is not displayed as terminal animation failure');
+  }
   {
     const h = harness();
     h.detail.study_notes = sceneNotes;

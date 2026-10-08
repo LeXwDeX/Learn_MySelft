@@ -17,6 +17,29 @@ class ManimContractError(ValueError):
     pass
 
 
+def validate_teaching_plan(plan, step_count=None):
+    """Require an inspectable learning purpose before rendering model code."""
+    limits = {'objective': 120, 'visual_reason': 200, 'observe': 160}
+    if not isinstance(plan, dict) or set(plan) != set(limits) | {'steps'}:
+        raise ManimContractError('动画教学计划字段无效')
+    def bounded(value, name, cap):
+        if not isinstance(value, str) or not value.strip() or len(value) > cap:
+            raise ManimContractError('教学计划 %s 必须为非空字符串，最多%d字符' % (name, cap))
+    for name, cap in limits.items():
+        bounded(plan[name], name, cap)
+    steps = plan['steps']
+    if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_STEPS:
+        raise ManimContractError('教学计划必须有1至8个步骤')
+    if step_count is not None and len(steps) != step_count:
+        raise ManimContractError('教学计划步骤与实际动画步骤不一致')
+    for step in steps:
+        if not isinstance(step, dict) or set(step) != {'change', 'why'}:
+            raise ManimContractError('教学步骤必须说明变化和原因')
+        for name in ('change', 'why'):
+            bounded(step[name], name, 160)
+    return plan
+
+
 def validate_source(source):
     if not isinstance(source, str) or not source.strip() or len(source.encode()) > MAX_SOURCE:
         raise ManimContractError('动画代码长度无效')

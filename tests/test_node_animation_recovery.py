@@ -78,7 +78,7 @@ class NodeAnimationRecoveryTests(unittest.TestCase):
         self.assertEqual(self.app.cache.gates,{})
 
     def test_failed_question_or_unavailable_prose_never_runs_animation_or_saves(self):
-        with patch.object(self.app.model,'nonempty',return_value=json.dumps(self.candidate)), \
+        with patch.object(self.app.model,'nonempty',side_effect=[json.dumps(self.candidate),json.dumps(self.candidate['quiz']),json.dumps(self.candidate['quiz'])]), \
              patch.object(self.app.verification,'checked_questions',side_effect=harness.QuizContractError('invalid question')) as verify, \
              patch.object(self.app.manim,'generate') as animation:
             with self.assertRaises(harness.QuizContractError):
@@ -157,7 +157,11 @@ class NodeAnimationRecoveryTests(unittest.TestCase):
         with patch.object(self.app.manim,'generate',side_effect=ManimGenerationError(503,'model_unavailable')):
             with self.assertRaises(ManimGenerationError):
                 self.app.scenes.supplement('/path/node/scene',{'key':self.key,'node':{'id':'n1'}},self.actor)
-        self.assertEqual(self.app.repository.material(self.key),before)
+        current=self.app.repository.material(self.key)
+        self.assertEqual(current['nodeDetail']['n1']['study_notes'],before['nodeDetail']['n1']['study_notes'])
+        self.assertEqual(current['nodeDetail']['n1']['quiz'],before['nodeDetail']['n1']['quiz'])
+        self.assertEqual(current['nodeDetail']['n1']['manim_review']['failure_code'],'model_unavailable')
+        before=current
         def changed(*args,**kwargs):
             material=self.app.repository.material(self.key);material['plan']['nodes'][0]['title']='changed'
             self.app.repository.write_key(self.key,json.dumps(material))
@@ -168,3 +172,107 @@ class NodeAnimationRecoveryTests(unittest.TestCase):
             self.assertEqual(raised.exception.status,409);discard.assert_called_once_with('e'*32)
         after=self.app.repository.material(self.key)
         self.assertEqual(after['nodeDetail'],before['nodeDetail'])
+
+    def test_deferred_lesson_saves_before_animation_and_repairs_only_questions(self):
+        valid=harness.validate_questions(questions(),node=True)
+        calls=[json.dumps(self.candidate),json.dumps({'questions':questions()})]
+        with patch.object(self.app.model,'nonempty',side_effect=calls) as model, \
+             patch.object(self.app.verification,'checked_questions',side_effect=[harness.QuizContractError('bad answer'),valid]) as verify, \
+             patch.object(self.app.verification,'review_rendered',return_value={'status':'passed'}), \
+             patch.object(self.app.manim,'generate') as animation:
+            code,detail=self.app.learning.node('/path/node',{'key':self.key,'node':self.node,'defer_visual':True},self.actor)
+        self.assertEqual(code,200)
+        self.assertEqual(model.call_count,2)
+        self.assertEqual(verify.call_count,2)
+        animation.assert_not_called()
+        self.assertEqual(detail['study_notes'],'已校验正文。\n')
+        self.assertEqual(detail['manim_review'],{'status':'pending','retryable':True})
+        self.assertIn('仅修复测验',model.call_args_list[1].args[0][0]['content'])
+        self.assertNotIn('上次验题失败',model.call_args_list[1].args[0][1]['content'])
+
+    def test_automatic_not_needed_persists_and_explicit_request_can_supplement(self):
+        self.generate(self.failure)
+        body={'key':self.key,'node':self.node,'automatic':True}
+        with patch.object(self.app.manim,'generate',return_value=None) as generate:
+            code,result=self.app.scenes.supplement('/path/node/scene',body,self.actor)
+            self.assertFalse(generate.call_args.kwargs['requested'])
+            self.assertEqual(result['manim_review'],{'status':'not_needed'})
+            self.assertEqual(self.app.scenes.supplement('/path/node/scene',body,self.actor)[1]['reused'],True)
+            self.assertEqual(generate.call_count,1)
+        spec={'version':1,'asset_id':'c'*32,'title':'图','summary':'关系'}
+        with patch.object(self.app.manim,'generate',return_value=spec) as generate:
+            self.app.scenes.supplement('/path/node/scene',{'key':self.key,'node':self.node},self.actor)
+            self.assertTrue(generate.call_args.kwargs['requested'])
+
+    def test_deadline_metadata_does_not_create_effect_or_overwrite_new_result(self):
+        from job_execution import JobDeadlineExceeded
+        self.generate(self.failure)
+        with patch.object(self.app.manim,'generate',side_effect=JobDeadlineExceeded()), \
+             patch.object(self.app.repository.store,'record_job_effect') as effect:
+            with self.assertRaises(JobDeadlineExceeded):
+                self.app.scenes.supplement('/path/node/scene',{'key':self.key,'node':self.node,'automatic':True},self.actor)
+            effect.assert_not_called()
+        self.assertEqual(self.app.repository.node_detail(self.key,'n1')['manim_review']['failure_code'],'deadline')
+        def newer(*args,**kwargs):
+            material=self.app.repository.material(self.key)
+            material['nodeDetail']['n1']['manim_review']={'status':'not_needed'}
+            self.app.repository.write_key(self.key,json.dumps(material))
+            raise ManimGenerationError(502,'visual_rejected')
+        with patch.object(self.app.manim,'generate',side_effect=newer):
+            with self.assertRaises(ManimGenerationError):
+                self.app.scenes.supplement('/path/node/scene',{'key':self.key,'node':self.node},self.actor)
+        self.assertEqual(self.app.repository.node_detail(self.key,'n1')['manim_review'],{'status':'not_needed'})
+
+    def test_animation_failure_is_a_failed_receipt_with_no_success_effect(self):
+        import time
+        from background_jobs import JobQueue
+        self.generate(self.failure)
+        queue=JobQueue(self.app.repository.store,
+                       lambda uid,path,body:self.app.scenes.supplement(path,body,self.actor),workers=1)
+        self.addCleanup(queue.stop)
+        with patch.object(self.app.manim,'generate',side_effect=ManimGenerationError(502,'visual_rejected')):
+            receipt=queue.submit('u0','scene-failed-receipt','/path/node/scene',
+                                 {'key':self.key,'node':self.node,'automatic':True})
+            queue.start()
+            deadline=time.monotonic()+3
+            while time.monotonic()<deadline:
+                result=queue.get(receipt['id'],'u0')
+                if result['status']=='failed':break
+                time.sleep(.01)
+        self.assertEqual(result['status'],'failed')
+        self.assertEqual(result['attempt'],1)
+        with self.app.repository.store.connection() as connection:
+            self.assertIsNone(connection.execute('SELECT effect FROM jobs WHERE id=?',(receipt['id'],)).fetchone()[0])
+        self.assertEqual(self.app.repository.node_detail(self.key,'n1')['manim_review']['failure_code'],'visual_rejected')
+
+    def test_animation_failure_metadata_respects_node_notes_and_permission_guards(self):
+        for mode in ('delete','node','notes','permission'):
+            with self.subTest(mode=mode):
+                self.app.repository.write_key(self.key,json.dumps(self.material));self.app.cache.results.clear()
+                self.generate(self.failure)
+                authorize=self.app.scenes.authorize
+                def failure(*args,**kwargs):
+                    material=self.app.repository.material(self.key)
+                    if mode=='delete':material['plan']['nodes']=[]
+                    elif mode=='node':material['plan']['nodes'][0]['title']='changed'
+                    elif mode=='notes':material['nodeDetail']['n1']['study_notes']='new notes'
+                    else:self.app.scenes.authorize=lambda *args:(_ for _ in ()).throw(JobError(403,'denied'))
+                    self.app.repository.write_key(self.key,json.dumps(material))
+                    raise ManimGenerationError(503,'model_unavailable')
+                try:
+                    with patch.object(self.app.manim,'generate',side_effect=failure):
+                        with self.assertRaises(ManimGenerationError):
+                            self.app.scenes.supplement('/path/node/scene',{'key':self.key,'node':self.node},self.actor)
+                    self.assertEqual(self.app.repository.node_detail(self.key,'n1')['manim_review']['failure_code'],'visual_rejected')
+                finally:self.app.scenes.authorize=authorize
+
+    def test_invalid_prose_render_does_not_trigger_question_repair_or_issue_round(self):
+        with patch.object(self.app.model,'nonempty',return_value=json.dumps(self.candidate)) as model, \
+             patch.object(self.app.verification,'checked_questions',return_value=harness.validate_questions(questions(),node=True)), \
+             patch.object(self.app.verification,'review_rendered',side_effect=harness.QuizContractError('invalid prose')), \
+             patch('learning_service._issued_quiz') as issue:
+            with self.assertRaises(harness.QuizContractError):
+                self.app.learning.node('/path/node',{'key':self.key,'node':self.node,'defer_visual':True},self.actor)
+        self.assertEqual(model.call_count,1)
+        issue.assert_not_called()
+        self.assertNotIn('nodeDetail',self.app.repository.material(self.key))

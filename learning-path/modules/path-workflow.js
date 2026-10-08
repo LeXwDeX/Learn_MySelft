@@ -188,14 +188,18 @@ function replayPending() {
 // serverLoad 完成后调用：结果已存在→仅清 pending；否则重放对应阶段
 
 function resumeIfPending() {
+    if (window.LearnUser.readOnly) return false;
     var p = model.state.pending;
     if (!p || !p.kind) return false;
     if (!pendingAlive(p, Date.now())) { model.state.pending = null; persistence.save(); return false; }
     if (p.kind === 'nodes') {   // 批量生成中断：剔除已完成的，继续生成剩余
-      var rem = (p.remaining || []).filter(function (id) { return id && !model.state.nodeDetail[id]; });
+      var rem = (p.remaining || []).filter(function (id) {
+        var detail = model.state.nodeDetail[id];
+        return id && (!detail || detail.manim_review && /^(pending|failed)$/.test(detail.manim_review.status));
+      });
       if (!rem.length) { model.state.pending = null; persistence.save(); hideResumeBar(); return false; }
       showResumeBar('上次批量生成未完成，继续生成剩余 ' + rem.length + ' 个节点…');
-      hooks.genAllStart(rem);
+      hooks.genAllStart(rem, {recovering: true});
       return true;
     }
     if (pendingHasResult(p, model.state)) {
@@ -205,7 +209,8 @@ function resumeIfPending() {
       return false;
     }
     showResumeBar();
-    replayPending();
+    model.session.recoveringGeneration = true;
+    try { replayPending(); } finally { model.session.recoveringGeneration = false; }
     return true;
   }
 

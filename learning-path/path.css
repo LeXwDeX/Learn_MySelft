@@ -307,3 +307,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 .legend-locked{background:var(--lock)}
 .legend-failed{background:var(--learn-danger)}
 .dm-heading{margin:0}
+.generation-task-list { margin-block: var(--learn-space-3); padding: var(--learn-space-3); border: 1px solid var(--learn-border); border-radius: var(--learn-radius); background: var(--learn-surface); color: var(--learn-ink); }
+.generation-task-list summary { cursor: pointer; min-height: 44px; align-content: center; font-weight: 600; }
+.generation-task-list summary:focus-visible { outline: 2px solid var(--learn-accent); outline-offset: 3px; }
+.generation-task-list ol { padding-inline-start: var(--learn-space-5, 24px); }
+.generation-task-list li { padding-block: var(--learn-space-2); overflow-wrap: anywhere; }
+.generation-task-list p { margin-block: 0 var(--learn-space-2); }

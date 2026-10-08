@@ -3,6 +3,7 @@
 import json
 
 from background_jobs import JobError
+from job_execution import JobDeadlineExceeded
 from generation_contracts import _json_block
 from prompts import SCENE_SUPPLEMENT
 from scene_contracts import MAX_NOTES, MAX_SOURCE, SceneContractError, scenes_in, validate_scene
@@ -129,6 +130,21 @@ class SceneService:
         if not node or not isinstance(detail, dict) or not detail.get("study_notes"):
             raise JobError(404, "学习正文尚未生成")
         source = detail["study_notes"]
+        expected_review = json.loads(json.dumps(detail.get("manim_review")))
+        automatic = body.get("automatic") is True
+        def save_failure(error):
+            review = {'status': 'failed', 'retryable': True,
+                      'failure_code': getattr(error, 'failure_code', 'deadline')}
+            try:
+                self.repository.update_scene_review(key, node_id, source, node, expected_review,
+                                                    review, lambda: self.authorize(actor, key))
+            except Exception:
+                # A control/storage failure must not replace the original exception.
+                pass
+        self.authorize(actor, key)
+        if automatic and (expected_review or {}).get("status") == "not_needed":
+            return 200, {"node_id": node_id, "study_notes": source, "source_notes": source,
+                         "reused": True, "needed": False, "manim_review": expected_review}
         if self.manim:
             for existing in references_in(source):
                 try:
@@ -140,11 +156,22 @@ class SceneService:
                 except JobError:
                     continue
             lesson = strip_generated_scenes(source)
-            spec = self.manim.generate(key, node_id, lesson, node, actor=actor)
+            try:
+                spec = self.manim.generate(key, node_id, lesson, node, actor=actor, requested=not automatic)
+            except (ManimGenerationError, JobDeadlineExceeded) as error:
+                save_failure(error)
+                raise
+            if spec is None:
+                result = self.repository.update_scene_review(
+                    key, node_id, source, node, expected_review, {'status': 'not_needed'},
+                    lambda: self.authorize(actor, key), effect=True)
+                return 200, result
             notes = lesson.rstrip() + "\n\n" + self.manim.public_fence(spec)
             if len(notes) > MAX_NOTES:
                 self.manim.discard(spec["asset_id"])
-                raise JobError(400, "补充动画超出正文长度限制，原正文已保留")
+                error = ManimGenerationError(502, "output_too_long")
+                save_failure(error)
+                raise error
             try:
                 result = self.repository.append_scene(key, node_id, source, notes,
                                                       lambda: self.authorize(actor, key),
@@ -161,7 +188,7 @@ class SceneService:
         if present:
             return 200, {"node_id": node_id, "study_notes": source, "source_notes": source, "reused": True,
                          "sceneSupplement": detail.get("sceneSupplement")}
-        addition, reason = self._addition(source, node, requested=True)
+        addition, reason = self._addition(source, node, requested=not automatic)
         if not addition:
             return 200, {"node_id": node_id, "study_notes": source, "reused": True,
                          "needed": False, "reason": reason}

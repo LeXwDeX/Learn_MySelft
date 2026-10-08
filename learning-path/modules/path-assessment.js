@@ -41,13 +41,13 @@ function sceneWorkKey(key, id) { return key + '#' + id; }
 function sceneSupplementSection(id, d) {
     if (hasLearningScene(d.study_notes, true)) return '';
     var key = format.storeKey(), work = session.sceneWork[sceneWorkKey(key, id)];
-    var busy = !!(work && work.status === 'running');
+    var busy = !!(work && work.status === 'running') || !!(model.session.nodeMaterialStatus && model.session.nodeMaterialStatus[id] === 'generating-animation');
     var notNeeded = !!(work && work.status === 'not-needed' && work.notes === d.study_notes);
     var retryAnimation = !!(d.manim_review && d.manim_review.status === 'failed' && d.manim_review.retryable === true);
     return '<div class="scene-supplement" data-scene-supplement="' + format.esc(id) + '">' +
       '<button class="btn scene-supplement-btn" type="button"' +
       (window.LearnUser.readOnly || busy || notNeeded ? ' disabled' : '') +
-      '>' + (busy ? '正在生成…' : retryAnimation ? '重试教学动画' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
+      '>' + (busy ? '正在生成…' : retryAnimation ? '重试教学动画' : d.manim_review && d.manim_review.status === 'pending' ? '继续准备教学动画' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
       '<span class="scene-supplement-status" role="status" aria-live="polite"></span></div>';
   }
 
@@ -55,8 +55,12 @@ function sceneSupplementMessage(id) {
     var work = session.sceneWork[sceneWorkKey(format.storeKey(), id)], detail = model.state.nodeDetail[id];
     if (work && work.status === 'not-needed' && detail && work.notes !== detail.study_notes) return '';
     if (work && work.status === 'running') return '正在生成教学动画…';
+    if (work && work.status === 'pending') return '动画任务的结果尚未确认。正文已保留，可以继续读取原任务。';
     if (work && work.status === 'error') return '动画仍未生成，可以重试。学习正文已保留。';
     if (work && work.status === 'not-needed') return work.message;
+    if (model.session.nodeMaterialStatus && model.session.nodeMaterialStatus[id] === 'generating-animation') return '学习正文已就绪，正在准备教学动画。可以先学习正文。';
+    if (detail && detail.manim_review && detail.manim_review.status === 'pending') return '学习正文已就绪，动画尚未完成。可以先学习正文，或继续准备动画。';
+    if (detail && detail.manim_review && detail.manim_review.status === 'not_needed') return '本单元的正文可直接学习，无需额外动画。';
     if (detail && detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true) return '学习材料已就绪，动画暂未生成，可单独重试。';
     return '';
   }
@@ -180,6 +184,7 @@ function applySceneSupplement(id, key, result) {
     if (!node || !detail || !model.state.plan) return false;
     if (!hasLearningScene(result.study_notes)) {
       if (result.needed !== false || result.study_notes !== detail.study_notes) return false;
+      if (result.manim_review) { detail.manim_review = result.manim_review; persistence.save(); assistant.syncAiMaterial(id); }
       var reason = typeof result.reason === 'string' ? result.reason.slice(0, 300) : '';
       session.sceneWork[sceneWorkKey(key, id)] = {
         status: 'not-needed',
@@ -225,10 +230,24 @@ function clearSceneSupplementWork(id, key, workKey) {
     if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
   }
 
-function markSceneSupplementError(id, key) {
+function markSceneSupplementError(id, key, error) {
     if (format.storeKey() !== key) return;
-    session.sceneWork[sceneWorkKey(key, id)] = {status: 'error'};
+    var pending = error && (error.error_category === 'watch_timeout' || error.job && /^(queued|running)$/.test(error.job.status));
+    session.sceneWork[sceneWorkKey(key, id)] = {status: pending ? 'pending' : 'error'};
     if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+  }
+
+function refreshSceneReview(id, key) {
+    if (!window.LearnUser.fetch) return Promise.resolve();
+    var controller = new AbortController(), timeout = setTimeout(function () { controller.abort(); }, 10000);
+    return window.LearnUser.fetch(window.LearnUser.apiBase + '/state/all', {cache: 'no-store', signal: controller.signal}).then(function (response) {
+      return response.ok ? response.json() : null;
+    }).then(function (data) {
+      if (format.storeKey() !== key || !data || !data.entries) return;
+      var saved; try { saved = JSON.parse(data.entries[key]); } catch (error) { return; }
+      var remote = saved && saved.nodeDetail && saved.nodeDetail[id], current = model.state.nodeDetail[id];
+      if (remote && current && remote.study_notes === current.study_notes && remote.manim_review) current.manim_review = remote.manim_review;
+    }).catch(function () {}).finally(function () { clearTimeout(timeout); });
   }
 
 function supplementScene(id) {
@@ -239,17 +258,23 @@ function supplementScene(id) {
     var work = {status: 'running'};
     session.sceneWork[workKey] = work;
     if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
-    work.promise = persistence.post('/path/node/scene', {key: key, node: {id: id}}, {
+    var staged = detail.manim_review && /^(pending|failed)$/.test(detail.manim_review.status);
+    var body = {key: key, node: {id: id}};
+    if (staged) body.automatic = true;
+    work.promise = persistence.post('/path/node/scene', body, {
+      manualRetry: true,
       newOperation: true,
       onRetry: function () { return format.storeKey() === key ? supplementScene(id) : Promise.resolve(); }
     }).then(function (result) {
       if (format.storeKey() !== key) return;
       consumeSceneSupplement(id, key, result, workKey);
     }).catch(function (error) {
-      markSceneSupplementError(id, key);
-      if (format.storeKey() === key && !error.jobId && !(detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true)) {
-        shell.showError('补充图示失败，请稍后重试。', function () { return supplementScene(id); });
-      }
+      return refreshSceneReview(id, key).then(function () {
+        markSceneSupplementError(id, key, error);
+        if (format.storeKey() === key && !error.jobId && !(detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true)) {
+          shell.showError('补充图示失败，请稍后重试。', function () { return supplementScene(id); });
+        }
+      });
     });
     return work.promise;
   }
@@ -257,6 +282,7 @@ function supplementScene(id) {
 function restoreSceneSupplement() {
     if (!window.LearnJobs || window.LearnUser.readOnly || !model.state.plan) return Promise.resolve();
     var key = format.storeKey();
+    if (model.state.pending && model.state.pending.kind === 'nodes') return Promise.resolve();
     return window.LearnJobs.list(key).then(function (jobs) {
       if (key !== format.storeKey()) return;
       var latest = Object.create(null);
@@ -275,8 +301,7 @@ function restoreSceneSupplement() {
           }).catch(function () {});
         }
         if (job.status === 'failed' || job.status === 'interrupted') {
-          markSceneSupplementError(id, key);
-          return;
+          return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key); });
         }
         if (job.status === 'cancelled') {
           clearSceneSupplementWork(id, key);
@@ -289,8 +314,7 @@ function restoreSceneSupplement() {
         work.promise = window.LearnJobs.get(job.id).then(function (fresh) {
           if (fresh.status === 'succeeded') return fresh.result;
           if (fresh.status === 'failed' || fresh.status === 'interrupted') {
-            markSceneSupplementError(id, key);
-            return null;
+            return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key); return null; });
           }
           if (fresh.status === 'cancelled') {
             clearSceneSupplementWork(id, key, workKey);
@@ -304,7 +328,9 @@ function restoreSceneSupplement() {
         }).then(function (result) {
           if (!result || format.storeKey() !== key) return;
           consumeSceneSupplement(id, key, result, workKey);
-        }).catch(function () { markSceneSupplementError(id, key); });
+        }).catch(function (error) {
+          return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key, error); });
+        });
         return work.promise;
       }));
     }).catch(function () {

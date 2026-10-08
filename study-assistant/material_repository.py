@@ -135,6 +135,30 @@ class MaterialRepository:
             self.store.record_job_effect(result)
             return result
 
+    def update_scene_review(self, key, node_id, expected_notes, expected_node, expected_review,
+                            review, validate, *, effect=False):
+        """Guard metadata writes; failures never create successful job evidence."""
+        with self.lock, self.store.transaction():
+            validate()
+            material = self.material(key)
+            detail = ((material or {}).get('nodeDetail') or {}).get(node_id)
+            node = next((n for n in ((material or {}).get('plan') or {}).get('nodes', [])
+                         if isinstance(n, dict) and n.get('id') == node_id), None)
+            if not isinstance(detail, dict) or node is None:
+                raise JobError(404, '学习资料或节点已删除，动画状态未保存')
+            if (node != expected_node or detail.get('study_notes') != expected_notes
+                    or detail.get('manim_review') != expected_review):
+                raise JobError(409, '学习内容或动画状态已更新，本次状态未保存')
+            if review.get('status') == 'failed' and (detail.get('manim_review') or {}).get('status') in ('passed', 'not_needed'):
+                return None
+            detail['manim_review'] = review
+            self.write_key(key, json.dumps(material, ensure_ascii=False))
+            result = {'node_id': node_id, 'study_notes': expected_notes, 'source_notes': expected_notes,
+                      'reused': False, 'needed': False, 'manim_review': review}
+            if effect:
+                self.store.record_job_effect(result)
+            return result
+
     def append_refinement(self, key, fallback_plan, units, receipt=None, validate=None):
         """Allocate ids and append to the latest plan under the same state lock."""
         with self.lock, self.store.transaction():
