@@ -95,6 +95,9 @@ def validate_source(source):
             raise ManimContractError('动画代码包含不支持的操作')
         if isinstance(node, ast.Attribute) and node.attr.startswith('_'):
             raise ManimContractError('动画代码不能访问内部属性')
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == 'Line' and any(keyword.arg == 'thickness' for keyword in node.keywords)):
+            raise ManimContractError('第%d行：ManimGL Line 不支持 thickness，请使用 stroke_width；只有 Arrow 箭杆使用 thickness' % node.lineno)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ('FadeIn','FadeOut'):
             shifts = [keyword.value for keyword in node.keywords if keyword.arg == 'shift']
             if len(node.args) > 1:

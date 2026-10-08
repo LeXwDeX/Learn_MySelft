@@ -40,6 +40,15 @@ class ManimContractsTests(unittest.TestCase):
         self.assertEqual(len(references_in('正文\n'+fence+example)), 1)
         self.assertEqual(strip_generated_scenes('正文\n'+fence+example), '正文\n'+example)
         with self.assertRaises(ManimContractError): references_in('```learn-manim\n{}\n```')
+    def test_line_width_parameter_is_distinct_from_arrow_thickness(self):
+        bad = 'class LessonScene(TeachingScene):\n def construct(self):\n  line=Line(LEFT,RIGHT,thickness=6)'
+        with self.assertRaisesRegex(ManimContractError, '第3行.*Line.*thickness.*stroke_width'):
+            validate_source(bad)
+        for expression in ('Line(LEFT,RIGHT,stroke_width=6)', 'Arrow(LEFT,RIGHT,buff=0,thickness=5)'):
+            source = 'class LessonScene(TeachingScene):\n def construct(self):\n  line='+expression
+            with self.subTest(expression=expression):
+                self.assertEqual(validate_source(source), source)
+
     def test_real_fade_shift_requires_vector_but_positions_accept_tuples(self):
         for expression in ('FadeIn(label,shift=(0,1,0))','FadeOut(label,shift=[0,1,0])','FadeIn(label,(0,1,0))'):
             source='class LessonScene(TeachingScene):\n def construct(self):\n  self.play('+expression+')'
