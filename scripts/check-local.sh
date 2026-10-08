@@ -8,6 +8,7 @@ python3 -m unittest discover -s tests -v
 node tests/test_frontend_regressions.js
 node tests/test_refinement_hierarchy_frontend.js
 node tests/test_reliability_frontend.js
+node tests/test_job_details_frontend.js
 node tests/test_quiz_frontend.js
 node tests/test_quiz_save_state.js
 node tests/test_flywheel_frontend.js

@@ -84,6 +84,7 @@ function setCardGenState(id, on) {
     var st = card.querySelector('.status');
     if (!st) return;
     if (on) {
+      if (st.classList.contains('generating')) return;
       st.dataset.prevCls = st.className;
       st.dataset.prevHtml = st.innerHTML;
       st.className = 'status generating';

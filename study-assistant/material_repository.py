@@ -231,7 +231,7 @@ class MaterialRepository:
             raise JobError(409, "作答已更新，请刷新后重新诊断")
         return (material, quiz)
 
-    def quiz_update(self, key, node_id, update, persist=True):
+    def quiz_update(self, key, node_id, update, persist=True, *, record_effect=False):
         """Run a short quiz-state transaction; model requests stay outside the lock."""
         with self.lock, self.store.transaction():
             material = self.material(key)
@@ -255,6 +255,8 @@ class MaterialRepository:
             result = update(quiz, material)
             if persist:
                 self.write_key(key, json.dumps(material, ensure_ascii=False))
+                if record_effect:
+                    self.store.record_job_effect(result)
             return result
 
     def quiz_snapshot(self, key, node_id, read_only=False):

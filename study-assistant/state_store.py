@@ -8,12 +8,35 @@ connection. No model or network request belongs inside a write transaction.
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sqlite3
 import threading
 import time
 from material_titles import migrate_titles
+from job_execution import check_deadline, remaining_timeout
+from job_details import append_event
+
+
+def record_event(connection, *args, **kwargs):
+    try:
+        append_event(connection, *args, **kwargs)
+    except Exception:
+        pass
+
+
+def sqlite_wait(connection, enforce_deadline):
+    """Refresh SQLite's millisecond wait limit before each lock boundary."""
+    wait = remaining_timeout(10) if enforce_deadline else 1
+    connection.execute('PRAGMA busy_timeout=%d' % max(1, math.ceil(wait * 1000)))
+
+
+def require_transaction(connection):
+    # SQLITE_FULL and some I/O errors can implicitly roll back the transaction.
+    # Do not let a later statement autocommit an effect without its document.
+    if not connection.in_transaction:
+        raise sqlite3.OperationalError('State transaction was rolled back')
 
 
 class StateConflict(ValueError):
@@ -23,11 +46,12 @@ class StateConflict(ValueError):
 class StateStore:
     SCHEMA_VERSION = 1
 
-    def __init__(self, directory):
+    def __init__(self, directory, *, diagnostic_secrets=()):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = self.directory / 'state.sqlite3'
         self.local = threading.local()
+        self.diagnostic_secrets = tuple(value for value in diagnostic_secrets if value)
         with self.connection() as connection:
             os.chmod(self.path, 0o600)
             connection.execute('PRAGMA journal_mode=WAL')
@@ -64,6 +88,10 @@ class StateStore:
                     started_ms INTEGER,
                     retry_at_ms INTEGER
                 );
+                CREATE TABLE IF NOT EXISTS job_details (
+                    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+                    value TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS task_titles (
                     user_id TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL,
                     PRIMARY KEY(user_id, key)
@@ -84,37 +112,78 @@ class StateStore:
         job_id = getattr(self.local, 'job_id', None)
         if not job_id:
             return
+        check_deadline()
+        self.local.phase = label
         value = json.dumps({'step': step, 'total': total, 'label': label, 'attempt': attempt}, ensure_ascii=False)
         with self.transaction() as connection:
             connection.execute('INSERT INTO job_progress(job_id,value) VALUES (?,?) '
                                'ON CONFLICT(job_id) DO UPDATE SET value=excluded.value', (job_id, value))
+            record_event(connection, job_id, 'phase', label,
+                         attempt=getattr(self.local, 'job_attempt', attempt), phase=label,
+                         step=step, total=total, generation_attempt=attempt)
 
-    @contextmanager
-    def connection(self):
-        active = getattr(self.local, 'connection', None)
-        if active is not None:
-            yield active
+    def job_event(self, kind, label, *, known_secrets=(), **fields):
+        job_id = getattr(self.local, 'job_id', None)
+        if not job_id:
             return
-        connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA synchronous=FULL')
-        connection.execute('PRAGMA foreign_keys=ON')
+        # Diagnostics may record an expired deadline, without business writes.
         try:
-            yield connection
-        finally:
-            connection.close()
+            with self.transaction(enforce_deadline=False) as connection:
+                record_event(connection, job_id, kind, label,
+                             attempt=getattr(self.local, 'job_attempt', 0),
+                             phase=getattr(self.local, 'phase', '任务处理'),
+                             known_secrets=self.diagnostic_secrets + tuple(known_secrets), **fields)
+        except Exception:
+            # A diagnostics storage fault must not mask an execution failure.
+            pass
 
     @contextmanager
-    def transaction(self):
+    def connection(self, *, enforce_deadline=True):
         active = getattr(self.local, 'connection', None)
         if active is not None:
+            require_transaction(active)
             yield active
+            require_transaction(active)
             return
-        with self.connection() as connection:
+        wait = remaining_timeout(10) if enforce_deadline else 1
+        connection = None
+        try:
+            connection = sqlite3.connect(self.path, timeout=wait, isolation_level=None)
+            connection.row_factory = sqlite3.Row
+            sqlite_wait(connection, enforce_deadline)
+            connection.execute('PRAGMA synchronous=FULL')
+            sqlite_wait(connection, enforce_deadline)
+            connection.execute('PRAGMA foreign_keys=ON')
+            yield connection
+        except sqlite3.OperationalError:
+            if enforce_deadline:
+                check_deadline()
+            raise
+        finally:
+            if connection is not None:
+                connection.close()
+
+    @contextmanager
+    def transaction(self, *, enforce_deadline=True):
+        active = getattr(self.local, 'connection', None)
+        if active is not None:
+            if enforce_deadline:
+                check_deadline()
+            require_transaction(active)
+            yield active
+            require_transaction(active)
+            return
+        with self.connection(enforce_deadline=enforce_deadline) as connection:
+            if enforce_deadline:
+                check_deadline()
+            sqlite_wait(connection, enforce_deadline)
             connection.execute('BEGIN IMMEDIATE')
             self.local.connection = connection
             try:
                 yield connection
+                if enforce_deadline:
+                    check_deadline()
+                require_transaction(connection)
                 connection.commit()
             except BaseException:
                 connection.rollback()
@@ -155,6 +224,9 @@ class StateStore:
             return [dict(row) for row in connection.execute('SELECT * FROM documents ORDER BY key')]
 
     def put(self, key, value, expected_revision=None):
+        job_id = getattr(self.local, 'job_id', None)
+        if job_id:
+            self.local.phase = '保存学习资料'
         with self.transaction() as connection:
             if expected_revision is not None:
                 current = connection.execute('SELECT revision FROM documents WHERE key=?', (key,)).fetchone()
@@ -164,6 +236,9 @@ class StateStore:
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value,
                     updated_ms=excluded.updated_ms, revision=documents.revision+1''',
                                (key, value, int(time.time() * 1000)))
+            if job_id:
+                record_event(connection, job_id, 'phase', '保存学习资料', phase='保存学习资料',
+                             attempt=getattr(self.local, 'job_attempt', 0))
 
     def check(self):
         with self.connection() as connection:

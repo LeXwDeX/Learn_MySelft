@@ -1128,6 +1128,7 @@ function setCardGenState(id, on) {
     var st = card.querySelector('.status');
     if (!st) return;
     if (on) {
+      if (st.classList.contains('generating')) return;
       st.dataset.prevCls = st.className;
       st.dataset.prevHtml = st.innerHTML;
       st.className = 'status generating';
@@ -1327,6 +1328,9 @@ function nodeCard(n, entry) {
       button.classList.remove('mini');
       button.classList.add('btn');
     });
+    if (window.LearnJobDetails) window.LearnJobDetails.mount(el.querySelector('.node-state'), {
+      key: format.storeKey(), nodeId: n.id, operation: '/path/node', panelHost: el.querySelector('.node-description')
+    });
     el.addEventListener('click', function () { onCardClick(n.id); });
     shell.bindMarkButtons(el, n.id);
     var aiBtn = el.querySelector('.ai-mini');
@@ -1421,7 +1425,8 @@ function renderCardContent(id, options) {
       scope.innerHTML = '<p class="tip">批量生成进行中，请稍候…</p>';
       return;
     }
-    if (model.session.generatingNode === id) {   // 已在生成：重建后仍显示卡内 loading，不重复请求
+    if (model.session.generatingNode === id) {
+      generation.setCardGenState(id, true);   // 已在生成：重建后仍显示卡内 loading，不重复请求
       scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成并校验学习材料，完成后会自动显示…</p>';
       return;
     }
@@ -1440,11 +1445,13 @@ function renderCardContent(id, options) {
     scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成并校验学习材料，完成后会自动显示…</p>';
     requestAnimationFrame(drawEdges);
     model.session.generatingNode = id;
+    generation.setCardGenState(id, true);
     model.session.nodeMaterialStatus[id] = 'generating';
     hooks.syncAiMaterial(id);
     workflow.setPending('node', id);
     hooks.requestNodeDetail(id, options && options.manualRetry ? true : false).then(function (detail) {
       model.session.generatingNode = null;
+      generation.setCardGenState(id, false);
       model.state.nodeDetail[id] = detail;
       hooks.syncAiMaterial(id);
       model.state.pending = null; model.session.resumeAttempts = 0; workflow.hideResumeBar();
@@ -1452,6 +1459,7 @@ function renderCardContent(id, options) {
       if (model.session.expandedId === id) hooks.renderNodeDetail(id);
     }).catch(function (e) {
       model.session.generatingNode = null;
+      generation.setCardGenState(id, false);
       model.session.nodeMaterialStatus[id] = 'failed';
       hooks.syncAiMaterial(id);
       if (model.session.expandedId !== id) return;

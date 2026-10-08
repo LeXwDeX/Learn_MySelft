@@ -10,7 +10,7 @@ class JobDeadlineExceeded(TimeoutError):
     status = 504
 
     def __init__(self):
-        super().__init__('单元生成超过执行时限，请重试')
+        super().__init__('后台任务超过执行时限，请重试')
 
 
 _LOCAL = threading.local()

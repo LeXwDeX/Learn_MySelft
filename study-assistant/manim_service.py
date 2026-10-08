@@ -86,6 +86,9 @@ class ManimService:
                 record['upstream_http_status'] = error.code
             LOGGER.log(logging.INFO if failure_code in ('passed','not_needed') else logging.WARNING,
                        'manim_attempt %s',json.dumps(record))
+            self.repository.store.job_event('phase', '教学动画处理：' + stage,
+                                           animation_attempt=attempt, failure_code=failure_code,
+                                           elapsed_ms=record['elapsed_ms'], exception=record['exception'])
         except Exception:
             pass
 

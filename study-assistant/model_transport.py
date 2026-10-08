@@ -18,8 +18,9 @@ REAP_TIMEOUT = 5
 def _worker():
     # This mode imports no application module and never opens state or log files.
     envelope = json.load(sys.stdin)
-    request = urllib.request.Request(envelope['url'], data=base64.b64decode(envelope['payload']),
-                                     headers=envelope['headers'], method='POST')
+    payload = base64.b64decode(envelope['payload']) if envelope.get('payload') is not None else None
+    request = urllib.request.Request(envelope['url'], data=payload,
+                                     headers=envelope['headers'], method=envelope.get('method', 'POST'))
     try:
         with urllib.request.urlopen(request, timeout=envelope['timeout']) as response:
             body = response.read(MAX_RESPONSE_BYTES + 1)
@@ -53,13 +54,13 @@ def _stop(process):
         raise RuntimeError('模型网络进程无法回收') from None
 
 
-def post(url, payload, headers, timeout):
+def post(url, payload, headers, timeout, *, method='POST'):
     from job_execution import check_deadline, remaining_timeout
 
     started = time.monotonic()
     limit = remaining_timeout(timeout)
-    envelope = json.dumps({'url': url, 'payload': base64.b64encode(payload).decode('ascii'),
-                           'headers': headers, 'timeout': limit}).encode('utf-8')
+    envelope = json.dumps({'url': url, 'payload': base64.b64encode(payload).decode('ascii') if payload is not None else None,
+                           'headers': headers, 'timeout': limit, 'method': method}).encode('utf-8')
     # Do not inherit gateway credentials or application configuration through env.
     allowed = {'PATH', 'SYSTEMROOT', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
                'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy'}

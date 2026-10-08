@@ -60,9 +60,12 @@
   }
   function delay(milliseconds) { return new Promise(function (resolve) { setTimeout(resolve, milliseconds); }); }
   function showJob(job, message, kind, action, label) {
+    if (window.LearnJobDetails) window.LearnJobDetails.observe(job);
     if (!window.LearnUI) return;
     var show = job.operation === '/path/requiz' && window.LearnUI.toast ? window.LearnUI.toast : window.LearnUI.set;
-    show('job-' + job.id, message, kind, action, label);
+    show('job-' + job.id, message, kind, action, label, window.LearnJobDetails && !String(job.id).startsWith('prepare-') ? {
+      secondaryLabel: '查看详情', secondaryAction: function (event) { window.LearnJobDetails.open(job, null, event.currentTarget); }
+    } : undefined);
   }
   function quizProgress(job) {
     var progress = job.progress;
@@ -121,6 +124,7 @@
   }
   async function watch(job, options) {
     var deadline = Date.now() + 3600000;
+    if (window.LearnJobDetails) window.LearnJobDetails.observe(job);
     while (job.status === 'queued' || job.status === 'running') {
       announce(job, options.onStatus);
       if (Date.now() > deadline) {
@@ -143,6 +147,7 @@
         await delay(3500);
       }
     }
+    if (window.LearnJobDetails) window.LearnJobDetails.observe(job);
     if (job.status !== 'succeeded') {
       var detail = job.error || '任务未完成，请重试';
       if (job.response_status >= 500 && !/错误|校验/.test(detail)) detail = '服务端错误（HTTP ' + job.response_status + '）：' + detail;

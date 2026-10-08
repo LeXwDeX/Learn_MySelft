@@ -5,11 +5,12 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 import urllib.error
-from contextlib import nullcontext
-from job_execution import JobDeadlineExceeded, execution_budget
+from job_execution import JobDeadlineExceeded, execution_budget, check_deadline
+from job_details import append_event, locations, sanitize
 from quiz_harness import QuizContractError
 from research_sources import SourceSelectionError
 from material_titles import document_title
@@ -20,9 +21,17 @@ TERMINAL = frozenset({'succeeded', 'failed', 'interrupted', 'cancelled'})
 REQUEST_ID = re.compile(r'^[A-Za-z0-9:_-]{8,120}$')
 LOGGER = logging.getLogger(__name__)
 NODE_MAX_ATTEMPTS = 2
-NODE_EXECUTION_SECONDS = 600
+JOB_EXECUTION_SECONDS = 300
+NODE_EXECUTION_SECONDS = JOB_EXECUTION_SECONDS
 NODE_RETRY_SECONDS = 5
 TRANSIENT_HTTP = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def record_event(connection, *args, **kwargs):
+    try:
+        append_event(connection, *args, **kwargs)
+    except Exception:
+        pass
 
 
 def log_job_failure(job_id, operation, error, stage='execute'):
@@ -52,11 +61,13 @@ class JobError(Exception):
 def failure_detail(error):
     """Classify at the exception boundary, never expose upstream bodies or keys."""
     if isinstance(error, JobDeadlineExceeded):
-        return 'deadline', '本次单元生成已超时，已有学习内容已保留。'
+        return 'deadline', '本次后台任务超过 5 分钟执行时限，已有学习内容已保留。'
     if isinstance(error, urllib.error.HTTPError):
         return 'remote_api', '远程服务端错误（API %s）：模型服务暂时不可用或拒绝请求，可稍后重试。' % error.code
     if isinstance(error, (TimeoutError, urllib.error.URLError)):
         return 'network', '网络连接或超时错误：无法完成与远程模型服务的通信，可稍后重试。'
+    if isinstance(error, sqlite3.Error):
+        return 'storage', '学习数据存储发生错误，请稍后重试。'
     if isinstance(error, QuizContractError):
         return 'validation', '题目校验错误：生成内容未通过完整性、评分或重复题检查，请重试。'
     if isinstance(error, SourceSelectionError):
@@ -89,18 +100,21 @@ def public_job(row, include_result=True):
 
 class JobQueue:
     def __init__(self, store, execute, workers=2, limit=64, *,
-                 node_timeout=NODE_EXECUTION_SECONDS, retry_delay=NODE_RETRY_SECONDS):
+                 node_timeout=NODE_EXECUTION_SECONDS, retry_delay=NODE_RETRY_SECONDS,
+                 job_timeout=JOB_EXECUTION_SECONDS):
         self.store = store
         self.execute = execute
         self.workers = workers
         self.limit = limit
         self.node_timeout = node_timeout
+        self.job_timeout = job_timeout
         self.retry_delay = retry_delay
         self.stopping = threading.Event()
         self.wake = threading.Event()
         self.threads = []
         now = int(time.time() * 1000)
         with store.transaction() as connection:
+            recovering = connection.execute("SELECT id FROM jobs WHERE status='running'").fetchall()
             # A restarted process cannot prove an upstream request is still alive.
             # Persisted effects are already committed. Resume only a node with
             # remaining retry budget; never restart a still-live business thread.
@@ -114,6 +128,11 @@ class JobQueue:
             connection.execute('''UPDATE jobs SET status='interrupted',
                 error='服务已重启，输入和已有结果已保留，请重试', updated_ms=?
                 WHERE status='running' ''', (now,))
+            for recovered in recovering:
+                state = connection.execute('SELECT status FROM jobs WHERE id=?', (recovered['id'],)).fetchone()
+                attempt = connection.execute('SELECT attempt FROM job_attempts WHERE job_id=?', (recovered['id'],)).fetchone()
+                record_event(connection, recovered['id'], 'restart', '服务重启后恢复任务回执',
+                             attempt=attempt['attempt'] if attempt else 0, status=state['status'])
             connection.execute("DELETE FROM jobs WHERE status IN ('succeeded','failed','cancelled') AND updated_ms<?",
                                (now - 30 * 86400 * 1000,))
 
@@ -125,7 +144,13 @@ class JobQueue:
                       attempt_started_ms=attempt['started_ms'] if attempt else None,
                       retry_at_ms=attempt['retry_at_ms'] if attempt else None,
                       auto_retry=row['operation'] == '/path/node',
-                      max_attempts=NODE_MAX_ATTEMPTS if row['operation'] == '/path/node' else 1)
+                      max_attempts=NODE_MAX_ATTEMPTS if row['operation'] == '/path/node' else 1,
+                      timeout_seconds=self.node_timeout if row['operation'] == '/path/node' else self.job_timeout)
+        if 'result' in row.keys() and row['result'] and row['status'] != 'succeeded':
+            failure = json.loads(row['result'])
+            result['failure_phase'] = failure.get('failure_phase')
+            if failure.get('error_category'):
+                result['error_category'] = failure['error_category']
         return result
 
     def start(self):
@@ -175,9 +200,17 @@ class JobQueue:
                                (job_id, user_id, request_id, operation, encoded, fingerprint, now, now))
             row = connection.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
             connection.execute('INSERT INTO job_attempts(job_id) VALUES (?)', (job_id,))
+            record_event(connection, job_id, 'queued', '任务已进入队列', status='queued')
             result = self._public(connection, row)
         self.wake.set()
         return result
+
+    def details(self, job_id, user_id):
+        job = self.get(job_id, user_id)
+        with self.store.connection() as connection:
+            row = connection.execute('SELECT value FROM job_details WHERE job_id=?', (job_id,)).fetchone()
+        details = json.loads(row['value']) if row else {'available': False, 'truncated': False, 'events': []}
+        return {'ok': True, 'job': job, 'details': details}
 
     def get(self, job_id, user_id):
         with self.store.connection() as connection:
@@ -242,6 +275,7 @@ class JobQueue:
                 ON CONFLICT(job_id) DO UPDATE SET attempt=0,started_ms=NULL,retry_at_ms=NULL''', (job_id,))
             connection.execute("UPDATE jobs SET status='queued',error=NULL,result=NULL,response_status=NULL,updated_ms=? WHERE id=?",
                                (int(time.time() * 1000), job_id))
+            record_event(connection, job_id, 'manual_retry', '用户重试，开始新一轮执行', status='queued')
             row = connection.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
             result = self._public(connection, row)
         self.wake.set()
@@ -259,8 +293,9 @@ class JobQueue:
                 connection.execute('''INSERT INTO job_attempts(job_id,attempt,started_ms) VALUES (?,1,?)
                     ON CONFLICT(job_id) DO UPDATE SET attempt=attempt+1,started_ms=excluded.started_ms,retry_at_ms=NULL''',
                                    (row['id'], now))
-                return {**dict(row), 'attempt': connection.execute(
-                    'SELECT attempt FROM job_attempts WHERE job_id=?', (row['id'],)).fetchone()[0]}
+                attempt = connection.execute('SELECT attempt FROM job_attempts WHERE job_id=?', (row['id'],)).fetchone()[0]
+                record_event(connection, row['id'], 'start', '开始执行任务', attempt=attempt, status='running')
+                return {**dict(row), 'attempt': attempt}
         return None
 
     def _worker(self):
@@ -277,23 +312,47 @@ class JobQueue:
                 continue
             status, result = 500, {'error': '后台任务未完成，请重试'}
             can_retry = False
+            error_recorded = False
             try:
                 self.store.local.job_id = row['id']
+                self.store.local.job_attempt = row['attempt']
+                self.store.local.phase = '准备执行任务'
                 if row['effect']:
                     status, result = 200, json.loads(row['effect'])
                 else:
-                    budget = execution_budget(self.node_timeout) if row['operation'] == '/path/node' else nullcontext()
+                    budget = execution_budget(self.node_timeout if row['operation'] == '/path/node' else self.job_timeout)
                     with budget:
                         status, result = self.execute(row['user_id'], row['operation'], json.loads(row['body']))
+                        check_deadline()
             except Exception as error:
                 log_job_failure(row['id'], row['operation'], error)
-                status = getattr(error, 'status', 502)
+                status = 503 if isinstance(error, sqlite3.Error) else getattr(error, 'status', 502)
                 category, message = failure_detail(error)
-                result = {'error': message, 'error_category': category}
+                phase = getattr(self.store.local, 'phase', '任务处理')
+                if category == 'deadline':
+                    retrying = row['operation'] == '/path/node' and row['attempt'] < NODE_MAX_ATTEMPTS
+                    message += ' 阶段：%s。尝试 %s/%s。%s' % (
+                        phase, row['attempt'], NODE_MAX_ATTEMPTS if row['operation'] == '/path/node' else 1,
+                        '等待自动重试。' if retrying else '本次执行已停止，可手动重试。')
+                result = {'error': message, 'error_category': category, 'failure_phase': phase}
+                result = sanitize(result, self.store.diagnostic_secrets)
+                try:
+                    self.store.job_event('error', message, error_category=category, frames=locations(error))
+                    error_recorded = True
+                except Exception:
+                    pass
                 can_retry = row['operation'] == '/path/node' and retryable_failure(error)
             finally:
+                phase = getattr(self.store.local, 'phase', '任务处理')
                 del self.store.local.job_id
+                for name in ('job_attempt', 'phase'):
+                    if hasattr(self.store.local, name):
+                        delattr(self.store.local, name)
             succeeded = 200 <= status < 300 and not result.get('error')
+            if result.get('error'):
+                result = {**result, 'error': sanitize(result['error'], self.store.diagnostic_secrets)}
+            if not succeeded:
+                result = {**result, 'failure_phase': result.get('failure_phase') or phase}
             while not self.stopping.is_set():
                 try:
                     with self.store.transaction() as connection:
@@ -312,6 +371,14 @@ class JobQueue:
                             connection.execute('UPDATE job_attempts SET retry_at_ms=? WHERE job_id=?',
                                                (now + int(self.retry_delay * 1000), row['id']))
                             connection.execute('DELETE FROM job_progress WHERE job_id=?', (row['id'],))
+                        if not succeeded and not error_recorded:
+                            record_event(connection, row['id'], 'error', result.get('error', '任务失败'),
+                                         attempt=row['attempt'], phase=result.get('failure_phase'),
+                                         error_category=result.get('error_category', 'request'))
+                        record_event(connection, row['id'], 'retry' if retrying else 'status',
+                                     '等待自动重试' if retrying else ('任务已完成' if succeeded else '任务执行失败'),
+                                     attempt=row['attempt'], status='queued' if retrying else ('succeeded' if succeeded else 'failed'),
+                                     retry_at_ms=now + int(self.retry_delay * 1000) if retrying else None)
                     break
                 except Exception:
                     # Keep the result in this worker until storage recovers;

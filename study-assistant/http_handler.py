@@ -191,6 +191,9 @@ class Handler(BaseHTTPRequestHandler):
                         else self.app.jobs().list(target["id"], key)
                     )
                     self._json(200, {"ok": True, "jobs": jobs})
+                elif path.endswith('/details'):
+                    self._json(200, self.app.jobs().details(
+                        path.removeprefix('/jobs/').removesuffix('/details'), target['id']))
                 else:
                     self._json(
                         200,

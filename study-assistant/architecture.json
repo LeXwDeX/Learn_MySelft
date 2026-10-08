@@ -13,6 +13,7 @@
     "http_handler.py": "http",
     "http_io.py": "http",
     "job_execution.py": "infrastructure",
+    "job_details.py": "infrastructure",
     "job_routes.py": "http",
     "learning_service.py": "services",
     "manim_contracts.py": "domain",
