@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 import urllib.error
@@ -51,31 +52,39 @@ class JobDetailsTests(unittest.TestCase):
             self.assertEqual(receipt['max_attempts'], 2 if learning else 1)
 
     def test_each_operation_rolls_back_when_budget_expires_before_commit(self):
+        advance = [0.0]
+        clock = SimpleNamespace(monotonic=lambda: time.monotonic() + advance[0])
+
         def execute(user_id, operation, body):
             self.store.job_progress(3, '独立验题')
             with self.store.transaction():
                 self.store.put(body['key'], 'late result')
                 self.store.record_job_effect({'saved': True})
-                time.sleep(.02)
+                advance[0] += 301
             return 200, {'saved': True}
 
-        queue = JobQueue(self.store, execute, workers=1, job_timeout=.01,
-                         node_timeout=.01, retry_delay=.005)
-        self.addCleanup(queue.stop)
-        queue.start()
-        for index, operation in enumerate(sorted(OPERATIONS)):
-            with self.subTest(operation=operation), self.assertLogs('background_jobs', level='ERROR'):
-                job = self.receipt(queue, operation, 'request-rollback-%d' % index)
-                failed = self.wait(queue, job, 'failed')
-                self.assertEqual(failed['error_category'], 'deadline')
-                self.assertEqual(failed['failure_phase'], '保存学习资料')
-                self.assertIn('5 分钟', failed['error'])
-                self.assertIsNone(self.store.record('u0/example'))
-                details = queue.details(job['id'], 'u0')['details']
-                self.assertEqual(details['events'][-1]['status'], 'failed')
-                errors = [item for item in details['events'] if item['kind'] == 'error']
-                self.assertEqual(errors[-1]['error_category'], 'deadline')
-                self.assertTrue(errors[-1]['frames'])
+        queue = JobQueue(self.store, execute, workers=1, job_timeout=300,
+                         node_timeout=300, retry_delay=.005)
+        # Replace only job_execution's clock. Queue waits and this test's wait
+        # helper continue to use the real wall clock.
+        with patch('job_execution.time', clock):
+            try:
+                queue.start()
+                for index, operation in enumerate(sorted(OPERATIONS)):
+                    with self.subTest(operation=operation), self.assertLogs('background_jobs', level='ERROR'):
+                        job = self.receipt(queue, operation, 'request-rollback-%d' % index)
+                        failed = self.wait(queue, job, 'failed')
+                        self.assertEqual(failed['error_category'], 'deadline')
+                        self.assertEqual(failed['failure_phase'], '保存学习资料')
+                        self.assertIn('5 分钟', failed['error'])
+                        self.assertIsNone(self.store.record('u0/example'))
+                        details = queue.details(job['id'], 'u0')['details']
+                        self.assertEqual(details['events'][-1]['status'], 'failed')
+                        errors = [item for item in details['events'] if item['kind'] == 'error']
+                        self.assertEqual(errors[-1]['error_category'], 'deadline')
+                        self.assertTrue(errors[-1]['frames'])
+            finally:
+                queue.stop()
 
     def test_non_node_committed_effect_wins_after_deadline(self):
         calls = []

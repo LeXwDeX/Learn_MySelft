@@ -7,6 +7,7 @@
   var lists = new Map();
   var serial = 0;
   var cleanupTimer = null;
+  var activeView = null;
   var statusLabels = {queued: '排队中', running: '生成中…', succeeded: '已完成', failed: '失败', interrupted: '已中断', cancelled: '已取消'};
   var kindLabels = {queued: '已排队', start: '开始处理', phase: '处理阶段', model_request: '模型请求', model_response: '模型回复', model_error: '模型调用失败', error: '任务错误', retry: '自动重试', status: '状态更新', restart: '服务重启', manual_retry: '手动重试'};
   function element(tag, cls, text) {
@@ -24,7 +25,7 @@
   function identity(options) { return [context.userId, options.key || '', options.nodeId || '', options.operation || '', options.scope || ''].join('\n'); }
   function matches(job, options) {
     return (!options.key || job.key === options.key) && (!options.nodeId || job.node_id === options.nodeId) &&
-      (!options.operation || job.operation === options.operation);
+      (!options.operation || job.operation === options.operation) && (!options.jobId || job.id === options.jobId);
   }
   function active(job) { return job && (job.status === 'running' || job.status === 'queued'); }
   async function get(path, signal) {
@@ -50,15 +51,20 @@
     view.controller = null; view.loading = false; view.epoch++;
   }
   function close(view, focus) {
-    view.open = false; view.panel.hidden = true;
+    view.open = false;
     view.button.setAttribute('aria-expanded', 'false');
     cancelRead(view);
+    window.LearnUI.dialog.close(view.panel);
+    if (activeView === view) activeView = null;
     if (focus) {
       var target = view.returnFocus || view.button;
-      if (!target.isConnected && view.returnFocus) document.querySelectorAll('.learn-status').forEach(function (row) {
+      if (!target.isConnected) document.querySelectorAll('.learn-job-detail-button').forEach(function (button) {
+        if (!button.hidden && button.dataset.jobId === view.job.id) target = button;
+      });
+      if (!target.isConnected) document.querySelectorAll('.learn-status').forEach(function (row) {
         if (row.dataset.statusKey === 'job-' + view.job.id) target = row.querySelector('.learn-job-detail-button') || target;
       });
-      if (target.isConnected) target.focus();
+      if (target.isConnected) target.focus({preventScroll: true});
     }
   }
   function eventBody(event) {
@@ -139,7 +145,7 @@
       view.reveal.textContent = '确认显示模型对话'; view.reveal.disabled = false;
       view.note.textContent = '正在读取任务记录…';
     }
-    view.job = job; view.button.hidden = false;
+    view.job = job; view.button.hidden = Boolean(view.standalone);
     view.button.dataset.jobId = job.id;
     updateHeading(view);
     if (changed && view.open) read(view);
@@ -148,6 +154,8 @@
     if (!job || !job.id || String(job.id).startsWith('prepare-')) return;
     receipts.set(job.id, job);
     mounts.forEach(function (view) {
+      // A new receipt must not replace the task the learner is reading.
+      if (view.open && view.job && view.job.id !== job.id) return;
       if (matches(job, view.options) && (!view.job || view.job.id === job.id || (job.created_ms || 0) >= (view.job.created_ms || 0))) assign(view, job);
     });
   }
@@ -156,16 +164,20 @@
     var key = identity(options);
     var view = mounts.get(key);
     if (!view) {
-      var panel = element('section', 'learn-job-detail-panel');
-      panel.id = 'learn-job-details-' + (++serial); panel.hidden = true;
-      panel.setAttribute('aria-label', '后台任务详情'); panel.tabIndex = -1;
-      var trigger = button('查看详情', function () { if (view.open) close(view, false); else open(view.job, view); }, 'learn-job-detail-button');
+      var panel = element('dialog', 'learn-task-dialog learn-job-detail-panel');
+      panel.id = 'learn-job-details-' + (++serial); panel.tabIndex = -1;
+      var trigger = button('查看详情', function () { if (view.open) close(view, false); else open(view.job, view, view.button); }, 'learn-job-detail-button');
       trigger.hidden = true; trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-controls', panel.id);
+      trigger.setAttribute('aria-haspopup', 'dialog');
       view = {options: options, panel: panel, button: trigger, rows: new Map(), epoch: 0, open: false, revealed: false};
       var header = element('div', 'learn-job-detail-header');
       view.header = header;
-      header.appendChild(element('strong', '', '后台任务详情'));
-      header.appendChild(button('收起详情', function () { close(view, true); }));
+      var title = element('h2', 'learn-task-dialog-title', '后台任务详情');
+      title.id = panel.id + '-title'; panel.setAttribute('aria-labelledby', title.id);
+      header.appendChild(title);
+      view.closeButton = button('关闭', function () { close(view, true); }, 'btn');
+      header.appendChild(view.closeButton);
+      view.taskName = element('p', 'learn-job-task-name');
       view.summary = element('p', 'learn-job-detail-summary');
       view.failure = element('p', 'learn-job-detail-error');
       view.note = element('p', 'learn-job-detail-note', '正在读取任务记录…');
@@ -178,15 +190,19 @@
       });
       view.disclosure.appendChild(view.reveal);
       view.timeline = element('ol', 'learn-job-timeline');
-      panel.append(header, view.summary, view.failure, view.note, view.retry, view.disclosure, view.timeline);
+      var body = element('div', 'learn-task-dialog-body');
+      body.append(view.taskName, view.summary, view.failure, view.note, view.retry, view.disclosure, view.timeline);
+      panel.append(header, body);
       panel.addEventListener('click', function (event) { event.stopPropagation(); });
       panel.addEventListener('keydown', function (event) { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); close(view, true); } });
+      panel.addEventListener('cancel', function (event) { event.preventDefault(); close(view, true); });
+      panel.addEventListener('close', function () { if (view.open && !panel.open) close(view, true); });
       trigger.addEventListener('keydown', function (event) { if (event.key === 'Escape' && view.open) { event.stopPropagation(); close(view, true); } });
       mounts.set(key, view);
     }
     host.appendChild(view.button);
-    (options.panelHost || host.parentElement || host).appendChild(view.panel);
-    receipts.forEach(function (job) { if (matches(job, options) && (!view.job || (job.created_ms || 0) >= (view.job.created_ms || 0))) assign(view, job); });
+    if (!view.panel.isConnected) document.body.appendChild(view.panel);
+    receipts.forEach(function (job) { if ((!view.open || !view.job || view.job.id === job.id) && matches(job, options) && (!view.job || (job.created_ms || 0) >= (view.job.created_ms || 0))) assign(view, job); });
     if (options.key && !lists.has(options.key)) {
       var list = context.ready.then(async function () {
         var controller = new AbortController();
@@ -202,7 +218,9 @@
     if (cleanupTimer === null) cleanupTimer = setTimeout(function () {
       cleanupTimer = null;
       mounts.forEach(function (candidate, candidateKey) {
-        if (!candidate.panel.isConnected) { close(candidate, false); mounts.delete(candidateKey); }
+        if (!candidate.panel.isConnected || !candidate.button.isConnected && !candidate.open) {
+          close(candidate, false); candidate.panel.remove(); mounts.delete(candidateKey);
+        }
       });
     }, 0);
     return view;
@@ -211,23 +229,18 @@
     if (!job || !job.id) return;
     var standalone = !view;
     if (!view) {
-      var host = document.getElementById('learn-job-details-host');
-      if (!host) {
-        host = element('section', 'learn-job-details-host'); host.id = 'learn-job-details-host';
-        var status = document.getElementById('learn-status-area');
-        if (status) status.after(host); else document.body.prepend(host);
-      }
-      view = mount(host, {key: job.key, nodeId: job.node_id, operation: job.operation, panelHost: host, scope: 'status-' + job.id});
-      // The status row already supplies the trigger for this shared panel.
-      view.button.hidden = true;
+      view = mount(document.body, {key: job.key, nodeId: job.node_id, operation: job.operation, jobId: job.id, scope: 'status-' + job.id});
+      view.standalone = true;
     }
+    if (activeView && activeView !== view) close(activeView, false);
+    view.returnFocus = returnFocus || document.activeElement || view.button;
     assign(view, job);
     if (standalone) view.button.hidden = true;
-    if (returnFocus) view.returnFocus = returnFocus;
-    view.open = true; view.panel.hidden = false;
+    view.taskName.textContent = job.node_title || job.title || job.topic || job.operation || '';
+    view.open = true; activeView = view;
     view.button.setAttribute('aria-expanded', 'true');
-    view.panel.focus({preventScroll: true});
-    view.header.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'auto'});
+    window.LearnUI.dialog.open(view.panel);
+    view.closeButton.focus({preventScroll: true});
     read(view);
   }
   window.addEventListener('pagehide', function () { mounts.forEach(function (view) { close(view, false); }); });

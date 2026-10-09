@@ -96,28 +96,43 @@ dialog::backdrop { background: #28314266; }
 .learn-status[data-kind="success"] { color: #276644; background: #f5fbf7; }
 .learn-status-text { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
 .learn-task-list { display: grid; gap: 8px; }
-.learn-task { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--learn-border); }
+.learn-task { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--learn-space-4); padding: var(--learn-space-3) 0; border-bottom: 1px solid var(--learn-border); }
+.learn-task-info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.learn-task .actions { flex-shrink: 0; display: flex; flex-wrap: wrap; gap: var(--learn-space-2); }
 .learn-task small { display: block; color: var(--learn-muted); }
 @media (max-width: 580px) {
   .learn-status-area { padding: 0 12px; }
   .learn-status { font-size: 13px; }
   dialog { max-width: calc(100vw - 20px); max-height: calc(100dvh - 24px); overflow: auto; }
 }
-/* Inline diagnostics keep their own DOM while progress banners update. */
-.learn-job-detail-button { min-height: 26px; height: 26px; padding: 2px 9px; font: 12px/1.2 var(--learn-font); border-color: var(--learn-border); color: var(--learn-ink); background: var(--learn-surface); white-space: nowrap; }
+/* Task lists and diagnostics share one window style on every page. */
+.learn-job-detail-button { min-height: 36px; padding: 7px 12px; font: 14px/1.2 var(--learn-font); border-color: var(--learn-border); color: var(--learn-ink); background: var(--learn-surface); white-space: nowrap; }
 .learn-job-detail-button:hover { border-color: var(--learn-accent); }
 .node-state:has(.learn-job-detail-button) { display: flex; flex-wrap: wrap; align-items: center; gap: var(--learn-space-2); }
-.learn-job-details-host { max-width: 1240px; margin: 10px auto; padding: 0 20px; }
-.learn-job-detail-panel { width: 100%; min-width: 0; margin-top: var(--learn-space-3); padding: var(--learn-space-3); border: 1px solid var(--learn-border); border-radius: var(--learn-radius); background: var(--learn-surface); color: var(--learn-ink); font: 13px/1.6 var(--learn-font); cursor: default; }
-.learn-job-detail-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--learn-space-2); }
-.learn-job-detail-header .learn-action, .learn-job-disclosure .learn-action { min-height: 26px; padding: 3px 9px; font-size: 12px; }
+.learn-task-dialog { width: min(840px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); min-width: 0; padding: 0; overflow: hidden; border-radius: var(--learn-radius); font: 15px/1.65 var(--learn-font); cursor: default; }
+.learn-task-dialog[open] { display: flex; flex-direction: column; }
+.learn-job-detail-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--learn-space-4); padding: var(--learn-space-4) var(--learn-space-6); border-bottom: 1px solid var(--learn-border); }
+.learn-task-dialog-title { margin: 0; font: 600 20px/1.4 var(--learn-font); }
+.learn-task-dialog-body { min-height: 0; padding: var(--learn-space-4) var(--learn-space-6) var(--learn-space-6); overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--learn-border) var(--learn-surface); }
+.learn-task-dialog-body > ol { margin: 0; padding-inline-start: 24px; }
+.learn-task-dialog .learn-task:last-child { border-bottom: 0; }
+.learn-job-task-name { font-weight: 600; }
+.learn-job-detail-header .learn-action, .learn-job-disclosure .learn-action { min-height: 36px; padding: 7px 12px; font-size: 14px; }
 .learn-job-detail-panel p { margin: 6px 0; overflow-wrap: anywhere; }
 .learn-job-detail-summary, .learn-job-detail-note, .learn-job-event-label { color: var(--learn-muted); }
 .learn-job-detail-error { color: var(--learn-danger); white-space: pre-wrap; }
 .learn-job-disclosure { margin: var(--learn-space-3) 0; padding: var(--learn-space-2) 0; border-block: 1px solid var(--learn-border); }
-.learn-job-timeline { max-height: 420px; overflow: auto; padding: 0 0 0 22px; margin: var(--learn-space-3) 0 0; scrollbar-color: var(--learn-border) var(--learn-surface); }
+.learn-task-dialog-body > .learn-job-timeline { padding-inline-start: 22px; margin: var(--learn-space-4) 0 0; }
 .learn-job-event { padding: 0 0 var(--learn-space-3); overflow-wrap: anywhere; }
 .learn-job-event-title { font-weight: 600; font-variant-numeric: tabular-nums; }
-.learn-job-conversation, .learn-job-error-frames { max-width: 100%; margin: 8px 0; padding: var(--learn-space-2); border-radius: var(--learn-radius-control); background: var(--learn-paper); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font: 12px/1.6 var(--learn-mono); }
+.learn-job-conversation, .learn-job-error-frames { max-width: 100%; margin: var(--learn-space-2) 0; padding: var(--learn-space-3); border-radius: var(--learn-radius-control); background: var(--learn-paper); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font: 14px/1.6 var(--learn-mono); }
 .learn-job-detail-panel ::selection { color: var(--learn-ink); background: var(--learn-accent-tint); }
-@media (max-width: 580px) { .learn-job-details-host { padding: 0 12px; } .learn-job-detail-panel { padding: var(--learn-space-2); } }
+@media (max-width: 580px) {
+  .learn-task-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 24px); font-size: 16px; }
+  .learn-job-detail-header { padding: var(--learn-space-3) var(--learn-space-4); }
+  .learn-task-dialog-body { padding: var(--learn-space-3) var(--learn-space-4) var(--learn-space-4); }
+  .learn-task { flex-direction: column; gap: var(--learn-space-2); }
+  .learn-task .actions { width: 100%; }
+  .learn-task-dialog button, .learn-job-detail-button { min-height: 44px; }
+  .learn-job-detail-summary, .learn-job-detail-note, .learn-job-event-label { font-size: 14px; }
+}

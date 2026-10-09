@@ -1258,27 +1258,61 @@ session.batchOutcomes = new Map();
 session.batchKey = null;
 session.batchPanel = null;
 session.batchSerial = 0;
+session.batchReturnFocus = null;
+session.batchReturnKey = null;
 
 function batchPanel() {
     if (session.batchPanel && session.batchPanel.isConnected) return session.batchPanel;
     var anchor = format.$('resume-bar');
     if (!anchor || !anchor.ownerDocument) return null;
-    var doc = anchor.ownerDocument, panel = doc.createElement('details'); panel.className = 'generation-task-list';
-    var summary = doc.createElement('summary'); summary.textContent = '查看批量任务';
-    var list = doc.createElement('ol'); panel.appendChild(summary); panel.appendChild(list); anchor.after(panel);
-    session.batchPanel = panel; session.batchSummary = summary; session.batchList = list; return panel;
+    var doc = anchor.ownerDocument, panel = doc.createElement('dialog'); panel.className = 'learn-task-dialog generation-task-list';
+    panel.setAttribute('aria-labelledby', 'generation-task-dialog-title');
+    var heading = doc.createElement('h2'); heading.id = 'generation-task-dialog-title'; heading.className = 'learn-task-dialog-title'; heading.textContent = '批量任务';
+    var header = doc.createElement('div'); header.className = 'learn-job-detail-header';
+    var close = doc.createElement('button'); close.className = 'btn'; close.type = 'button'; close.textContent = '关闭';
+    header.appendChild(heading); header.appendChild(close);
+    var body = doc.createElement('div'); body.className = 'learn-task-dialog-body'; body.tabIndex = -1;
+    var list = doc.createElement('ol'); body.appendChild(list); panel.append(header, body);
+    doc.body.appendChild(panel);
+    window.LearnUI.dialog.bind(panel, close, function () {
+      var target = batchReturnTarget();
+      session.batchReturnFocus = null; session.batchReturnKey = null;
+      if (target && target.isConnected) target.focus({preventScroll: true});
+    });
+    session.batchPanel = panel; session.batchSummary = heading; session.batchList = list; return panel;
+  }
+
+function batchReturnTarget() {
+    if (session.batchReturnFocus && session.batchReturnFocus.isConnected) return session.batchReturnFocus;
+    var key = session.batchReturnKey || session.batchKey;
+    if (!key) return null;
+    var statuses = document.querySelectorAll('.learn-status');
+    for (var i = 0; i < statuses.length; i++) {
+      if (statuses[i].dataset.statusKey === key) {
+        return statuses[i].querySelector('.learn-job-detail-button');
+      }
+    }
+    return null;
+  }
+
+function closeBatchPanel() {
+    if (!session.batchPanel || !session.batchPanel.open) return;
+    window.LearnUI.dialog.close(session.batchPanel);
   }
 
 function taskRow(id, stage, job, notice) {
     if (!batchPanel()) return;
     var rowKey = id + ':' + stage, item = session.batchRows.get(rowKey), doc = session.batchPanel.ownerDocument;
     if (!item) {
-      item = {row: doc.createElement('li'), text: doc.createElement('p'), button: doc.createElement('button')};
-      item.button.className = 'btn'; item.button.type = 'button'; item.button.textContent = '查看详情';
+      item = {row: doc.createElement('li'), info: doc.createElement('div'), text: doc.createElement('p'), actions: doc.createElement('div'), button: doc.createElement('button')};
+      item.row.className = 'learn-task'; item.info.className = 'learn-task-info'; item.actions.className = 'actions';
+      item.button.className = 'btn learn-job-detail-button'; item.button.type = 'button'; item.button.textContent = '查看详情';
+      item.button.setAttribute('aria-haspopup', 'dialog');
       item.button.addEventListener('click', function (event) { if (item.job && window.LearnJobDetails) window.LearnJobDetails.open(item.job, null, event.currentTarget); });
-      item.row.appendChild(item.text); item.row.appendChild(item.button); session.batchList.appendChild(item.row); session.batchRows.set(rowKey, item);
+      item.info.appendChild(item.text); item.actions.appendChild(item.button); item.row.append(item.info, item.actions); session.batchList.appendChild(item.row); session.batchRows.set(rowKey, item);
     }
     if (job) item.job = job;
+    if (item.job) item.button.dataset.jobId = item.job.id;
     var node = domain.nodeById(id);
     item.text.textContent = (node ? node.title : id) + ' · ' + (stage === 'visual' ? '教学动画' : '学习材料') + '：' + (notice && notice.message || '正在准备');
     item.button.hidden = !item.job || !window.LearnJobDetails;
@@ -1290,10 +1324,16 @@ function showBatchSummary(current) {
     session.batchOutcomes.forEach(function (state) { counts[state]++; });
     session.genAllSucceeded = counts.success; session.genAllFailed = counts.failed;
     var message = '批量准备：已完成 ' + counts.success + '/' + session.genAllTotal + '，失败 ' + counts.failed +
-      (counts.pending ? '，待确认 ' + counts.pending : '') + '。' + (current ? ' 当前：' + current : session.genAllRunning ? '' : '可展开任务列表查看结果。');
+      (counts.pending ? '，待确认 ' + counts.pending : '') + '。' + (current ? ' 当前：' + current : session.genAllRunning ? '' : '可打开任务列表查看结果。');
     var retry = !session.genAllRunning && session.genAllRemaining.length && !window.LearnUser.readOnly ? function () { return genAllStart(session.genAllRemaining.slice(), {manualRetry: true}); } : null;
     window.LearnUI.set(session.batchKey, message, counts.failed ? 'error' : session.genAllRunning || counts.pending ? 'info' : 'success', retry, '重试未完成节点', {
-      secondaryLabel: '查看任务列表', secondaryAction: function () { if (batchPanel()) { session.batchPanel.open = true; session.batchSummary.focus(); } }
+      secondaryLabel: '查看任务列表', secondaryAction: function (event) {
+        if (batchPanel()) {
+          session.batchReturnFocus = event && event.currentTarget;
+          session.batchReturnKey = session.batchKey;
+          window.LearnUI.dialog.open(session.batchPanel, session.batchPanel.querySelector('.learn-task-dialog-body'));
+        }
+      }
     });
     if (session.batchSummary) session.batchSummary.textContent = '批量任务：已完成 ' + counts.success + '，失败 ' + counts.failed + (counts.pending ? '，待确认 ' + counts.pending : '');
   }
@@ -1302,6 +1342,7 @@ function genAllStart(ids, options) {
     options = options || {};
     if (window.LearnUser.readOnly || session.genAllRunning || !ids || !ids.length) return Promise.resolve();
     var key = format.storeKey(), serial = ++session.batchSerial;
+    closeBatchPanel();
     if (session.batchKey) window.LearnUI && window.LearnUI.clear(session.batchKey);
     session.batchKey = 'generation-batch-' + key;
     session.batchRows.clear(); session.batchOutcomes.clear();
