@@ -94,7 +94,7 @@ class GenerationRequestBudgetTests(unittest.TestCase):
         self.assertEqual([(r['stage'], r['body']['max_tokens'], r['body']['reasoning_effort'])
                           for r in self.records],
                          [('generation', 16384, 'medium'), ('verification', 4096, 'medium'),
-                          ('render', 2048, 'low')])
+                          ('render', 2048, 'none')])
         self.assertTrue(all(r['body']['response_format'] == {'type': 'json_object'} for r in self.records))
         self.assertEqual(self.records[-1]['timeout'], 120)
         self.app.model.json([{'role': 'system', 'content': '合成默认请求'}])

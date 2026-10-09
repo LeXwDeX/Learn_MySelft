@@ -123,7 +123,13 @@ async function main(){
         report.progress.push(progress);save();console.log(JSON.stringify(progress));
       }
       const failed=jobs.find(j=>['failed','interrupted','cancelled'].includes(j.status));
-      if(failed){report.jobs=jobs.map(j=>({id:j.id,node:j.node_id,operation:j.operation,status:j.status,category:j.error_category,phase:j.failure_phase,attempt:j.attempt}));save();assert.fail('real_job_'+failed.status);}
+      if(failed){
+        // Lists omit failure metadata. Read the real receipts for diagnostics;
+        // never persist their prompts, generated material or error bodies.
+        const receipts=await Promise.all(jobs.map(j=>request('/jobs/'+j.id).then(r=>r.job)));
+        report.jobs=receipts.map(j=>({id:j.id,node:j.node_id,operation:j.operation,status:j.status,category:j.error_category,phase:j.failure_phase,attempt:j.attempt}));
+        save();assert.fail('real_job_'+failed.status);
+      }
       if(!pauseDone&&jobs.some(j=>j.node_id==='n3'&&j.operation==='/path/node'&&j.status==='running')){
         await page.locator('#gen-all-btn').click();pauseDone=true;
       }

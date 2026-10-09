@@ -42,7 +42,7 @@ class QuizGeneration:
                     self.model.json(
                         messages,
                         max_tokens=min(self.model.settings.max_output_tokens, 2048),
-                        reasoning_effort='low',
+                        reasoning_effort='none',
                         response_format='json_object',
                         temperature=0,
                         timeout=120,
