@@ -49,6 +49,11 @@ class GenerationRequestBudgetTests(unittest.TestCase):
 
     def transport(self, url, payload, headers, timeout):
         body = json.loads(payload)
+        if body.get('response_format') == {'type': 'json_object'}:
+            # The deployed gateway rejects JSON mode before inference when no
+            # message explicitly names JSON. Enforce that observed HTTP contract.
+            self.assertRegex(json.dumps(body['messages'], ensure_ascii=False), r'(?i)json',
+                             'JSON mode requires a JSON instruction in messages')
         system = body['messages'][0]['content']
         stage = ('repair' if '仅修复测验' in system else
                  'verification' if '独立验题员' in system else

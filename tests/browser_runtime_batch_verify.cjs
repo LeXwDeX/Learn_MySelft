@@ -177,12 +177,14 @@ async function main() {
   await dialog.getByRole('button', {name:'关闭', exact:true}).click();
   await dialog.waitFor({state:'hidden'});
   assert(Math.abs(await page.evaluate(() => scrollY) - scroll) <= 2, 'closing details preserves scroll');
-  assert.equal(await button.evaluate(element => element === document.activeElement), true);
+  await page.waitForFunction(nodeId => document.activeElement ===
+    document.querySelector('#node-' + nodeId + ' .node-state .learn-job-detail-button'), selectedNode.id, {timeout:5000});
   await button.click();
   await dialog.waitFor();
   await page.keyboard.press('Escape');
   await dialog.waitFor({state:'hidden'});
-  assert.equal(await button.evaluate(element => element === document.activeElement), true);
+  await page.waitForFunction(nodeId => document.activeElement ===
+    document.querySelector('#node-' + nodeId + ' .node-state .learn-job-detail-button'), selectedNode.id, {timeout:5000});
   assert(Math.abs(await page.evaluate(() => scrollY) - scroll) <= 2, 'Escape preserves scroll');
   passed('actual-completed-job-hidden-model-dialog-scroll-close-Escape-and-focus');
 
