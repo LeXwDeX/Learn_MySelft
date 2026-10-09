@@ -77,6 +77,33 @@ async function main(){
     const submissions = new Map();
     const scenePosts=new Map(), materialSnapshots=new Map();
     let acceptedLostJobId=null;
+    let saveRecoveryCount=0;
+    async function restoreQueuedSaveBeforeContinue(){
+      const readiness=await page.evaluate(async()=>{
+        await window.LearnSaves.drain();
+        try{window.LearnSaves.assertReady();return {blocked:false};}
+        catch(error){return {blocked:true,code:error.code};}
+      });
+      if(!readiness.blocked)return;
+      assert.equal(readiness.code,'state_recovery_required','only_explicit_unsaved_recovery_is_supported');
+      assert.equal(saveRecoveryCount,0,'at_most_one_explicit_save_recovery');
+      const before=JSON.parse((await request('/state/all')).entries[key]);
+      const baseline=hash(before.nodeDetail);
+      const jobIds=(await request('/jobs?key='+encodeURIComponent(key))).jobs.map(job=>job.id).sort();
+      const retry=page.locator('[data-status-key="state-save"]').getByRole('button',{name:'重试保存',exact:true});
+      await retry.waitFor({state:'visible'});
+      saveRecoveryCount++;
+      await Promise.all([page.waitForNavigation({waitUntil:'load',timeout:30000}),retry.click()]);
+      await page.locator('#gen-all-btn').waitFor({state:'visible'});
+      await page.waitForFunction(()=>window.LearnSaves&&!window.LearnSaves.pending(),null,{timeout:10000});
+      await page.evaluate(()=>window.LearnSaves.assertReady());
+      const restored=JSON.parse((await request('/state/all')).entries[key]);
+      assert.equal(hash(restored.nodeDetail),baseline,'explicit_save_recovery_preserves_generated_material');
+      assert.deepEqual((await request('/jobs?key='+encodeURIComponent(key))).jobs.map(job=>job.id).sort(),jobIds,
+        'save_recovery_itself_never_creates_generation_jobs');
+      report.save_recovery_count=saveRecoveryCount;
+      report.cases.push('explicit_retry_save_reloads_and_preserves_generated_material');save();
+    }
     let missingDone=false,lostDone=false,pauseDone=false,pauseResumed=false,activeInterrupt=null,recoveryCheck=null;
     await page.route(api+'/jobs',async route=>{
       const req=route.request();
@@ -187,13 +214,27 @@ async function main(){
       }
       if(pauseDone&&!pauseResumed&&done.length===3&&!jobs.some(j=>j.node_id==='n4')){
         await page.waitForFunction(()=>document.getElementById('gen-all-btn')?.textContent==='继续准备未完成节点',null,{timeout:10000});
+        await restoreQueuedSaveBeforeContinue();
+        const pausedHash=hash(JSON.parse((await request('/state/all')).entries[key]).nodeDetail);
+        await page.evaluate(async()=>{
+          const persistence=window.LearnPathApp.get('path.persistence');
+          await persistence.flushSave();await persistence.waitForWrites();await window.LearnSaves.drain();
+          window.LearnSaves.assertReady();
+          if(window.LearnSaves.pending())throw new Error('pause_save_not_acknowledged');
+        });
+        assert.equal(JSON.parse((await request('/state/all')).entries[key]).pending,null,'pause_is_saved_before_reload');
+        assert.equal(hash(JSON.parse((await request('/state/all')).entries[key]).nodeDetail),pausedHash,'pause_save_keeps_generated_material');
+        report.cases.push('pause_waits_for_acknowledged_save_before_reload');save();
         await page.reload();await page.locator('#gen-all-btn').waitFor({state:'visible'});
+        await restoreQueuedSaveBeforeContinue();
+        assert.equal(hash(JSON.parse((await request('/state/all')).entries[key]).nodeDetail),pausedHash,'pause_reload_keeps_generated_material');
         assert.equal((await request('/jobs?key='+encodeURIComponent(key))).jobs.some(j=>j.node_id==='n4'),false);
         await page.locator('#gen-all-btn').click();pauseResumed=true;report.cases.push('pause_finishes_current_node_and_explicit_resume');save();
       }else if(!recoveryCheck&&done.length<5&&!jobs.some(j=>['queued','running'].includes(j.status))&&
                await page.locator('#gen-all-btn').textContent()==='继续准备未完成节点'){
         // Recovery observes accepted material tasks. A deliberate click starts
         // the next materials that were never submitted before the reload.
+        await restoreQueuedSaveBeforeContinue();
         await page.locator('#gen-all-btn').click();
         report.cases.push('explicit_continue_after_recovery');save();
       }

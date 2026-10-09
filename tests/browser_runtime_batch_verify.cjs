@@ -109,6 +109,13 @@ async function main() {
   assert.deepEqual(jobs.map(job => job.id).sort(), existing.jobs.map(job => job.id).sort());
   for (const node of nodes) for (const operation of ['/path/node', '/path/node/scene'])
     assert.equal(jobs.filter(job => job.node_id === node.id && job.operation === operation).length, 1);
+  for (const node of nodes) {
+    const receipt = (await get('/jobs/' + jobs.find(job => job.node_id === node.id && job.operation === '/path/node').id)).job;
+    assert.equal(hash(material.nodeDetail[node.id].quiz), hash(receipt.result.quiz), 'saved quiz must match the original issued material');
+    assert.equal(material.nodeDetail[node.id].study_notes.split('```learn-manim')[0].trim(),
+      receipt.result.study_notes.trim(), 'saved prose must match the original committed material');
+  }
+  passed('all-original-issued-quizzes-and-committed-prose-preserved');
   report.node_details_sha256 = hash(material.nodeDetail);
   passed('five-complete-lessons-with-issued-rounds-and-unchanged-details-hash');
 
