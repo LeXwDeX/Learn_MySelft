@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -143,6 +144,8 @@ class SceneFailurePhaseTests(unittest.TestCase):
 
     def test_expired_failure_does_not_override_deleted_changed_or_unauthorized_data(self):
         original = self.store.record(self.key)['value']
+        advance = [0.0]
+        clock = SimpleNamespace(monotonic=lambda: time.monotonic() + advance[0])
         for mode in ('delete', 'node', 'notes', 'passed', 'new_failed', 'permission'):
             with self.subTest(mode=mode):
                 self.app.repository.write_key(self.key, original)
@@ -162,10 +165,13 @@ class SceneFailurePhaseTests(unittest.TestCase):
                         else: material['nodeDetail']['n1']['manim_review'] = {'status': 'failed', 'failure_code': 'visual_rejected'}
                         self.app.repository.write_key(self.key, json.dumps(material))
                     changed.append(self.store.record(self.key))
-                    self.expire()
+                    advance[0] += 301
+                    check_deadline()
                 try:
-                    with patch.object(self.app.manim, 'generate', side_effect=generation), execution_budget(.02):
+                    with patch('job_execution.time', clock), \
+                         patch.object(self.app.manim, 'generate', side_effect=generation), execution_budget(300):
                         with self.assertRaises(JobDeadlineExceeded): self.supplement()
+                    self.assertTrue(changed, 'generation must make the selected change before the deadline expires')
                     self.assertEqual(self.store.record(self.key), changed[0])
                 finally:
                     self.app.scenes.authorize = authorize
