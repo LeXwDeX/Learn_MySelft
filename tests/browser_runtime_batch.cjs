@@ -56,12 +56,27 @@ async function main(){
     await request('/state/put',{entries:{[key]:JSON.stringify(material)}});
     const page = await context.newPage();
     const browserErrors=[];page.on('pageerror',error=>browserErrors.push(error.name));
-    const browserReceiptReads=new Set();
+    const browserReceiptReads=new Set(), browserStateReads=new Map(), requestEpochs=new WeakMap();
+    let browserEpoch=0;
     page.on('request',req=>{
       const url=new URL(req.url()),match=/^\/jobs\/([0-9a-f]{32})$/.exec(url.pathname);
       if(req.method()==='GET'&&url.origin===api&&match)browserReceiptReads.add(match[1]);
+      if(req.method()==='GET'&&url.origin===api&&url.pathname==='/state/all')requestEpochs.set(req,browserEpoch);
+    });
+    page.on('response',async response=>{
+      const epoch=requestEpochs.get(response.request());
+      if(epoch===undefined||epoch!==browserEpoch||!response.ok())return;
+      try{
+        const entries=(await response.json()).entries;
+        if(epoch!==browserEpoch||typeof entries?.[key]!=='string')return;
+        const restored=JSON.parse(entries[key]);
+        for(const [id,detail] of Object.entries(restored.nodeDetail||{}))
+          browserStateReads.set(id,{hash:hash(detail),ready:['passed','not_needed'].includes(detail.manim_review?.status)});
+      }catch(_){ /* An incomplete read cannot prove browser recovery. */ }
     });
     const submissions = new Map();
+    const scenePosts=new Map(), materialSnapshots=new Map();
+    let acceptedLostJobId=null;
     let missingDone=false,lostDone=false,pauseDone=false,pauseResumed=false,activeInterrupt=null,recoveryCheck=null;
     await page.route(api+'/jobs',async route=>{
       const req=route.request();
@@ -70,6 +85,14 @@ async function main(){
       if(body.body?.key!==key){await route.continue();return;}
       const id=body.body.node?.id,op=body.operation;
       submissions.set(body.request_id,body);
+      if(op==='/path/node/scene'){
+        scenePosts.set(id,(scenePosts.get(id)||0)+1);
+        if(!materialSnapshots.has(id)){
+          const detail=await page.evaluate(nid=>window.LearnPathApp.get('path.model').state.nodeDetail[nid],id);
+          assert(detail?.study_notes&&detail.quiz?.round_id,'browser_has_issued_material_before_scene');
+          materialSnapshots.set(id,{notes:detail.study_notes,notesHash:hash(detail.study_notes.trim()),quiz:hash(detail.quiz)});
+        }
+      }
       if(op==='/path/node/scene'&&id==='n1'&&!missingDone){
         missingDone=true;activeInterrupt='missing-scene-submission';
         await route.abort('aborted');return;
@@ -77,6 +100,9 @@ async function main(){
       if(op==='/path/node/scene'&&id==='n2'&&!lostDone){
         const accepted=await route.fetch();
         assert(accepted.ok(),'lost_ack_real_acceptance');
+        const receipt=(await accepted.json()).job;
+        assert.match(receipt?.id||'',/^[0-9a-f]{32}$/,'lost_ack_exact_real_job_id');
+        acceptedLostJobId=receipt.id;
         lostDone=true;activeInterrupt='lost-scene-acknowledgement';
         await route.abort('aborted');return;
       }
@@ -96,8 +122,13 @@ async function main(){
         assert(before?.study_notes&&before.quiz?.round_id,'body_committed_before_interrupt');
         const existing=(await request('/jobs?key='+encodeURIComponent(key))).jobs.filter(j=>j.node_id===node&&j.operation==='/path/node/scene');
         assert.equal(existing.length,node==='n1'?0:1,'interruption_has_expected_real_receipt');
-        recoveryCheck={label,node,notes:before.study_notes,quiz:hash(before.quiz),started:Date.now()};
+        const original=materialSnapshots.get(node);
+        assert(original,'initial_browser_material_snapshot');
+        recoveryCheck={label,node,notes:original.notes,notesHash:original.notesHash,quiz:original.quiz,
+          acceptedId:node==='n2'?acceptedLostJobId:null,started:Date.now()};
+        if(recoveryCheck.acceptedId)assert.equal(existing[0].id,recoveryCheck.acceptedId,'lost_ack_original_receipt_identity');
         browserReceiptReads.clear();
+        browserStateReads.clear();browserEpoch++;
         await page.reload();
         await page.locator('#gen-all-btn').waitFor({state:'visible'});
         report.cases.push(label+'_reload');save();
@@ -106,12 +137,33 @@ async function main(){
       const entries=(await request('/state/all')).entries;
       const current=JSON.parse(entries[key]);
       if(recoveryCheck){
-        const scene=jobs.find(j=>j.node_id===recoveryCheck.node&&j.operation==='/path/node/scene');
-        if(scene&&browserReceiptReads.has(scene.id)){
+        const sceneJobs=jobs.filter(j=>j.node_id===recoveryCheck.node&&j.operation==='/path/node/scene');
+        assert(sceneJobs.length<=1,'recovery_never_duplicates_scene_job');
+        const scene=sceneJobs[0];
+        if(scene&&recoveryCheck.acceptedId)assert.equal(scene.id,recoveryCheck.acceptedId,'recovery_reuses_exact_accepted_receipt');
+        const browserRead=browserStateReads.get(recoveryCheck.node);
+        const restored=await page.evaluate(nid=>{
+          const model=window.LearnPathApp.get('path.model');
+          return {detail:model.state.nodeDetail[nid],remaining:model.state.pending?.remaining||[]};
+        },recoveryCheck.node);
+        const received=!!(scene&&browserReceiptReads.has(scene.id));
+        const completedRead=!!(recoveryCheck.acceptedId&&scene?.status==='succeeded'&&browserRead?.ready&&
+          browserRead.hash===hash(current.nodeDetail[recoveryCheck.node])&&restored.detail&&
+          browserRead.hash===hash(restored.detail)&&['passed','not_needed'].includes(restored.detail.manim_review?.status)&&
+          !restored.remaining.includes(recoveryCheck.node));
+        if(received||completedRead){
           const preserved=current.nodeDetail[recoveryCheck.node];
           assert.equal(hash(preserved.quiz),recoveryCheck.quiz,'automatic_recovery_keeps_issued_quiz');
           assert.equal(preserved.study_notes.split('```learn-manim')[0].trim(),recoveryCheck.notes.trim(),'automatic_recovery_keeps_prose');
-          report.cases.push(recoveryCheck.label+'_automatic_receipt_recovered_before_manual_continue');
+          if(recoveryCheck.acceptedId)assert.equal(scenePosts.get(recoveryCheck.node),1,'lost_ack_never_resubmits_scene');
+          else assert.equal(scenePosts.get(recoveryCheck.node),2,'missing_scene_is_automatically_submitted_after_reload');
+          (report.recovery_evidence||(report.recovery_evidence=[])).push({
+            interruption:recoveryCheck.label,method:received?'browser_receipt_get':'browser_completed_state_read',
+            accepted_job_id:recoveryCheck.acceptedId,scene_job_id:scene.id,scene_posts:scenePosts.get(recoveryCheck.node),
+            material_notes_sha256:recoveryCheck.notesHash,quiz_sha256:recoveryCheck.quiz,
+            restored_node_detail_sha256:completedRead?browserRead.hash:null
+          });
+          report.cases.push(recoveryCheck.label+(received?'_automatic_receipt_recovered':'_completed_state_restored')+'_before_manual_continue');
           recoveryCheck=null;save();
         }else assert(Date.now()-recoveryCheck.started<45000,'automatic_scene_handoff_not_observed');
       }
