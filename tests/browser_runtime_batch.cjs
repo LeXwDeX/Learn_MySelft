@@ -253,12 +253,34 @@ async function main(){
         assert.equal(current.unknown,'keep');
         const baseline=hash(current.nodeDetail);
         report.node_details_sha256=baseline;
+        async function acknowledgeCompletedBatch(){
+          await page.waitForFunction(()=>{
+            const app=window.LearnPathApp;
+            return app&&!app.get('path.generation').isRunning()&&app.get('path.model').state.pending===null;
+          },null,{timeout:45000});
+          await page.evaluate(async()=>{
+            const persistence=window.LearnPathApp.get('path.persistence');
+            await persistence.flushSave();await persistence.waitForWrites();await window.LearnSaves.drain();
+            window.LearnSaves.assertReady();
+            if(window.LearnSaves.pending())throw new Error('completed_batch_save_not_acknowledged');
+          });
+          const saved=JSON.parse((await request('/state/all')).entries[key]);
+          assert.equal(saved.pending,null,'completed_batch_pending_clear_is_saved');
+          assert.equal(hash(saved.nodeDetail),baseline,'completed_batch_save_preserves_generated_material');
+          assert.deepEqual((await request('/jobs?key='+encodeURIComponent(key))).jobs.map(job=>job.id).sort(),
+            jobs.map(job=>job.id).sort(),'completed_batch_save_never_creates_jobs');
+        }
+        phase='final-save-ack';
+        await acknowledgeCompletedBatch();
+        report.cases.push('completed_batch_waits_for_final_pending_clear_and_save_ack');save();
         phase='cache';
         for(const body of submissions.values())assert.equal((await request('/jobs',body)).job.status,'succeeded');
         assert.equal((await request('/jobs?key='+encodeURIComponent(key))).jobs.length,10);
         assert.equal(hash(JSON.parse((await request('/state/all')).entries[key]).nodeDetail),baseline);
         await page.reload();await page.locator('#gen-all-btn').waitFor({state:'visible'});
         await page.locator('#gen-all-btn').click();
+        await acknowledgeCompletedBatch();
+        report.cases.push('completed_cache_reload_waits_for_save_ack');save();
         assert.equal((await request('/jobs?key='+encodeURIComponent(key))).jobs.length,10);
         assert.equal(hash(JSON.parse((await request('/state/all')).entries[key]).nodeDetail),baseline);
         report.jobs=jobs.map(j=>({id:j.id,node:j.node_id,operation:j.operation,status:j.status,attempt:j.attempt,timeout_seconds:j.timeout_seconds}));
