@@ -25,7 +25,7 @@ class QuizGeneration:
                         "content": json.dumps(questions, ensure_ascii=False),
                     },
                 ],
-                max_tokens=min(self.model.settings.max_output_tokens, 4096),
+                max_tokens=min(self.model.settings.max_output_tokens, 8192),
                 reasoning_effort='medium',
                 response_format='json_object',
                 temperature=0,

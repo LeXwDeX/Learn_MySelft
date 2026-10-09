@@ -93,7 +93,7 @@ class GenerationRequestBudgetTests(unittest.TestCase):
         self.assertEqual(self.app.repository.material(self.key)['nodeDetail']['n1'], detail)
         self.assertEqual([(r['stage'], r['body']['max_tokens'], r['body']['reasoning_effort'])
                           for r in self.records],
-                         [('generation', 16384, 'medium'), ('verification', 4096, 'medium'),
+                         [('generation', 16384, 'medium'), ('verification', 8192, 'medium'),
                           ('render', 2048, 'none')])
         self.assertTrue(all(r['body']['response_format'] == {'type': 'json_object'} for r in self.records))
         self.assertEqual(self.records[-1]['timeout'], 120)
@@ -183,7 +183,7 @@ class GenerationRequestBudgetTests(unittest.TestCase):
                 with self.assertRaises(harness.QuizContractError):
                     self.app.verification.checked_questions(qs, node=False, legacy=legacy)
                 self.assertEqual(len(self.records), 1)
-                self.assertEqual(self.records[0]['body']['max_tokens'], 4096)
+                self.assertEqual(self.records[0]['body']['max_tokens'], 8192)
                 self.assertEqual(self.records[0]['body']['response_format'], {'type': 'json_object'})
                 self.assert_not_saved()
 
@@ -198,7 +198,7 @@ class GenerationRequestBudgetTests(unittest.TestCase):
         self.assertEqual(len(checked), 16)
         self.assertEqual(len(self.records), 1)
         self.assertEqual(len(json.loads(self.records[0]['body']['messages'][1]['content'])), 16)
-        self.assertEqual(self.records[0]['body']['max_tokens'], 4096)
+        self.assertEqual(self.records[0]['body']['max_tokens'], 8192)
         self.replies['verification'] = json.dumps({'questions': [
             {'index': i, 'valid': True, 'reference_complete': True, 'reason': '合成验题依据'}
             for i in range(15)]})
