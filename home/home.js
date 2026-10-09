@@ -31,9 +31,9 @@ function createModuleContainer() {
   var define = container.define;
 define('home.platform', [], function (deps) {
   var context = window.LearnUser, ui = window.LearnUI;
-  if (!context || !ui || !window.LearnTitles || !window.LearnJobs) throw new Error('首页缺少公共组件');
+  if (!context || !ui || !window.LearnTitles || !window.LearnJobs || !window.LearnJobDetails) throw new Error('首页缺少公共组件');
 
-  return {context: context, ui: ui, titles: window.LearnTitles, jobs: window.LearnJobs};
+  return {context: context, ui: ui, titles: window.LearnTitles, jobs: window.LearnJobs, jobDetails: window.LearnJobDetails};
 });
 
 define('home.admin', ["home.platform"], function (deps) {
@@ -286,6 +286,7 @@ define('home.library', ["home.platform"], function (deps) {
 define('home.tasks', ["home.platform", "home.library"], function (deps) {
   var platform = deps['home.platform'];
   var context = platform.context, ui = platform.ui;
+  var jobDetails = platform.jobDetails;
   var $ = ui.dom.byId, esc = ui.dom.escapeHTML, error = ui.dom.showError;
   var taskTimer = null;
   function loadTasks() {
@@ -298,8 +299,9 @@ define('home.tasks', ["home.platform", "home.library"], function (deps) {
       $('tasks-panel').hidden = !jobs.length;
       $('task-list').replaceChildren();
       jobs.forEach(function (job) {
+        jobDetails.observe(job);
         var row = document.createElement('div'); row.className = 'learn-task';
-        var info = document.createElement('div');
+        var info = document.createElement('div'); info.className = 'learn-task-info';
         var title = document.createElement('strong'); title.textContent = platform.titles.document(job);
         var detail = document.createElement('small');
         var statuses = {queued: '排队中', running: '正在处理', succeeded: '已完成', failed: '未完成', interrupted: '等待恢复', cancelled: '已取消'};
@@ -308,6 +310,11 @@ define('home.tasks', ["home.platform", "home.library"], function (deps) {
         if (job.error) { var error = document.createElement('small'); error.textContent = job.error; info.appendChild(error); }
         row.appendChild(info);
         var actions = document.createElement('div'); actions.className = 'actions';
+        var details = document.createElement('button'); details.type = 'button'; details.className = 'btn learn-job-detail-button';
+        details.textContent = '查看详情'; details.setAttribute('aria-haspopup', 'dialog');
+        details.dataset.jobId = job.id;
+        details.addEventListener('click', function (event) { jobDetails.open(job, null, event.currentTarget); });
+        actions.appendChild(details);
         var business = (job.key || '').slice(context.userId.length + 1);
         var page = business.startsWith('quiz-map-v1-') ? 'quiz-map.html' : 'learning-path.html';
         var slug = business.replace(/^(?:learn-path|quiz-map)-v1-/, '');

@@ -5,24 +5,29 @@ const vm = require('node:vm');
 const {webcrypto} = require('node:crypto');
 
 class Element {
-  constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.dataset={}; this.attributes={}; this.listeners={}; this.hidden=false; this.textContent=''; }
+  constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.dataset={}; this.attributes={}; this.listeners={}; this.hidden=false; this.textContent=''; this.open=false; }
   appendChild(node) { if(node.parentElement)node.parentElement.children=node.parentElement.children.filter(x=>x!==node);this.children.push(node);node.parentElement=this;return node; }
+  append(...nodes) { nodes.forEach(node=>this.appendChild(node)); }
   replaceChildren(...nodes) { this.children.forEach(n=>n.parentElement=null);this.children=[];nodes.forEach(n=>this.appendChild(n)); }
   after(node) { const parent=this.parentElement;parent.appendChild(node);parent.children.splice(parent.children.indexOf(node),1);parent.children.splice(parent.children.indexOf(this)+1,0,node); }
   prepend(node) { this.appendChild(node);this.children.unshift(this.children.pop()); }
   setAttribute(k,v) { this.attributes[k]=v; }
-  addEventListener(k,fn) { this.listeners[k]=fn; }
+  addEventListener(k,fn) { (this.listeners[k] ||= []).push(fn); }
   get isConnected() { return this===this.ownerDocument.body || !!(this.parentElement&&this.parentElement.isConnected); }
-  focus() { this.ownerDocument.activeElement=this; }
-  click() { if(this.disabled)return;if(this.onclick)return this.onclick({currentTarget:this});if(this.listeners.click)return this.listeners.click({currentTarget:this,stopPropagation(){}}); }
-  querySelector(selector) { if(selector[0]==='.')return all(this).find(n=>(n.className||'').split(' ').includes(selector.slice(1)));return null; }
+  focus(options) { this.ownerDocument.activeElement=this;this.focusOptions=options; }
+  showModal() { this.open=true; }
+  close() { if(!this.open)return;this.open=false;this.dispatch('close'); }
+  dispatch(k,event={}) { (this.listeners[k]||[]).forEach(fn=>fn({currentTarget:this,target:this,stopPropagation(){},preventDefault(){},...event})); }
+  click() { if(this.disabled)return;const event={currentTarget:this,target:this,stopPropagation(){},preventDefault(){}};if(this.onclick)this.onclick(event);this.dispatch('click',event); }
+  querySelectorAll(selector) { if(selector[0]==='.')return all(this).filter(n=>(n.className||'').split(' ').includes(selector.slice(1)));return all(this).filter(n=>n.tagName===selector.toLowerCase()); }
+  querySelector(selector) { return this.querySelectorAll(selector)[0]||null; }
 }
 function all(node) { return [node,...node.children.flatMap(all)]; }
 const flush=async()=>{for(let i=0;i<24;i++)await Promise.resolve();};
 function deferred(){let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});return {promise,resolve,reject};}
 function detail(id,status='pending'){return {study_notes:id+' 正文',quiz:{round_id:'quiz-'+id,questions:[{answer:'saved'}]},unknown:'preserved',manim_review:{status,retryable:true}};}
 function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=false,nodeCount=3}={}) {
-  const doc={createElement(tag){return new Element(tag,doc);},addEventListener(){},getElementById(id){return all(doc.body).find(n=>n.id===id)||null;},querySelector(selector){return doc.body.querySelector(selector);}};
+  const doc={createElement(tag){return new Element(tag,doc);},addEventListener(){},getElementById(id){return all(doc.body).find(n=>n.id===id)||null;},querySelector(selector){return doc.body.querySelector(selector);},querySelectorAll(selector){return doc.body.querySelectorAll(selector);}};
   doc.body=doc.createElement('body');const anchor=doc.createElement('div');anchor.id='resume-bar';doc.body.appendChild(anchor);const gen=doc.createElement('button');gen.id='gen-all-btn';doc.body.appendChild(gen);
   const model={state:{stage:'learning',plan:{nodes:Array.from({length:nodeCount},(_,i)=>'n'+(i+1)).map(id=>({id,title:id+' 课程',objectives:[]}))},spec:{},nodeDetail:{},pending:null},session:{nodeMaterialStatus:{},expandedId:'n1'}};
   const calls=[],jobs=new Map(),storage=new Map(),observed=[],opened=[],renders=[];let serial=0,clock=Date.now(),timer=0,currentKey='u0/material';
@@ -74,14 +79,18 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
     const h=harness({failNodes:['n1','n2']});await h.generation.genAllStart(['n1','n2','n3']);
     assert.equal(h.notices().length,1,'multiple terminal failures produce one top summary');assert.match(h.notices()[0].children[0].textContent,/已完成 1\/3，失败 2/);
     assert.equal(h.model.state.nodeDetail.n3.manim_review.status,'not_needed');assert.deepEqual(Array.from(h.model.state.pending.remaining),['n1','n2']);
-    const panel=all(h.doc.body).find(n=>n.tagName==='details');assert.equal(panel.children[1].children.length,4,'actual material and animation receipts stay accessible');
-    const trigger=panel.children[1].children[0].children[1];trigger.click();assert.equal(h.opened[0].job.id,'j1');
-    h.notices()[0].children.at(-1).click();assert.equal(panel.open,true);assert.strictEqual(h.doc.activeElement,panel.children[0]);assert.equal(h.observed.some(j=>j.status==='failed'),true);
+    const panel=all(h.doc.body).find(n=>n.tagName==='dialog');const list=panel.querySelector('ol');assert.equal(list.children.length,4,'actual material and animation receipts stay accessible');
+    const trigger=list.children[0].children[1].children[0];trigger.click();assert.equal(h.opened[0].job.id,'j1');
+    h.notices()[0].children.at(-1).click();assert.equal(panel.open,true);assert.strictEqual(h.doc.activeElement,panel.querySelector('.learn-task-dialog-body'));assert.equal(h.observed.some(j=>j.status==='failed'),true);
+    panel.children[0].children[1].click();assert.equal(panel.open,false,'close button closes the batch dialog');
+    const currentTrigger=h.notices()[0].querySelector('.learn-job-detail-button');assert.strictEqual(h.doc.activeElement,currentTrigger,'closing restores focus to the current trigger after status redraw');assert.equal(currentTrigger.focusOptions.preventScroll,true);
   }
   {
     const h=harness(),gate=deferred();h.env.blockRead=gate;const work=h.generation.genAllStart(['n1','n2']);await flush();
-    const panel=all(h.doc.body).find(n=>n.tagName==='details'),row=panel.children[1].children[0],button=row.children[1];panel.open=true;button.focus();gate.resolve();await work;
-    assert.strictEqual(panel.children[1].children[0],row,'polls preserve the existing task row');assert.strictEqual(h.doc.activeElement,button,'polls keep task-list focus');assert.equal(panel.open,true);
+    const panel=all(h.doc.body).find(n=>n.tagName==='dialog'),list=panel.querySelector('ol'),row=list.children[0],button=row.children[1].children[0];
+    h.notices()[0].children.at(-1).click();button.focus();gate.resolve();await work;
+    assert.strictEqual(list.children[0],row,'polls preserve the existing task row');assert.strictEqual(h.doc.activeElement,button,'polls keep task-list focus');assert.equal(panel.open,true);
+    panel.children[0].children[1].click();assert.equal(panel.open,false);assert.strictEqual(h.doc.activeElement,h.notices()[0].querySelector('.learn-job-detail-button'),'closing after a status redraw focuses the current trigger');
     assert.match(h.notices()[0].children[0].textContent,/已完成 2\/2，失败 0/);
   }
   {
