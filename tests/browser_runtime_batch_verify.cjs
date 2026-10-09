@@ -1,5 +1,6 @@
-/* Read-only browser verification of one already completed real batch.
- * Real pages, jobs and media are used. Unexpected writes are aborted, never mocked.
+/* Browser verification that one completed real batch retains its learning data.
+ * The page's unchanged bootstrap snapshot reaches the real API. Other writes
+ * are aborted, never mocked. Reports include every permitted snapshot write.
  */
 'use strict';
 const assert = require('node:assert/strict');
@@ -41,15 +42,22 @@ assert.deepEqual([...sourceURL.searchParams.keys()], ['t']);
 fs.mkdirSync(output, {recursive:true, mode:0o700});
 const viewport = phone ? {width:390, height:844} : {width:1440, height:1000};
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const snapshotFields = ['stage', 'title', 'topic', 'history', 'materials', 'spec', 'queries',
+  'sources', 'brief', 'research_version', 'plan', 'nodeDetail', 'nodeState', 'pending'].sort();
 const report = {environment, revision, engine, phone, viewport, fixture_id:fixture,
-  mode:'deployed-read-only-existing-real-batch', cases:[], status:'running',
-  generation_posts:0, retry_posts:0, state_writes:0, other_writes:0, browser_errors:[]};
+  mode:'deployed-existing-real-batch-preservation', cases:[], status:'running',
+  generation_posts:0, retry_posts:0, state_writes:0, unchanged_snapshot_writes:0,
+  unexpected_state_writes:0, other_writes:0, browser_errors:[]};
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2), {mode:0o600});
 let phase = 'setup', browser;
+const stateRequests = new Set();
 function passed(name) {report.cases.push(name); save();}
-function noWrites() {
-  assert.equal(report.generation_posts + report.retry_posts + report.state_writes + report.other_writes, 0,
-    'read-only verification attempted a write');
+async function noUnexpectedWrites() {
+  while (stateRequests.size) await Promise.all([...stateRequests]);
+  assert.equal(report.generation_posts + report.retry_posts + report.unexpected_state_writes + report.other_writes, 0,
+    'existing material verification attempted an unexpected write');
+  assert.equal(report.state_writes, report.unchanged_snapshot_writes);
+  assert(report.unchanged_snapshot_writes <= 2, 'at most one unchanged snapshot per page load');
 }
 async function main() {
   browser = await playwright[engine].launch({headless:true,
@@ -62,9 +70,12 @@ async function main() {
     assert.equal(response.status(), 200, 'real read endpoint failed');
     return response.json();
   }
+  let documentMetadata;
   async function fixtureMaterial() {
     const state = await get('/state/all');
     assert.equal(typeof state.entries?.[key], 'string', 'source fixture missing');
+    documentMetadata = {revision:state.revisions?.[key] ?? null,
+      navigation_revision:state.revisions?.[uid + '/learn-path-v1-last'] ?? null};
     return JSON.parse(state.entries[key]);
   }
   phase = 'fixed-account-and-revisions';
@@ -83,6 +94,7 @@ async function main() {
 
   phase = 'completed-fixture-preflight';
   const material = await fixtureMaterial();
+  report.document_metadata_before = documentMetadata;
   assert.equal(material.pending, null, 'batch must have no pending work');
   assert.equal(material.plan?.nodes?.length, 5);
   const nodes = material.plan.nodes;
@@ -119,13 +131,56 @@ async function main() {
   report.node_details_sha256 = hash(material.nodeDetail);
   passed('five-complete-lessons-with-issued-rounds-and-unchanged-details-hash');
 
+  let pageLoad = 0;
+  const snapshotWritesByLoad = new Map();
   await context.route('**/*', async route => {
     const request = route.request();
     if (['GET', 'HEAD', 'OPTIONS'].includes(request.method())) return route.continue();
-    const pathname = new URL(request.url()).pathname;
+    const url = new URL(request.url()), pathname = url.pathname;
     if (pathname === '/jobs') report.generation_posts++;
     else if (/^\/jobs\/[^/]+\/retry$/.test(pathname)) report.retry_posts++;
-    else if (pathname.startsWith('/state/')) report.state_writes++;
+    else if (pathname.startsWith('/state/')) {
+      let settled;
+      const completed = new Promise(resolve => { settled = resolve; });
+      stateRequests.add(completed);
+      report.state_writes++;
+      const load = pageLoad;
+      try {
+        assert.equal(url.origin, api);
+        assert.equal(pathname, '/state/put');
+        assert.equal(request.method(), 'POST');
+        assert.equal(snapshotWritesByLoad.get(load) || 0, 0, 'one snapshot per load');
+        assert(load === 1 || load === 2);
+        snapshotWritesByLoad.set(load, 1);
+        const body = request.postDataJSON();
+        assert.deepEqual(Object.keys(body), ['entries']);
+        assert.deepEqual(Object.keys(body.entries).sort(), [key, uid + '/learn-path-v1-last'].sort());
+        assert.equal(body.entries[uid + '/learn-path-v1-last'], fixture);
+        assert.equal(typeof body.entries[key], 'string');
+        const snapshot = JSON.parse(body.entries[key]);
+        assert.deepEqual(Object.keys(snapshot).sort(), snapshotFields);
+        const current = await fixtureMaterial();
+        assert.equal(snapshot.pending, null);
+        assert.equal(current.pending, null);
+        assert.equal(hash(snapshot.nodeDetail), existing.node_details_sha256);
+        for (const field of snapshotFields) assert.deepEqual(snapshot[field], current[field], 'snapshot field unchanged: ' + field);
+        assert.deepEqual(current, material, 'all server learning fields and unknown fields unchanged');
+        report.unchanged_snapshot_writes++; save();
+        await route.continue();
+        const response = await request.response();
+        assert(response, 'unchanged snapshot must receive the real API response');
+        assert.equal(response.status(), 200);
+        assert.equal(await response.finished(), null, 'unchanged snapshot response must finish');
+      } catch (_) {
+        report.unexpected_state_writes++;
+        await route.abort('aborted').catch(() => {});
+      } finally {
+        save();
+        stateRequests.delete(completed);
+        settled();
+      }
+      return;
+    }
     else report.other_writes++;
     save();
     return route.abort('aborted');
@@ -133,6 +188,7 @@ async function main() {
   const page = await context.newPage();
   page.on('pageerror', error => report.browser_errors.push(error.name));
   phase = 'existing-material-browser-render';
+  pageLoad++;
   await page.goto(sourceURL.href);
   await page.locator('#node-' + nodes[0].id).waitFor();
   assert.equal(await page.evaluate(() => window.LearnUser.userId), uid);
@@ -149,7 +205,7 @@ async function main() {
     if (material.nodeDetail[node.id].manim_review.status === 'passed')
       await notes.locator('figure[data-manim="ready"]').waitFor({timeout:45000});
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'page fits viewport');
-    noWrites();
+    await noUnexpectedWrites();
   }
   await page.screenshot({path:path.join(output, 'existing-material.png')});
   passed('five-existing-lessons-render-without-submission-and-fit-viewport');
@@ -195,20 +251,28 @@ async function main() {
   assert(Math.abs(await page.evaluate(() => scrollY) - scroll) <= 2, 'Escape preserves scroll');
   passed('actual-completed-job-hidden-model-dialog-scroll-close-Escape-and-focus');
 
-  phase = 'read-only-postflight';
+  phase = 'preservation-postflight';
+  pageLoad++;
   await page.reload();
   await page.locator('#node-' + nodes[0].id).waitFor();
   await page.waitForTimeout(500);
-  noWrites();
+  await page.waitForFunction(() => window.LearnSaves && !window.LearnSaves.pending(), null, {timeout:10000});
+  await page.evaluate(async () => { await window.LearnSaves.drain(); window.LearnSaves.assertReady(); });
+  await noUnexpectedWrites();
   const after = await fixtureMaterial();
+  report.document_metadata_after = documentMetadata;
+  report.document_revision_changed = report.document_metadata_before.revision !== documentMetadata.revision;
   assert.equal(after.pending, null);
   assert.equal(hash(after.nodeDetail), existing.node_details_sha256, 'viewing must not change lessons');
+  assert.deepEqual(after, material, 'all original learning semantics and unknown fields preserved');
   assert.deepEqual((await get('/jobs?key=' + encodeURIComponent(key))).jobs.map(job => job.id).sort(), jobs.map(job => job.id).sort());
   assert.deepEqual(report.browser_errors, []);
-  passed('reload-keeps-real-job-receipts-and-original-material-with-zero-writes');
+  passed('reload-keeps-real-job-receipts-and-original-material-with-only-unchanged-snapshots');
   report.status = 'passed'; save();
   console.log(JSON.stringify({status:'passed', environment, engine, phone, cases:report.cases.length,
-    generation_posts:0, retry_posts:0, state_writes:0, report:path.join(output, 'report.json')}));
+    generation_posts:report.generation_posts, retry_posts:report.retry_posts, state_writes:report.state_writes,
+    unchanged_snapshot_writes:report.unchanged_snapshot_writes, unexpected_state_writes:report.unexpected_state_writes,
+    report:path.join(output, 'report.json')}));
 }
 main().catch(error => {
   report.status = 'failed'; report.failure_phase = phase; report.exception = error.name; save();
