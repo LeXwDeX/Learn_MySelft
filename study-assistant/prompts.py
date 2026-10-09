@@ -336,6 +336,10 @@ def _path_system(kind):
         prompt += MARKDOWN_TEACHING
     if kind == "node":
         prompt += MANIM_TEACHING
+        prompt += r"""
+JSON 输出检查：questions 是数组，最后一道题的对象结束后，必须先用 ] 结束 questions 数组，再用 } 结束 quiz 对象，最后用 } 结束根对象。不能用 } 代替数组的 ]。不要省略任何结束括号。
+JSON 字符串必须正确转义。正文中的换行写成 \n，双引号写成 \"，反斜杠写成 \\。LaTeX 命令的反斜杠也必须按 JSON 转义。例如，正文公式 $\frac{1}{2}$ 在 JSON 中写成 {"study_notes":"$\\frac{1}{2}$"}。先检查 JSON 能完整解析，再输出；不得输出 JSON 以外的内容。
+"""
     if kind in ("node", "requiz", "quizmap"):
         prompt += """
 评分契约：每道简答题必须附 rubric 数组，每项为 {"description":"一个可独立检查的具体评分要求","points":整数分值}，1~8项，总和等于本题 points；参考答案必须完整覆盖全部评分点。

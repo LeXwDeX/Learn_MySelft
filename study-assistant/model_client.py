@@ -37,10 +37,12 @@ class ModelClient:
         except Exception:
             pass
 
-    def json(self, messages, max_tokens=None, temperature=0.7, timeout=None, *, reasoning_effort=None):
+    def json(self, messages, max_tokens=None, temperature=0.7, timeout=None, *, reasoning_effort=None, response_format=None):
         if reasoning_effort is not None and (not isinstance(reasoning_effort, str)
                 or reasoning_effort not in ('none', 'low', 'medium', 'high', 'max')):
             raise ValueError('invalid request reasoning effort')
+        if response_format is not None and response_format != 'json_object':
+            raise ValueError('invalid request response format')
         max_tokens = (
             self.settings.max_output_tokens if max_tokens is None else max_tokens
         )
@@ -54,6 +56,8 @@ class ModelClient:
         body.update(self.think)
         if reasoning_effort is not None:
             body['reasoning_effort'] = reasoning_effort
+        if response_format is not None:
+            body['response_format'] = {'type': response_format}
         payload = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             self.settings.llm_base.rstrip("/") + "/chat/completions",

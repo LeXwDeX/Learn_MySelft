@@ -35,7 +35,7 @@ const root=path.resolve(__dirname,'..');fs.mkdirSync(output,{recursive:true});
         if(job.operation==='/path/node/scene'&&job.status==='failed')f.saved.nodeDetail[job.node_id].manim_review={status:'failed',retryable:true,failure_code:'render_unavailable'};
         return Response.json({job});
       }};
-      window.model={state:{stage:'learning',spec:{},nodeDetail:{},plan:{nodes:['n1','n2','n3'].map(id=>({id,title:id+' 单元',objectives:[]}))}},session:{nodeMaterialStatus:{},expandedId:'n3'}};
+      window.model={state:{stage:'learning',spec:{},nodeDetail:{},pending:null,plan:{nodes:['n1','n2','n3'].map(id=>({id,title:id+' 单元',objectives:[]}))}},session:{nodeMaterialStatus:{},expandedId:'n3'}};
       window.define=(name,names,factory)=>{window.generation=factory({
         'path.model':window.model,'path.format':{$:id=>document.getElementById(id),storeKey:()=> 'fixture/material'},
         'path.persistence':{save(){},post:(operation,body,options)=>window.LearnJobs.run(operation,body,options)},
@@ -64,6 +64,7 @@ const root=path.resolve(__dirname,'..');fs.mkdirSync(output,{recursive:true});
     assert.equal(await page.locator('.generation-task-list li .btn').last().evaluate(node=>node===document.activeElement),true,'details returns focus to the list');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.generation-task-list').evaluate(node=>node.open),false,'Escape closes the list');
+    await page.waitForFunction(()=>{const button=document.querySelector('.learn-status .learn-job-detail-button');return !!button&&button===document.activeElement;},null,{timeout:2000});
     assert.equal(await page.locator('.learn-status .learn-job-detail-button').evaluate(node=>node===document.activeElement),true,'list returns focus to the current summary action');
     await page.evaluate(()=>window.generation.genAllStart(['n3'],{recovering:true}));
     assert.equal(await page.evaluate(()=>window.fixture.calls.filter(c=>c.operation==='/path/node').length),posts,'recovery never regenerates material');
@@ -84,13 +85,30 @@ const root=path.resolve(__dirname,'..');fs.mkdirSync(output,{recursive:true});
     assert.equal(await page.evaluate(()=>window.model.state.nodeDetail.n3.manim_review.status),'not_needed','thin successful scene receipt restores full result');
     assert.equal(await page.evaluate(()=>window.model.state.nodeDetail.n3.quiz.round_id),'original-round');
     assert.equal(await page.evaluate(()=>window.fixture.calls.filter(c=>c.method==='POST').length),recoveryWrites,'successful thin-list recovery uses only GET');
+    const previousScenePosts=await page.evaluate(()=>window.fixture.calls.filter(c=>c.operation==='/path/node/scene'&&c.method==='POST').length);
+    const previousRetries=await page.evaluate(()=>window.fixture.calls.filter(c=>c.url.endsWith('/retry')).length);
+    await page.evaluate(async()=>{
+      const f=window.fixture,id='n2',saved={study_notes:'n2 已保存正文。',quiz:{round_id:'preserved-quiz'},manim_review:{status:'pending',retryable:true}};
+      f.saved.nodeDetail[id]=saved;window.model.state.nodeDetail[id]=saved;
+      window.model.state.pending={kind:'nodes',requestId:'persisted-scene-recovery',remaining:[id]};
+      for(const [jobId,job] of f.jobs)if(job.node_id===id&&job.operation==='/path/node/scene')f.jobs.delete(jobId);
+      await window.generation.genAllStart([id],{recovering:true});
+    });
+    assert.equal(await page.evaluate(()=>window.fixture.calls.filter(c=>c.operation==='/path/node').length),posts,'missing-animation recovery does not regenerate the saved body');
+    assert.equal(await page.evaluate(()=>window.fixture.calls.filter(c=>c.operation==='/path/node/scene'&&c.method==='POST').length),previousScenePosts+1,'missing animation with a persisted batch ID is submitted once');
+    assert.equal(await page.evaluate(()=>window.model.state.nodeDetail.n2.manim_review.status),'failed','a terminal animation failure remains visible');
+    assert.equal(await page.evaluate(()=>window.fixture.calls.filter(c=>c.url.endsWith('/retry')).length),previousRetries,'recovery does not spend a failed animation retry');
+    assert.equal(await page.evaluate(()=>[...window.fixture.jobs.values()].filter(j=>j.node_id==='n2'&&j.operation==='/path/node/scene').length),1,'the recovered animation has one task receipt');
+    const recoveredSceneRow=page.locator('.generation-task-list li').filter({hasText:'n2 单元 · 教学动画'});
+    assert.equal(await recoveredSceneRow.locator('.learn-job-detail-button').evaluate(button=>!button.hidden),true,'the recovered task exposes its details');
+    assert.equal(await page.evaluate(()=>window.model.state.nodeDetail.n2.quiz.round_id),'preserved-quiz');
     const writes=await page.evaluate(()=>window.fixture.calls.filter(c=>c.method==='POST').length);
     await page.evaluate(async()=>{window.LearnUser.readOnly=true;await window.generation.genAllStart(['n3']);await window.generation.requestNodeDetail('n3',true).catch(()=>{});});
     assert.equal(await page.evaluate(()=>window.fixture.calls.filter(c=>c.method==='POST').length),writes,'read-only uses no write request');
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true,'task list fits the viewport');
     assert.deepEqual(errors,[]);
     await page.screenshot({path:path.join(output,browserName+(mobile?'-mobile':'-desktop')+'.png'),fullPage:true});
-    fs.writeFileSync(path.join(output,browserName+(mobile?'-mobile':'-desktop')+'.json'),JSON.stringify({browserName,mobile,cases:['one-summary','stable-open-list-and-focus','actual-logs','material-survives-animation-error','GET-only-recovery','thin-successful-material-and-scene-recovery','read-only-zero-writes','viewport'],errors},null,2));
+    fs.writeFileSync(path.join(output,browserName+(mobile?'-mobile':'-desktop')+'.json'),JSON.stringify({browserName,mobile,cases:['one-summary','stable-open-list-and-focus','actual-logs','material-survives-animation-error','GET-only-recovery','thin-successful-material-and-scene-recovery','missing-animation-receipt-resubmission','read-only-zero-writes','viewport'],errors},null,2));
     console.log('PASS '+browserName+' '+(mobile?'mobile':'desktop')+' generation recovery DOM');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

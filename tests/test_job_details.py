@@ -226,10 +226,12 @@ class JobDetailsTests(unittest.TestCase):
         messages = [{'role': 'user', 'content': 'test'}]
         raw = b'{"choices":[{"message":{"content":"result"}}]}'
         with patch.object(model_transport, 'post', return_value=raw) as transport:
-            client.json(messages, max_tokens=16384, reasoning_effort='none')
+            client.json(messages, max_tokens=16384, reasoning_effort='none', response_format='json_object')
             client.json(messages)
         override, default = [json.loads(call.args[1]) for call in transport.call_args_list]
         self.assertEqual((override['reasoning_effort'], override['max_tokens']), ('none', 16384))
+        self.assertEqual(override['response_format'], {'type': 'json_object'})
+        self.assertNotIn('response_format', default)
         self.assertEqual((default['reasoning_effort'], default['max_tokens']), ('max', 393216))
         self.assertEqual(client.think, {'reasoning_effort': 'max'})
         self.assertEqual(client.reasoning_effort, 'max')
@@ -243,6 +245,16 @@ class JobDetailsTests(unittest.TestCase):
             for value in ('', 'ultra', True, 1, [], {}):
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     client.json([], reasoning_effort=value)
+            transport.assert_not_called()
+
+    def test_invalid_response_format_never_reaches_transport(self):
+        settings = type('Settings', (), {'llm_model': 'test', 'llm_base': 'http://127.0.0.1',
+                                        'max_output_tokens': 100, 'upstream_timeout': 1})()
+        client = ModelClient(settings)
+        with patch.object(model_transport, 'post') as transport:
+            for value in ('', 'json_schema', True, 1, [], {'type': 'json_object'}):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    client.json([], response_format=value)
             transport.assert_not_called()
 
     def test_actual_model_messages_and_final_reply_are_redacted_before_save(self):

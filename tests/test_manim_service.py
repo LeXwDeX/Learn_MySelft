@@ -131,7 +131,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertTrue(result['asset_id'])
         self.assertEqual(renderer.call_args.args[0], TEACHING_REFERENCE_CODE)
         self.assertEqual(model.call_count, 2)
-        self.assertEqual(model.call_args_list[1].kwargs, {'temperature': 0})
+        self.assertEqual(model.call_args_list[1].kwargs, {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'})
         context = json.loads(model.call_args_list[1].args[0][1]['content'][0]['text'])
         self.assertEqual(context['teaching_plan'], TEACHING_REFERENCE_ENVELOPE['teaching_plan'])
         self.assertEqual(len(context['manifest']['steps']), 2)
@@ -155,7 +155,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(model.call_count, 4)
         self.assertFalse(self.service.root.exists())
 
-    def test_generation_and_repair_use_stage_budget_but_review_keeps_defaults(self):
+    def test_generation_repair_and_review_use_separate_request_budgets(self):
         from unittest.mock import patch
         good = self.service.model.json([{}, {'content': 'generation'}])
         rejected = '{"ok":false,"issues":["对象重叠"]}'
@@ -165,9 +165,9 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(model.call_count, 4)
         for index in (0, 2):
             self.assertEqual(model.call_args_list[index].kwargs,
-                             {'temperature': 0.3, 'max_tokens': 16384, 'reasoning_effort': 'none'})
+                             {'temperature': 0.3, 'max_tokens': 16384, 'reasoning_effort': 'none', 'response_format': 'json_object'})
         for index in (1, 3):
-            self.assertEqual(model.call_args_list[index].kwargs, {'temperature': 0})
+            self.assertEqual(model.call_args_list[index].kwargs, {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'})
 
     def test_application_injects_admin_cap_without_changing_model_defaults(self):
         from application import create_application
@@ -184,7 +184,7 @@ class ManimServiceTests(unittest.TestCase):
         with patch.object(self.service.model, 'json', wraps=self.service.model.json) as model:
             self.generate()
         self.assertEqual(model.call_args_list[0].kwargs['max_tokens'], 4096)
-        self.assertEqual(model.call_args_list[1].kwargs, {'temperature': 0})
+        self.assertEqual(model.call_args_list[1].kwargs, {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'})
 
     def test_candidate_can_publish_before_notes_and_access_checks_live_owner(self):
         spec=self.generate()
@@ -464,7 +464,7 @@ class ManimServiceTests(unittest.TestCase):
             self.assertEqual(len(generation), 3)
             self.assertEqual(len(review), 2)
             self.assertTrue(all(call.kwargs['reasoning_effort'] == 'none' for call in generation))
-            self.assertTrue(all(call.kwargs == {'temperature': 0} for call in review))
+            self.assertTrue(all(call.kwargs == {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'} for call in review))
             records = [json.loads(item.getMessage().split(' ', 1)[1]) for item in logs.records]
             records = [item for item in records if item['stage'] != 'publish']
             self.assertEqual([item['attempt'] for item in records], [1, 2, 3])
@@ -547,7 +547,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(render.call_count, 2)
         self.assertEqual(model.call_count, 3)
         self.assertIsInstance(model.call_args_list[2].args[0][1]['content'], list)
-        self.assertEqual(model.call_args_list[2].kwargs, {'temperature': 0})
+        self.assertEqual(model.call_args_list[2].kwargs, {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'})
 
     def test_new_invalid_draft_never_reuses_previous_valid_teaching_plan(self):
         from unittest.mock import patch
@@ -631,13 +631,13 @@ class RelationPlannerTests(unittest.TestCase):
             self.generate()
         self.assertEqual(model.call_count,3)
         first=model.call_args_list[0]
-        self.assertEqual(first.kwargs,dict(temperature=0,max_tokens=512,reasoning_effort='none'))
+        self.assertEqual(first.kwargs,dict(temperature=0,max_tokens=512,reasoning_effort='none',response_format='json_object'))
         payload=json.loads(first.args[0][1]['content'])
         self.assertEqual(payload['node'],self.repo.doc['plan']['nodes'][0])
         self.assertEqual(payload['study_notes'],'候选新正文')
         code_payload=json.loads(model.call_args_list[1].args[0][1]['content'])
         self.assertEqual(code_payload['focus'],self.relation()['objective'])
-        self.assertEqual(model.call_args_list[2].kwargs,{'temperature':0})
+        self.assertEqual(model.call_args_list[2].kwargs,dict(temperature=0,max_tokens=512,reasoning_effort='low',response_format='json_object'))
 
     def test_real_model_client_transport_planning_generation_review_payloads(self):
         from unittest.mock import patch
@@ -653,7 +653,8 @@ class RelationPlannerTests(unittest.TestCase):
         with patch.object(model_transport,'post',side_effect=responses) as transport:
             self.generate()
         bodies=[json.loads(call.args[1]) for call in transport.call_args_list]
-        self.assertEqual([(b['max_tokens'],b['reasoning_effort']) for b in bodies],[(800,'none'),(800,'none'),(800,'max')])
+        self.assertEqual([(b['max_tokens'],b['reasoning_effort']) for b in bodies],[(800,'none'),(800,'none'),(800,'low')])
+        self.assertEqual([b['response_format'] for b in bodies],[{'type':'json_object'}]*3)
         planning=json.loads(bodies[0]['messages'][1]['content'])
         native=json.loads(bodies[1]['messages'][1]['content'])
         self.assertEqual(planning['node'],self.repo.doc['plan']['nodes'][0])
