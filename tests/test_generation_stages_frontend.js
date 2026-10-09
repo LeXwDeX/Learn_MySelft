@@ -26,11 +26,12 @@ function all(node) { return [node,...node.children.flatMap(all)]; }
 const flush=async()=>{for(let i=0;i<24;i++)await Promise.resolve();};
 function deferred(){let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});return {promise,resolve,reject};}
 function detail(id,status='pending'){return {study_notes:id+' 正文',quiz:{round_id:'quiz-'+id,questions:[{answer:'saved'}]},unknown:'preserved',manim_review:{status,retryable:true}};}
-function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=false,nodeCount=3}={}) {
+function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=false,nodeCount=3,server=null}={}) {
+  const backend=server||{jobs:new Map(),receipts:new Map(),serial:0,dropNextAck:0};
   const doc={createElement(tag){return new Element(tag,doc);},addEventListener(){},getElementById(id){return all(doc.body).find(n=>n.id===id)||null;},querySelector(selector){return doc.body.querySelector(selector);},querySelectorAll(selector){return doc.body.querySelectorAll(selector);}};
   doc.body=doc.createElement('body');const anchor=doc.createElement('div');anchor.id='resume-bar';doc.body.appendChild(anchor);const gen=doc.createElement('button');gen.id='gen-all-btn';doc.body.appendChild(gen);
   const model={state:{stage:'learning',plan:{nodes:Array.from({length:nodeCount},(_,i)=>'n'+(i+1)).map(id=>({id,title:id+' 课程',objectives:[]}))},spec:{},nodeDetail:{},pending:null},session:{nodeMaterialStatus:{},expandedId:'n1'}};
-  const calls=[],jobs=new Map(),storage=new Map(),observed=[],opened=[],renders=[];let serial=0,clock=Date.now(),timer=0,currentKey='u0/material';
+  const calls=[],jobs=backend.jobs,storage=new Map(),observed=[],opened=[],renders=[];let clock=Date.now(),timer=0,currentKey='u0/material';
   const env={document:doc,console,Response,AbortController,Uint8Array,crypto:webcrypto,location:{reload(){}},
     Date:class extends Date {static now(){return clock;}},setTimeout(fn,ms){const id=++timer;if(ms===1500||ms===3500){if(env.expireWatch)clock+=3600001;queueMicrotask(fn);}return id;},clearTimeout(){},
     localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
@@ -45,11 +46,20 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
     }
     if(url.includes('/jobs?'))return Response.json({jobs:[...jobs.values()].map(j=>{const thin={...j,status:j.finalStatus};delete thin.result;return thin;})});
     if(url.endsWith('/jobs')) {
-      const body=JSON.parse(opts.body),id='j'+(++serial),nid=body.body.node.id,visual=body.operation==='/path/node/scene';
+      const body=JSON.parse(opts.body),signature=JSON.stringify([body.operation,body.body]);
+      if(body.operation==='/path/node/scene'&&env.failNextSceneNetwork){const name=env.failNextSceneNetwork;env.failNextSceneNetwork=false;const error=new Error(name==='AbortError'?'The operation was aborted':'Failed to fetch');error.name=name;throw error;}
+      const prior=body.request_id&&backend.receipts.get(body.request_id);
+      if(prior) {
+        if(prior.signature!==signature)return Response.json({error:'request id conflicts with submitted content',error_category:'request_id_conflict'},{status:409});
+        return Response.json({job:prior.job});
+      }
+      const id='j'+(++backend.serial),nid=body.body.node.id,visual=body.operation==='/path/node/scene';
       const failed=(visual?failScenes:failNodes).includes(nid);
       const result=visual?{node_id:nid,source_notes:model.state.nodeDetail[nid].study_notes,study_notes:model.state.nodeDetail[nid].study_notes,needed:false,manim_review:{status:'not_needed'}}:detail(nid);
-      const job={id,key:currentKey,node_id:nid,operation:body.operation,status:'running',finalStatus:failed?'failed':'succeeded',result,error:failed?'真实失败 '+nid:null,created_ms:serial};
-      jobs.set(id,job);return Response.json({job});
+      const job={id,key:currentKey,node_id:nid,operation:body.operation,status:'running',finalStatus:failed?'failed':'succeeded',result,error:failed?'真实失败 '+nid:null,created_ms:backend.serial};
+      jobs.set(id,job);if(body.request_id)backend.receipts.set(body.request_id,{job,signature});
+      if(backend.dropNextAck>0){backend.dropNextAck--;throw new TypeError('connection lost after server accepted the request');}
+      return Response.json({job});
     }
     const id=url.split('/').pop()==='retry'?url.split('/').at(-2):url.split('/').pop(),job=jobs.get(id);assert(job,'unknown job '+url);
     if(url.endsWith('/retry')) {job.finalStatus='succeeded';job.error=null;job.status='running';return Response.json({job});}
@@ -106,8 +116,71 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
   {
     const h=harness({failScenes:['n1']});await h.generation.genAllStart(['n1']);const before=h.calls.length;
     await h.generation.genAllStart(['n1'],{recovering:true});
-    assert.equal(h.calls.slice(before).some(c=>c.method==='POST'),false,'refresh recovery neither submits nor retries');assert.equal(h.model.state.nodeDetail.n1.manim_review.status,'failed');assert.match(h.notices()[0].children[0].textContent,/失败 1/);
-    const missing=harness();await missing.generation.genAllStart(['n1'],{recovering:true});assert.equal(missing.calls.some(c=>c.method==='POST'),false,'missing receipt waits for an explicit action');assert.match(missing.notices()[0].children[0].textContent,/失败 0，待确认 1/);
+    assert.equal(h.calls.slice(before).some(c=>c.method==='POST'),false,'refresh recovery only watches an existing failed scene task');assert.equal(h.calls.filter(c=>c.url.endsWith('/retry')).length,0,'recovery never spends a failed scene retry');assert.equal(h.model.state.nodeDetail.n1.manim_review.status,'failed');assert.match(h.notices()[0].children[0].textContent,/失败 1/);
+    const missing=harness();missing.model.state.nodeDetail.n1=detail('n1');await missing.generation.genAllStart(['n1'],{recovering:true});assert.equal(missing.calls.some(c=>c.method==='POST'),false,'a new ID created during recovery is not proof that the scene submission was persisted');assert.match(missing.notices()[0].children[0].textContent,/失败 0，待确认 1/);assert.equal(missing.model.state.pending.requestId,undefined,'recovery without an old batch ID does not persist a fresh random ID');
+    const secondRefresh=harness();secondRefresh.model.state.nodeDetail.n1=detail('n1');secondRefresh.model.state.pending=structuredClone(missing.model.state.pending);await secondRefresh.generation.genAllStart(['n1'],{recovering:true});assert.equal(secondRefresh.calls.some(c=>c.method==='POST'),false,'a second reload still cannot treat an ID minted by the first recovery as authorization');assert.equal(secondRefresh.model.state.pending.requestId,undefined);
+    const noBody=harness();noBody.model.state.pending={kind:'nodes',requestId:'persisted-no-body-id',remaining:['n1']};await noBody.generation.genAllStart(['n1'],{recovering:true});assert.equal(noBody.calls.some(c=>c.method==='POST'),false,'missing body receipts are never submitted during recovery');
+    const unreadable=harness();unreadable.model.state.nodeDetail.n1=detail('n1');unreadable.model.state.pending={kind:'nodes',requestId:'persisted-query-failure-id',remaining:['n1']};
+    const fetch=unreadable.env.LearnUser.fetch;unreadable.env.LearnUser.fetch=async(url,options)=>url.includes('/jobs?')?Response.json({error:'offline'},{status:503}):fetch(url,options);
+    await unreadable.generation.genAllStart(['n1'],{recovering:true});assert.equal(unreadable.calls.some(c=>c.method==='POST'),false,'a failed receipt query never triggers a new submission');
+    const expired=harness();expired.model.state.nodeDetail.n1=detail('n1','failed');expired.model.state.pending={kind:'nodes',requestId:'persisted-failed-scene-id',remaining:['n1']};await expired.generation.genAllStart(['n1'],{recovering:true});assert.equal(expired.calls.some(c=>c.method==='POST'),false,'a failed scene without a visible list receipt is not resubmitted');assert.match(expired.notices()[0].children[0].textContent,/失败 1/);
+  }
+  for(const failureName of ['TypeError','AbortError']) {
+    const first=harness();first.env.failNextSceneNetwork=failureName;await first.generation.genAllStart(['n1']);
+    const attempted=first.calls.find(c=>c.method==='POST'&&c.body.operation==='/path/node/scene');
+    assert(attempted);assert.equal(first.jobs.size,1,'network failure happened after material receipt only; no scene task was accepted');
+    assert.equal(first.model.state.nodeDetail.n1.manim_review.status,'pending',failureName+' without a receipt keeps the scene pending');
+    assert.match(first.notices()[0].children[0].textContent,/待确认 1/);
+    const batchId=first.model.state.pending.requestId,reloaded=harness();reloaded.model.state.nodeDetail.n1=structuredClone(first.model.state.nodeDetail.n1);reloaded.model.state.pending=structuredClone(first.model.state.pending);
+    await reloaded.generation.genAllStart(['n1'],{recovering:true});
+    const retry=reloaded.calls.find(c=>c.method==='POST'&&c.body.operation==='/path/node/scene');
+    assert(retry,'pending scene with persisted batch identity is retried after its receipt query');
+    assert.equal(retry.body.request_id,attempted.body.request_id,'reload reuses the stable scene idempotency key derived from '+batchId);
+    assert.equal(reloaded.model.state.pending,null,'successful recovered scene clears the pending batch');
+  }
+  {
+    const h=harness(),saved=detail('n1'),quiz=saved.quiz;
+    h.model.state.nodeDetail.n1=saved;
+    h.model.state.pending={kind:'nodes',requestId:'persisted-batch-id',remaining:['n1']};
+    await h.generation.genAllStart(['n1'],{recovering:true});
+    const scenePosts=h.calls.filter(c=>c.method==='POST'&&c.body.operation==='/path/node/scene');
+    assert.equal(scenePosts.length,1,'missing visual receipt submits the deferred animation once');
+    assert.equal(h.calls.some(c=>c.method==='POST'&&c.body.operation==='/path/node'),false,'recovery keeps the saved body');
+    assert.equal(scenePosts[0].body.body.node.id,'n1');assert.equal(scenePosts[0].body.request_id.length>8,true,'submission uses a stable id derived from the persisted batch ID');
+    assert.equal(h.jobs.size,1);assert.equal(h.model.state.nodeDetail.n1.manim_review.status,'not_needed');
+    assert.equal(h.model.state.nodeDetail.n1.study_notes,saved.study_notes);assert.strictEqual(h.model.state.nodeDetail.n1.quiz,quiz);
+    assert.match(h.notices()[0].children[0].textContent,/已完成 1\/1，失败 0/);
+  }
+  {
+    const server={jobs:new Map(),receipts:new Map(),serial:0,dropNextAck:1};
+    const first=harness({server}),saved=detail('n1');
+    first.model.state.nodeDetail.n1=saved;first.model.state.pending={kind:'nodes',requestId:'lost-ack-batch-id',remaining:['n1']};
+    await first.generation.genAllStart(['n1'],{recovering:true});
+    assert.equal(first.calls.filter(c=>c.method==='POST'&&c.body.operation==='/path/node/scene').length,1,'first tab submitted before losing its ACK');
+    assert.equal(server.jobs.size,1,'the server accepted exactly one scene task');
+    const reloaded=harness({server});reloaded.model.state.nodeDetail.n1=detail('n1');reloaded.model.state.pending={kind:'nodes',requestId:'lost-ack-batch-id',remaining:['n1']};
+    await reloaded.generation.genAllStart(['n1'],{recovering:true});
+    assert.equal(reloaded.calls.filter(c=>c.method==='POST').length,0,'reload finds and watches the accepted scene task');
+    assert.equal(server.jobs.size,1,'lost ACK recovery does not create a duplicate task');
+    assert.equal(reloaded.model.state.nodeDetail.n1.manim_review.status,'not_needed');
+    assert.equal(reloaded.model.state.nodeDetail.n1.study_notes,saved.study_notes);assert.equal(reloaded.model.state.nodeDetail.n1.quiz.round_id,saved.quiz.round_id);
+  }
+  {
+    const server={jobs:new Map(),receipts:new Map(),serial:0};
+    const first=harness({server}),second=harness({server});
+    for(const tab of [first,second]) {
+      tab.model.state.nodeDetail.n1=detail('n1');
+      tab.model.state.pending={kind:'nodes',requestId:'two-tab-batch-id',remaining:['n1']};
+    }
+    const firstWork=first.generation.genAllStart(['n1'],{recovering:true});
+    const secondWork=second.generation.genAllStart(['n1'],{recovering:true});
+    await Promise.all([firstWork,secondWork]);
+    const posts=[...first.calls,...second.calls].filter(c=>c.method==='POST'&&c.body.operation==='/path/node/scene');
+    assert.equal(posts.length,2,'both stale tabs may submit the same deterministic request');
+    assert.equal(posts[0].body.request_id,posts[1].body.request_id,'tabs use the same idempotency key');
+    assert.equal(server.jobs.size,1,'server request de-duplication creates one scene task');
+    assert(first.model.state.nodeDetail.n1.manim_review.status==='not_needed');
+    assert(second.model.state.nodeDetail.n1.manim_review.status==='not_needed');
   }
   {
     const h=harness(),material=detail('n1');

@@ -61,8 +61,13 @@ function genAllSyncPending() {
     if (!session.genAllRemaining.length) { model.state.pending = null; }
     else {
       var previous = model.state.pending;
-      model.state.pending = {kind: 'nodes', nid: null, at: Date.now(), remaining: session.genAllRemaining.slice(),
-        requestId: previous && previous.kind === 'nodes' && previous.requestId || window.LearnJobs.requestId()};
+      var requestId = previous && previous.kind === 'nodes' && validBatchRequestId(previous.requestId) ? previous.requestId : null;
+      // A recovery without a previously persisted identity must stay without
+      // one across reloads. A random ID created here would look like proof
+      // that an earlier scene submission was safe to repeat.
+      if (!requestId && !session.genAllRecovering) requestId = window.LearnJobs.requestId();
+      model.state.pending = {kind: 'nodes', nid: null, at: Date.now(), remaining: session.genAllRemaining.slice()};
+      if (requestId) model.state.pending.requestId = requestId;
     }
     persistence.save();
   }
@@ -107,9 +112,14 @@ function recoveryError() {
     error.error_category = 'recovery_required'; return error;
   }
 
+function validBatchRequestId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9:_-]{8,120}$/.test(value);
+  }
+
 function uncertain(error) {
     return !!(error && (error.error_category === 'watch_timeout' || error.error_category === 'recovery_required' ||
-      error.job && (error.job.status === 'queued' || error.job.status === 'running')));
+      error.job && (error.job.status === 'queued' || error.job.status === 'running') ||
+      (error.name === 'TypeError' || error.name === 'AbortError') && !error.job && !Number.isFinite(error.status)));
   }
 
 function latestJob(jobs, operation, id) {
@@ -156,7 +166,23 @@ function requestNodeDetail(id, manualRetry, options) {
       return jobsPromise.then(function (jobs) {
         if (!live()) throw recoveryError();
         var job = latestJob(jobs, operation, id);
-        if (!job) throw recoveryError();
+        if (!job) {
+          // A saved body proves the first stage completed. Only the scene
+          // stage can be safely submitted here, and only with an ID that was
+          // already persisted before this recovery began. The server dedupes
+          // this request if another tab submitted it or an ACK was lost.
+          var currentDetail = model.state.nodeDetail[id];
+          if (operation === '/path/node/scene' && currentDetail && currentDetail.manim_review &&
+              currentDetail.manim_review.status === 'failed') {
+            var failedScene = new Error('已记录的教学动画任务失败，未找到可继续读取的任务。');
+            failedScene.error_category = 'scene_failed'; throw failedScene;
+          }
+          if (operation === '/path/node/scene' && currentDetail && currentDetail.manim_review &&
+              currentDetail.manim_review.status === 'pending' && options.recoveryRequestIdPersisted && opts.requestId) {
+            return persistence.post(operation, body, opts);
+          }
+          throw recoveryError();
+        }
         return window.LearnJobs.get(job.id).then(function (fullJob) {
           if (!live()) throw recoveryError();
           return window.LearnJobs.watch(fullJob, opts);
@@ -209,6 +235,7 @@ session.batchOutcomes = new Map();
 session.batchKey = null;
 session.batchPanel = null;
 session.batchSerial = 0;
+session.genAllRecoveryRequestIdPersisted = false;
 session.batchReturnFocus = null;
 session.batchReturnKey = null;
 
@@ -292,6 +319,9 @@ function showBatchSummary(current) {
 function genAllStart(ids, options) {
     options = options || {};
     if (window.LearnUser.readOnly || session.genAllRunning || !ids || !ids.length) return Promise.resolve();
+    var previousPending = model.state.pending;
+    var recoveryRequestIdPersisted = !!(options.recovering && previousPending && previousPending.kind === 'nodes' &&
+      validBatchRequestId(previousPending.requestId));
     var key = format.storeKey(), serial = ++session.batchSerial;
     closeBatchPanel();
     if (session.batchKey) window.LearnUI && window.LearnUI.clear(session.batchKey);
@@ -302,6 +332,7 @@ function genAllStart(ids, options) {
     session.genAllQueue = ids.slice(); session.genAllRemaining = ids.slice(); session.genAllTotal = ids.length; session.genAllIdx = 0;
     session.genAllSucceeded = 0; session.genAllFailed = 0; session.genAllManualRetry = !!options.manualRetry;
     session.genAllRecovering = !!options.recovering;
+    session.genAllRecoveryRequestIdPersisted = recoveryRequestIdPersisted;
     if (window.LearnUI) window.LearnUI.clear('gen-all-error');
     if (session.genAllTimer) { clearTimeout(session.genAllTimer); session.genAllTimer = null; }
     workflow.hideResumeBar(); genAllSyncPending(); showBatchSummary();
@@ -320,7 +351,8 @@ function genAllStep(key, serial) {
     var id = session.genAllQueue[0], stageError = null;
     session.genAllIdx++; genAllBtnSet('生成中 ' + session.genAllIdx + '/' + session.genAllTotal + '（点击暂停）'); setCardGenState(id, true);
     function active() { return key === format.storeKey() && serial === session.batchSerial; }
-    return requestNodeDetail(id, session.genAllManualRetry, {recovering: session.genAllRecovering, notifications: false,
+    return requestNodeDetail(id, session.genAllManualRetry, {recovering: session.genAllRecovering,
+      recoveryRequestIdPersisted: session.genAllRecoveryRequestIdPersisted, notifications: false,
       onJob: function (job, notice, stage) {
         if (!active()) return;
         if (window.LearnUI) window.LearnUI.clear('job-' + job.id);

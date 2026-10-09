@@ -368,7 +368,8 @@ class LearningService:
                         self.repository.store.job_progress(1, '生成学习正文', attempt + 1, total=5)
                         candidate = _norm_node_detail(_json_block(self.model.nonempty(
                             _mk_node(" 上次生成失败：" + last_error if last_error else ""),
-                            max_tokens=self.model.settings.max_output_tokens, temperature=0.5)))
+                            tries=1, max_tokens=min(self.model.settings.max_output_tokens, 16384),
+                            reasoning_effort='medium', response_format='json_object', temperature=0.5)))
                         if not candidate:
                             raise harness.QuizContractError("材料不完整")
                         if self.scenes:
@@ -384,7 +385,8 @@ class LearningService:
                              "输出 JSON {\"questions\":[...]}。必须4道选择、1道填空、1道简答，共100分。"
                              "沿用节点测验的题型、分值、评分点和填空匹配合同。不要输出正文。"},
                             {"role": "user", "content": json.dumps(repair, ensure_ascii=False)}],
-                            max_tokens=self.model.settings.max_output_tokens, temperature=0.5)))
+                            tries=1, max_tokens=min(self.model.settings.max_output_tokens, 8192),
+                            reasoning_effort='medium', response_format='json_object', temperature=0.5)))
                         if not quiz:
                             raise harness.QuizContractError("修复题目不完整")
                         candidate["quiz"] = quiz
