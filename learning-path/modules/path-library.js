@@ -151,7 +151,7 @@ function libBind() {
     });
     document.addEventListener('click', function (e) {
       var dm = format.$('del-modal');
-      if (!pop.hidden && wrap && !wrap.contains(e.target) && !(dm && dm.open && dm.contains(e.target))) pop.hidden = true;
+      if (!pop.hidden && wrap && !wrap.contains(e.target) && !(dm && dm.contains(e.target))) pop.hidden = true;
     });
     document.addEventListener('keydown', function (e) {
       var dialog = format.$('del-modal');
