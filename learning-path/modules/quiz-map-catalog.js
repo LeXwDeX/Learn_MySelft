@@ -7,10 +7,24 @@ define("quiz-map.catalog", ["quiz-map.model", "quiz-map.format", "quiz-map.netwo
 
 // ============================ 选择模式 ============================
 
+var selectionVersion = 0;
+var boundMain = null;
 function renderSelect() {
+    var version = ++selectionVersion;
     var main = format.$('main');
+    if (boundMain !== main) {
+      main.addEventListener('click', function (event) {
+        var target = event.target && event.target.closest ? event.target : null;
+        if (!target) return;
+        if (target.closest('[data-catalog-retry]')) { renderSelect(); return; }
+        var button = target.closest('[data-gen]');
+        if (button) genQuizMap(button);
+      });
+      boundMain = main;
+    }
     main.innerHTML = '<p class="tip">加载资料…</p>';
-    network.fetchEntries().then(function (entries) {
+    return network.fetchEntries().then(function (entries) {
+      if (version !== selectionVersion) return;
       var maps = [], quizzes = [];
       Object.keys(entries).forEach(function (k) {
         var biz = format.stripUser(k);   // 先剥用户前缀
@@ -22,9 +36,9 @@ function renderSelect() {
           if (d && typeof d === 'object') {
             if (!d.topic && !d.plan && (!d.history || !d.history.length)) return;
             it.topic = window.LearnTitles.document(d);
-            if (d.plan && d.plan.nodes) it.total = d.plan.nodes.length;
+            if (d.plan && Array.isArray(d.plan.nodes)) it.total = d.plan.nodes.length;
             var ns = d.nodeState || {};
-            for (var nid in ns) { if (ns[nid] && ns[nid].completed) it.done++; }
+            (d.plan && Array.isArray(d.plan.nodes) ? d.plan.nodes : []).forEach(function (node) { if (node && ns[node.id] && ns[node.id].completed) it.done++; });
           } else { it.topic = it.slug; }
           maps.push(it);
         } else if (biz.indexOf(model.session.QUIZ_PREFIX) === 0) {
@@ -40,17 +54,17 @@ function renderSelect() {
       maps.sort(function (a, b) { return a.topic.localeCompare(b.topic, 'zh'); });
       quizzes.sort(function (a, b) { return (b.last || 0) - (a.last || 0); });
 
-      var h = '<div class="card"><div class="mode-h"><p class="eyebrow">从学习地图生成测验</p>' +
+      var h = '<div class="card"><div class="mode-h"><p class="eyebrow">' + (window.LearnUser.readOnly ? '学习地图' : '从学习地图生成测验') + '</p>' +
               '<span class="qcount">' + maps.length + ' 张学习地图</span></div>';
-      h += '<p><a class="btn primary" href="learning-path.html?new=1&amp;mode=quiz">上传资料创建测验地图</a></p>';
-      h += '<p class="muted">选择一张学习地图，按其知识点与你的学习情况生成一整套测验（8~16 道，合计 100 分）。</p>';
+      if (!window.LearnUser.readOnly) h += '<p><a class="btn primary" href="learning-path.html?new=1&amp;mode=quiz">上传资料创建测验地图</a></p>';
+      h += window.LearnUser.readOnly ? '<p class="muted">当前为只读模式，可在下方打开已有测验地图。</p>' : '<p class="muted">选择一张学习地图，按其知识点与你的学习情况生成一整套测验（8~16 道，合计 100 分）。</p>';
       if (!maps.length) {
-        h += '<p class="lempty">暂无学习地图——先去 <a href="learning-path.html?new=1">生成一张学习地图</a>。</p>';
+        h += window.LearnUser.readOnly ? '<p class="lempty">暂无学习地图。</p>' : '<p class="lempty">暂无学习地图——先去 <a href="learning-path.html?new=1">生成一张学习地图</a>。</p>';
       } else {
         maps.forEach(function (m) {
           h += '<div class="lrow"><span class="lt"><span class="t">' + format.esc(m.topic) + '</span>' +
                '<span class="m">' + m.total + ' 节点 · 已完成 ' + m.done + '</span></span>' +
-               '<button class="btn" type="button" data-gen="' + format.esc(model.session.USER_PATH + model.session.MAP_PREFIX + m.slug) + '">生成测验</button></div>';
+               (window.LearnUser.readOnly ? '' : '<button class="btn" type="button" data-gen="' + format.esc(model.session.USER_PATH + model.session.MAP_PREFIX + m.slug) + '">生成测验</button>') + '</div>';
         });
       }
       h += '</div>';
@@ -58,7 +72,7 @@ function renderSelect() {
       h += '<div class="card"><div class="mode-h"><p class="eyebrow">已有测验地图</p>' +
            '<span class="qcount">' + quizzes.length + ' 张测验地图</span></div>';
       if (!quizzes.length) {
-        h += '<p class="lempty">暂无测验地图——从上面选一张学习地图生成一套吧。</p>';
+        h += window.LearnUser.readOnly ? '<p class="lempty">暂无测验地图。</p>' : '<p class="lempty">暂无测验地图——从上面选一张学习地图生成一套吧。</p>';
       } else {
         quizzes.forEach(function (q) {
           var meta = '共 ' + q.count + ' 题' + (q.last != null ? ' · 最近 ' + q.last + ' 分' : '');
@@ -69,22 +83,21 @@ function renderSelect() {
       }
       h += '</div>';
       main.innerHTML = h;
-      main.addEventListener('click', function (e) {
-        var b = e.target && e.target.closest ? e.target.closest('[data-gen]') : null;
-        if (b) genQuizMap(b);
-      });
     }).catch(function () {
-      main.innerHTML = '<div class="lerr">无法连接服务端（' + format.esc(model.session.API) + '）——请稍后刷新重试。</div>';
+      if (version !== selectionVersion) return;
+      main.innerHTML = '<div class="lerr" role="alert">资料加载失败，请检查连接后重试。</div><button class="btn" type="button" data-catalog-retry>重试加载资料</button>';
     });
   }
 
 function genQuizMap(btn) {
+    if (window.LearnUser.readOnly || btn.disabled) return;
     var key = btn.getAttribute('data-gen');
     if (!key) return;
     window.LearnMaterials.quiz(key, function () { submitQuizMap(btn, key); });
   }
 
 function submitQuizMap(btn, key) {
+    if (window.LearnUser.readOnly || btn.disabled) return;
     var old = btn.textContent;
     btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）';
     network.post('/path/quizmap', { key: key }, {newOperation: true}).then(function (r) {

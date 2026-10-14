@@ -74,7 +74,12 @@ dialog {
   background: var(--learn-surface); color: var(--learn-ink);
 }
 dialog::backdrop { background: #28314266; }
-@media (max-width: 580px) { dialog { max-width: calc(100vw - 20px); } }
+@media (max-width: 580px) {
+  :root { --learn-input-font-size: 16px; }
+  dialog { max-width: calc(100vw - 20px); }
+  .btn, .learn-action { min-height: 44px; }
+  input:not([type=checkbox]):not([type=radio]), textarea, select { font-size: var(--learn-input-font-size); }
+}
 /* UI Kit: identity navigation and fatal session view. */
 .user-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 24px; background: var(--learn-surface); border-bottom: 1px solid var(--learn-border); color: var(--learn-muted); font: 13px/1.5 var(--learn-font); }
 .user-bar a { color: var(--learn-accent); text-decoration: none; }

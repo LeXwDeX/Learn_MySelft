@@ -6,6 +6,8 @@ define('home.account', ["home.platform"], function (deps) {
     event.preventDefault();
     error("login-error", "");
     $("login-submit").disabled = true;
+    $("login-submit").textContent = "正在登录…";
+    $("login-form").setAttribute("aria-busy", "true");
     context
       .request("/auth/login", {
         username: $("login-username").value,
@@ -21,6 +23,8 @@ define('home.account', ["home.platform"], function (deps) {
       .catch(function (e) {
         error("login-error", e.message);
         $("login-submit").disabled = false;
+        $("login-submit").textContent = "登录";
+        $("login-form").setAttribute("aria-busy", "false");
       });
   });
   $("password-cancel").onclick = function () {

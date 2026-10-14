@@ -20,7 +20,7 @@ __SHARED_HEAD__
       <p class="error" id="login-error" role="alert" hidden></p>
       <button class="btn primary" id="login-submit" type="submit">登录</button>
     </form>
-    <p class="muted help">还没有账号？请联系管理员创建。</p>
+    <p class="muted help">还没有账号？请联系管理员创建。忘记密码时，请联系管理员重置。</p>
   </section>
   <section id="admin-panel" class="section" hidden>
     <div class="section-head"><h2>所有用户 <span id="user-count" class="badge"></span></h2><input class="end" id="user-search" type="search" placeholder="搜索姓名或账号" aria-label="搜索用户"><button class="btn primary" id="create-user">＋ 创建用户</button></div>
@@ -33,13 +33,18 @@ __SHARED_HEAD__
       <p class="muted">生成和评分会在后台继续，返回对应学习资料即可接着完成。</p>
       <div id="task-list" class="learn-task-list"></div>
     </section>
-    <section class="section"><div class="section-head"><h2 id="tools-title">学习入口</h2></div>
+    <section class="section" id="tools-section"><div class="section-head"><h2 id="tools-title">学习入口</h2></div>
       <div class="tool-grid">
         <a class="card tool" data-page="learning-path.html?new=1" href="#"><span class="icon">01 · 学习地图</span><h3>从一个目标开始</h3><p>确认学习范围，生成路线，逐个单元学习、讨论与自测。</p><span class="go">打开学习地图 →</span></a>
         <a class="card tool" data-page="quiz-map.html" href="#"><span class="icon">02 · 测验地图</span><h3>看看掌握得怎样</h3><p>根据学习情况生成综合测验，回看作答，针对薄弱点继续学习。</p><span class="go">打开测验地图 →</span></a>
       </div>
     </section>
-    <section class="section card"><div class="section-head"><h2>学习资料库</h2><span class="muted" id="library-count"></span></div><p id="library-error" class="error" role="alert" hidden></p><div class="library"><div><h3>学习地图</h3><div id="map-list"></div></div><div><h3>测验地图</h3><div id="quiz-list"></div></div></div></section>
+    <section class="section card" id="library-panel" aria-labelledby="library-title">
+      <div class="section-head"><h2 id="library-title">学习资料库</h2><span class="muted" id="library-count"></span><button id="refresh-library" class="btn end" type="button">刷新资料</button></div>
+      <p id="library-status" class="muted" role="status">正在读取学习资料…</p>
+      <p id="library-error" class="error" role="alert" hidden></p>
+      <div class="library"><div><h3>学习地图</h3><div id="map-list"></div></div><div><h3>测验地图</h3><div id="quiz-list"></div></div></div>
+    </section>
   </div>
   <footer>固定入口 · <a href="/learn/">自学社首页</a> · 学习资料保存在服务器，换设备登录后可继续。</footer>
 </main>

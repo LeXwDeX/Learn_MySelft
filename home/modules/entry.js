@@ -24,6 +24,7 @@ define('home.entry', ["home.platform", "home.admin", "home.tasks", "home.account
       deps['home.admin'].load();
     }
     $("workspace").hidden = false;
+    $("tools-section").hidden = context.readOnly;
     deps['home.tasks'].load();
     document.querySelectorAll("[data-page]").forEach(function (link) {
       link.href = context.link(link.dataset.page);

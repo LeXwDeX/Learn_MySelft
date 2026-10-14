@@ -7,7 +7,7 @@ let finishDiagnosis;
 const env = {console, setTimeout, clearTimeout, AbortController, URLSearchParams, location:{search:''},
   alert: message => alerts.push(message),
   document:{readyState:'loading',addEventListener(){},getElementById:element},
-  window:{LearnUser:{userId:'u0',apiBase:'http://localhost',fetch:async()=>({json:async()=>({ok:true,entries:{'u0/learn-path-v1-map':JSON.stringify({plan:{nodes:[{id:'n1',title:'Basics'}]}})}})})},
+  window:{LearnUser:{userId:'u0',apiBase:'http://localhost',fetch:async()=>({ok:true,status:200,json:async()=>({ok:true,entries:{'u0/learn-path-v1-map':JSON.stringify({plan:{nodes:[{id:'n1',title:'Basics'}]}})}})})},
     LearnJobs:{supports:()=>true,run:(path,body,options)=>{calls.push({path,body,options});if(path==='/path/gaps')return new Promise(resolve=>finishDiagnosis=resolve);return Promise.resolve({added:1});}}}};
 vm.createContext(env);require('./load_uikit.cjs')(env);vm.runInContext(code,env);
 const get=env.window.LearnQuizMapApp.get;

@@ -92,7 +92,8 @@ async function injectNotification(job) {
     await context.route(api + '/**', async route => {
       const request = route.request(), url = new URL(request.url()), method = request.method();
       if (method === 'OPTIONS') return response(route,204);
-      if (url.pathname.startsWith('/auth/')) return route.continue();
+      if (url.pathname.startsWith('/auth/')) return source
+        ? route.fulfill({response:await route.fetch()}) : route.continue();
       if (url.pathname === '/state/all' && method === 'GET') return response(route,200,{ok:true,entries});
       if (url.pathname === '/state/put' && method === 'POST') {
         report.fixture_state_writes++;
@@ -123,15 +124,19 @@ async function injectNotification(job) {
       report.model_calls++;
       return response(route,409,{error:'合成回归拒绝模型或未声明接口'});
     });
-    const assets = {'/learn/assets/job-details.js':'shared/job-details.js','/learn/assets/ui.css':'shared/ui.css',
+    const assets = {'/learn/':'home/index.html',
+      ['/learn/u/' + uid + '/']:'home/index.html',
+      ['/learn/u/' + uid + '/learning-path.html']:'learning-path/learning-path.html',
+      '/learn/assets/home.css':'home/home.css',
+      '/learn/assets/job-details.js':'shared/job-details.js','/learn/assets/ui.css':'shared/ui.css',
       '/learn/assets/home.js':'home/home.js','/learn/home.js':'home/home.js',
       '/diagram-design/learning-path/path_app.js':'learning-path/path_app.js',
       '/diagram-design/learning-path/path.css':'learning-path/path.css'};
     if (source) await context.route(site + '/**', async route => {
       const pathname = new URL(route.request().url()).pathname, file = assets[pathname];
-      if (!file) return route.continue();
+      if (!file) return route.fulfill({response:await route.fetch()});
       report.source_assets.push(pathname);
-      return route.fulfill({contentType:pathname.endsWith('.css') ? 'text/css' : 'application/javascript',body:fs.readFileSync(path.join(repository,file),'utf8')});
+      return route.fulfill({contentType:file.endsWith('.html') ? 'text/html' : file.endsWith('.css') ? 'text/css' : 'application/javascript',body:fs.readFileSync(path.join(repository,file),'utf8')});
     });
     page = await context.newPage();
     page.on('pageerror', error => report.errors.push(error.name));
@@ -156,8 +161,11 @@ async function injectNotification(job) {
     if (engine === 'chromium') {await body.hover();await page.mouse.wheel(0,600);await page.waitForTimeout(150);}
     else await body.evaluate(el => el.dispatchEvent(new WheelEvent('wheel',{deltaY:600,bubbles:true})));
     await checkScroll(homeY,'log scroll does not move background');
-    await page.evaluate(() => {window.__oldTaskButton=document.querySelector('#task-list .learn-job-detail-button'); document.querySelector('#refresh-tasks').click();});
-    await page.waitForFunction(() => document.querySelector('#task-list .learn-job-detail-button') !== window.__oldTaskButton);
+    await page.evaluate(async () => {
+      window.__oldTaskButton=document.querySelector('#task-list .learn-job-detail-button');
+      await window.LearnHomeModules.get('home.tasks').load();
+    });
+    assert.equal(await page.evaluate(() => document.querySelector('#task-list .learn-job-detail-button') === window.__oldTaskButton),true,'refresh preserves the details trigger');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.activeElement === document.querySelector('#task-list .learn-job-detail-button'));
     await checkScroll(homeY,'closing home details preserves scroll');
