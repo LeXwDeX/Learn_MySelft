@@ -15,7 +15,7 @@
 #quiz-workspace .qd-option:has(input:checked){border-color:var(--accent);background:#fff8f4}
 #quiz-workspace input[type=radio]{margin-top:5px;flex:none}
 #quiz-workspace .qd-input-label{display:block;font-size:13px;color:var(--muted);margin:10px 0 6px}
-#quiz-workspace textarea{width:100%;font-size:15px;line-height:1.7;resize:vertical;min-height:90px}
+#quiz-workspace textarea{width:100%;font-size:var(--learn-input-font-size,15px);line-height:1.7;resize:vertical;min-height:90px}
 #quiz-workspace .qd-reference{margin-top:14px;font-size:14px;line-height:1.8}
 #quiz-workspace .qd-reference-content h3{font-size:14px;margin:14px 0 6px}
 #quiz-workspace .qd-reference-content .qd-rubric{margin-top:14px}

@@ -210,6 +210,7 @@ define('home.library', ["home.platform"], function (deps) {
   var platform = deps['home.platform'];
   var context = platform.context, ui = platform.ui;
   var $ = ui.dom.byId, esc = ui.dom.escapeHTML, error = ui.dom.showError;
+  var loadVersion = 0;
   function renderLibrary(entries) {
     var maps = [],
       quizzes = [],
@@ -229,9 +230,10 @@ define('home.library', ["home.platform"], function (deps) {
         business !== "learn-path-v1-last"
       ) {
         if (!data.topic && !data.plan && !(data.history || []).length) return;
-        var total = ((data.plan || {}).nodes || []).length,
-          done = Object.values(data.nodeState || {}).filter(function (n) {
-            return n && n.completed;
+        var nodes = Array.isArray((data.plan || {}).nodes) ? data.plan.nodes : [],
+          total = nodes.length,
+          done = nodes.filter(function (node) {
+            return node && (data.nodeState || {})[node.id] && data.nodeState[node.id].completed;
           }).length;
         maps.push({
           slug: business.slice("learn-path-v1-".length),
@@ -265,82 +267,155 @@ define('home.library', ["home.platform"], function (deps) {
               context.link(page) +
               "?t=" +
               encodeURIComponent(item.slug) +
-              '"><span>' +
+              '"><span class="row-info"><span class="row-title">' +
               esc(item.title) +
-              "<small>" +
+              "</span><small>" +
               esc(item.meta) +
               '</small></span><span class="go">打开 →</span></a>'
             );
           })
-          .join("") || '<p class="empty">这里还没有资料。</p>'
+          .join("") || '<p class="empty">' + (context.readOnly ? '该用户还没有这类资料。' :
+            page === 'learning-path.html' ? '还没有学习地图。从上方「从一个目标开始」创建第一份。' :
+              '还没有测验地图。可从学习地图生成，或打开上方测验地图入口。') + '</p>'
       );
     }
-    $("map-list").innerHTML = rows(maps, "learning-path.html");
-    $("quiz-list").innerHTML = rows(quizzes, "quiz-map.html");
+    function updateList(id, markup) {
+      var list = $(id);
+      if (list.innerHTML === markup) return;
+      var focused = list.contains(document.activeElement) ? document.activeElement.getAttribute('href') : null;
+      list.innerHTML = markup;
+      if (focused) list.querySelectorAll('a').forEach(function (link) {
+        if (link.getAttribute('href') === focused) link.focus({preventScroll: true});
+      });
+    }
+    updateList("map-list", rows(maps, "learning-path.html"));
+    updateList("quiz-list", rows(quizzes, "quiz-map.html"));
     $("library-count").textContent = maps.length + quizzes.length + "份资料";
   }
 
-  return {render: renderLibrary};
+  function loadLibrary() {
+    var version = ++loadVersion, button = $('refresh-library');
+    $('library-panel').setAttribute('aria-busy', 'true');
+    $('library-status').textContent = '正在读取学习资料…';
+    $('library-status').hidden = false;
+    button.disabled = true;
+    return context.request('/state/all').then(function (result) {
+      if (version !== loadVersion) return;
+      if (!result.entries || typeof result.entries !== 'object' || Array.isArray(result.entries)) throw new Error('资料响应不完整，请重新读取。');
+      renderLibrary(result.entries);
+      error('library-error', '');
+    }).catch(function (cause) {
+      if (version !== loadVersion) return;
+      error('library-error', '暂时无法读取学习资料。请点击「刷新资料」重试。' + (cause.message || ''));
+    }).finally(function () {
+      if (version !== loadVersion) return;
+      $('library-panel').setAttribute('aria-busy', 'false');
+      $('library-status').hidden = true;
+      button.disabled = false;
+    });
+  }
+  $('refresh-library').onclick = loadLibrary;
+
+  return {render: renderLibrary, load: loadLibrary};
 });
 
 define('home.tasks', ["home.platform", "home.library"], function (deps) {
   var platform = deps['home.platform'];
   var context = platform.context, ui = platform.ui;
   var jobDetails = platform.jobDetails;
-  var $ = ui.dom.byId, esc = ui.dom.escapeHTML, error = ui.dom.showError;
-  var taskTimer = null;
+  var $ = ui.dom.byId;
+  var taskTimer = null, loadVersion = 0, hasError = false;
+  var rows = new Map(), retrying = new Set();
+  var statuses = {queued: '排队中', running: '正在处理', succeeded: '已完成', failed: '未完成', interrupted: '等待恢复', cancelled: '已取消'};
+
+  function retryLabel(job) { return job.operation === '/path/requiz' ? '重新生成新题' : '重试此任务'; }
+
+  function retryTask(view) {
+    var job = view.job;
+    if (context.readOnly || retrying.has(job.id)) return;
+    retrying.add(job.id);
+    updateRow(view, job);
+    ui.set('retry-' + job.id, '正在重新提交：' + platform.jobs.label(job.operation));
+    context.request('/jobs/' + job.id + '/retry', {}).then(function (result) {
+      platform.jobs.watch(result.job).then(loadTasks).catch(loadTasks);
+      return loadTasks();
+    }).catch(function (cause) {
+      hasError = true;
+      ui.set('tasks', cause.message, 'error', loadTasks, '刷新状态');
+    }).finally(function () {
+      retrying.delete(job.id);
+      ui.clear('retry-' + job.id);
+      if (rows.get(job.id) === view) updateRow(view, view.job);
+    });
+  }
+
+  function createRow(job) {
+    var row = document.createElement('div'); row.className = 'learn-task';
+    var info = document.createElement('div'); info.className = 'learn-task-info';
+    var title = document.createElement('strong'), detail = document.createElement('small'), failure = document.createElement('small');
+    info.append(title, detail, failure);
+    var actions = document.createElement('div'); actions.className = 'actions';
+    var details = document.createElement('button'); details.type = 'button'; details.className = 'btn learn-job-detail-button';
+    details.textContent = '查看详情'; details.setAttribute('aria-haspopup', 'dialog'); details.dataset.jobId = job.id;
+    var link = document.createElement('a'); link.className = 'btn'; link.textContent = '继续查看';
+    var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn';
+    actions.append(details, link, retry); row.append(info, actions);
+    var view = {row: row, title: title, detail: detail, failure: failure, details: details, link: link, retry: retry, job: job};
+    details.addEventListener('click', function (event) { jobDetails.open(view.job, null, event.currentTarget); });
+    retry.onclick = function () { retryTask(view); };
+    return view;
+  }
+
+  function updateRow(view, job) {
+    view.job = job;
+    view.title.textContent = platform.titles.document(job);
+    view.detail.textContent = platform.jobs.label(job.operation) + ' · ' + (statuses[job.status] || job.status) + ' · ' + new Date(job.created_ms).toLocaleString('zh-CN');
+    view.failure.textContent = job.error || ''; view.failure.hidden = !job.error;
+    var business = (job.key || '').slice(context.userId.length + 1);
+    var page = business.startsWith('quiz-map-v1-') ? 'quiz-map.html' : 'learning-path.html';
+    var slug = business.replace(/^(?:learn-path|quiz-map)-v1-/, '');
+    view.link.href = context.link(page) + '?t=' + encodeURIComponent(slug);
+    view.retry.hidden = context.readOnly || (!['failed', 'interrupted'].includes(job.status) && !retrying.has(job.id));
+    view.retry.disabled = retrying.has(job.id);
+    view.retry.textContent = retrying.has(job.id) ? '正在重新提交…' : retryLabel(job);
+  }
+
+  function renderTasks(jobs) {
+    var list = $('task-list'), focused = list.contains(document.activeElement) ? document.activeElement : null;
+    var current = new Set(jobs.map(function (job) { return job.id; }));
+    rows.forEach(function (view, id) { if (!current.has(id)) { view.row.remove(); rows.delete(id); } });
+    jobs.forEach(function (job, index) {
+      jobDetails.observe(job);
+      var view = rows.get(job.id);
+      if (!view) { view = createRow(job); rows.set(job.id, view); }
+      updateRow(view, job);
+      if (list.children[index] !== view.row) list.insertBefore(view.row, list.children[index] || null);
+    });
+    $('tasks-panel').hidden = !jobs.length;
+    if (focused) {
+      if (focused.isConnected && !focused.hidden && !focused.disabled) focused.focus({preventScroll: true});
+      else if (jobs.length) $('refresh-tasks').focus({preventScroll: true});
+      else $('refresh-library').focus({preventScroll: true});
+    }
+  }
+
   function loadTasks() {
     if (taskTimer) clearTimeout(taskTimer);
-    context.request('/state/all').then(function (result) {
-      deps['home.library'].render(result.entries);
-    }).catch(function (e) { error('library-error', e.message); });
-    return context.request('/jobs?view=recent').then(function (result) {
+    var version = ++loadVersion;
+    var library = deps['home.library'].load();
+    var tasks = context.request('/jobs?view=recent').then(function (result) {
+      if (version !== loadVersion) return;
+      if (!Array.isArray(result.jobs)) throw new Error('任务响应不完整，请重新读取。');
       var jobs = result.jobs.slice(0, 8);
-      $('tasks-panel').hidden = !jobs.length;
-      $('task-list').replaceChildren();
-      jobs.forEach(function (job) {
-        jobDetails.observe(job);
-        var row = document.createElement('div'); row.className = 'learn-task';
-        var info = document.createElement('div'); info.className = 'learn-task-info';
-        var title = document.createElement('strong'); title.textContent = platform.titles.document(job);
-        var detail = document.createElement('small');
-        var statuses = {queued: '排队中', running: '正在处理', succeeded: '已完成', failed: '未完成', interrupted: '等待恢复', cancelled: '已取消'};
-        detail.textContent = platform.jobs.label(job.operation) + ' · ' + (statuses[job.status] || job.status) + ' · ' + new Date(job.created_ms).toLocaleString('zh-CN');
-        info.append(title, detail);
-        if (job.error) { var error = document.createElement('small'); error.textContent = job.error; info.appendChild(error); }
-        row.appendChild(info);
-        var actions = document.createElement('div'); actions.className = 'actions';
-        var details = document.createElement('button'); details.type = 'button'; details.className = 'btn learn-job-detail-button';
-        details.textContent = '查看详情'; details.setAttribute('aria-haspopup', 'dialog');
-        details.dataset.jobId = job.id;
-        details.addEventListener('click', function (event) { jobDetails.open(job, null, event.currentTarget); });
-        actions.appendChild(details);
-        var business = (job.key || '').slice(context.userId.length + 1);
-        var page = business.startsWith('quiz-map-v1-') ? 'quiz-map.html' : 'learning-path.html';
-        var slug = business.replace(/^(?:learn-path|quiz-map)-v1-/, '');
-        var link = document.createElement('a'); link.className = 'btn'; link.href = context.link(page) + '?t=' + encodeURIComponent(slug); link.textContent = '继续查看';
-        actions.appendChild(link);
-        if (!context.readOnly && ['failed', 'interrupted'].includes(job.status)) {
-          var retry = document.createElement('button'); retry.className = 'btn'; retry.textContent = job.operation === '/path/requiz' ? '重新生成新题' : '重试此任务';
-          retry.onclick = function () {
-            retry.disabled = true; retry.textContent = '正在重新提交…';
-            ui.set('retry-' + job.id, '正在重新提交：' + platform.jobs.label(job.operation));
-            context.request('/jobs/' + job.id + '/retry', {}).then(function (result) {
-              ui.clear('retry-' + job.id);
-              platform.jobs.watch(result.job).then(loadTasks).catch(loadTasks);
-              return loadTasks();
-            }).catch(function (error) {
-              retry.disabled = false; retry.textContent = '重试此任务';
-              ui.clear('retry-' + job.id);
-              ui.set('tasks', error.message, 'error', loadTasks, '刷新状态');
-            });
-          };
-          actions.appendChild(retry);
-        }
-        row.appendChild(actions); $('task-list').appendChild(row);
-      });
+      renderTasks(jobs);
+      if (hasError) { ui.clear('tasks'); hasError = false; }
       if (jobs.some(function (job) { return ['queued', 'running'].includes(job.status); })) taskTimer = setTimeout(loadTasks, 5000);
-    }).catch(function (error) { ui.set('tasks', '任务状态暂时不可用：' + error.message, 'error', loadTasks, '重新连接'); });
+    }).catch(function (cause) {
+      if (version !== loadVersion) return;
+      hasError = true;
+      ui.set('tasks', '任务状态暂时不可用：' + cause.message, 'error', loadTasks, '重新连接');
+    });
+    return Promise.all([library, tasks]);
   }
   $('refresh-tasks').onclick = loadTasks;
 
@@ -355,6 +430,8 @@ define('home.account', ["home.platform"], function (deps) {
     event.preventDefault();
     error("login-error", "");
     $("login-submit").disabled = true;
+    $("login-submit").textContent = "正在登录…";
+    $("login-form").setAttribute("aria-busy", "true");
     context
       .request("/auth/login", {
         username: $("login-username").value,
@@ -370,6 +447,8 @@ define('home.account', ["home.platform"], function (deps) {
       .catch(function (e) {
         error("login-error", e.message);
         $("login-submit").disabled = false;
+        $("login-submit").textContent = "登录";
+        $("login-form").setAttribute("aria-busy", "false");
       });
   });
   $("password-cancel").onclick = function () {
@@ -422,6 +501,7 @@ define('home.entry', ["home.platform", "home.admin", "home.tasks", "home.account
       deps['home.admin'].load();
     }
     $("workspace").hidden = false;
+    $("tools-section").hidden = context.readOnly;
     deps['home.tasks'].load();
     document.querySelectorAll("[data-page]").forEach(function (link) {
       link.href = context.link(link.dataset.page);

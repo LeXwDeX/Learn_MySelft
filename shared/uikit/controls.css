@@ -33,4 +33,9 @@ dialog {
   background: var(--learn-surface); color: var(--learn-ink);
 }
 dialog::backdrop { background: #28314266; }
-@media (max-width: 580px) { dialog { max-width: calc(100vw - 20px); } }
+@media (max-width: 580px) {
+  :root { --learn-input-font-size: 16px; }
+  dialog { max-width: calc(100vw - 20px); }
+  .btn, .learn-action { min-height: 44px; }
+  input:not([type=checkbox]):not([type=radio]), textarea, select { font-size: var(--learn-input-font-size); }
+}

@@ -50,13 +50,11 @@ function boot() {
     format.$('errretry').addEventListener('click', function () { var f = model.session.retryFn; shell.hideError(); if (f) f(); });
     window.addEventListener('resize', function () { if (model.state.plan) cards.drawEdges(); });
     format.$('backend-label').textContent = model.session.API;
+    window.LearnUI.dialog.bind(format.$('del-modal'), null, function () { if (!format.$('del-modal').open) library.resetDeletion(); });
     format.$('dm-cancel').addEventListener('click', library.closeDelModal);
     format.$('dm-ok').addEventListener('click', library.submitDel);
-    format.$('dm-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') library.submitDel(); });
-    format.$('del-modal').addEventListener('click', function (e) { if (e.target === this) library.closeDelModal(); });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !format.$('del-modal').hidden) library.closeDelModal();
-    });
+    format.$('dm-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); library.submitDel(); } });
+    format.$('del-modal').addEventListener('cancel', function (e) { e.preventDefault(); library.closeDelModal(); });
     format.$('quizmap-btn').addEventListener('click', assessment.genQuizMap);
     var gab = format.$('gen-all-btn');
     if (gab) gab.addEventListener('click', generation.onGenAllClick);
@@ -66,6 +64,7 @@ function boot() {
       shell.updateReviewFilterBtn();
       cards.renderPlan();
     });
+    if (window.LearnUser.readOnly) format.$('restart-btn').hidden = true;
     library.libBind();
 
     persistence.purgeLocalLegacy();   // 清理历史遗留的浏览器本地数据（页面已不再本地保存任何东西）
