@@ -18,7 +18,7 @@ function hideError() { format.$('errbar').hidden = true; model.session.retryFn =
 
 function setStage(s) {
     model.state.stage = s;
-    if (model.session.materialsPanel) model.session.materialsPanel.lock(s !== 'intake' || model.session.busy);
+    if (model.session.materialsPanel) model.session.materialsPanel.lock(model.session.bootState !== 'ready' || window.LearnUser.readOnly || s !== 'intake' || model.session.busy || model.session.materialsPanel.busy());
     viewStage(s);
     persistence.save();
   }
@@ -33,6 +33,8 @@ function viewStage(s) {
     format.$('stage-research').hidden = s !== 'research';
     format.$('stage-learning').hidden = s !== 'learning';
     if (returningToReading && Number.isFinite(model.session.readingScrollY)) requestAnimationFrame(function () { window.scrollTo(0, model.session.readingScrollY); });
+    var progress = format.$('learning-progress');
+    if (progress) progress.hidden = s !== 'learning' || !((model.state.plan || {}).nodes || []).length;
     if (returningToReading && model.session.readingAccessPending && model.session.selectedId) hooks.selectNode(model.session.selectedId);
     var qb = format.$('quizmap-btn');
     if (qb) qb.hidden = !(s === 'learning' && model.state.plan);
@@ -62,7 +64,9 @@ function bindStageNav() {
 function renderProgress() {
     var nodes = (model.state.plan && model.state.plan.nodes) || [];
     var done = nodes.filter(function (n) { return domain.isDone(n.id); }).length;
-    format.$('progress-text').textContent = '已完成 ' + done + '/' + nodes.length;
+    var progress = format.$('learning-progress');
+    if (progress) progress.hidden = !nodes.length || format.$('stage-learning').hidden;
+    format.$('progress-text').textContent = nodes.length ? '已完成 ' + done + '/' + nodes.length + ' 单元' : '';
     format.$('progress-fill').style.width = nodes.length ? (done / nodes.length * 100) + '%' : '0%';
     updateReviewFilterBtn();
   }

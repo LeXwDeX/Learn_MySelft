@@ -6,7 +6,8 @@
     var uploading = false, locked = false;
     root.classList.add('materials');
     root.innerHTML = '<label class="materials-label">上传参考资料（可选）<input type="file" multiple accept="' + ACCEPT + '"></label>' +
-      '<p class="hint">支持 PDF、TXT、Word、Excel、PowerPoint、图片、ZIP 和 7Z。每次单文件 ≤10 MB，每份地图最多 100 份、合计 20 万字；PDF ≤200 页，其中扫描页 ≤40 页。图片识别文字。压缩包自动跳过办公临时文件和系统附属文件，不接受程序、脚本、宏、加密文件或嵌套压缩包。</p>' +
+      '<p class="hint">可补充文档、图片或压缩包，单文件不超过 10 MB。</p>' +
+      '<details class="materials-help"><summary>支持格式与上传限制</summary><p class="hint">支持 PDF、TXT、Word、Excel、PowerPoint、图片、ZIP 和 7Z。每份地图最多 100 份、合计 20 万字；PDF 最多 200 页，其中扫描页最多 40 页。图片识别文字。压缩包会跳过办公临时文件和系统附属文件，不接受程序、脚本、宏、加密文件或嵌套压缩包。</p></details>' +
       '<p class="materials-status" role="status" aria-live="polite"></p><ul class="materials-list"></ul>';
     var input = root.querySelector('input'), status = root.querySelector('.materials-status'), list = root.querySelector('ul');
     function render() {
@@ -21,6 +22,7 @@
         remove.setAttribute('aria-label', '移除 ' + item.name);
         remove.disabled = input.disabled;
         remove.onclick = async function () {
+          if (uploading || locked || window.LearnUser.readOnly) return;
           var next = options.get().slice(); next.splice(index, 1);
           uploading = true; render(); if (options.busy) options.busy(true);
           try { await options.set(next); status.textContent = '已移除并保存'; }
@@ -31,6 +33,7 @@
       });
     }
     input.onchange = async function () {
+      if (uploading || locked || window.LearnUser.readOnly) return;
       var files = Array.from(input.files || []);
       if (!files.length) return;
       uploading = true; render();
@@ -101,10 +104,10 @@
           });
           var result = await r.json(); if (!r.ok) throw new Error(result.error || '保存失败'); additions = next;
         },
-        busy: function (value) { button.disabled = value; cancel.disabled = value; }
+        busy: function (value) { button.disabled = value || window.LearnUser.readOnly; cancel.disabled = value; }
       });
       button.disabled = window.LearnUser.readOnly;
-      button.onclick = function () { close(); generate(); };
+      button.onclick = function () { if (button.disabled || window.LearnUser.readOnly || panel.busy()) return; close(); generate(); };
     }).catch(function (error) { dialog.querySelector('.materials-error').textContent = error.message; });
   }
   window.LearnMaterials = {mount: mount, quiz: quiz};

@@ -60,21 +60,30 @@ define('home.tasks', ["home.platform", "home.library"], function (deps) {
   }
 
   function renderTasks(jobs) {
-    var list = $('task-list'), focused = list.contains(document.activeElement) ? document.activeElement : null;
-    var current = new Set(jobs.map(function (job) { return job.id; }));
+    var list = $('task-list'), history = $('task-history-list');
+    var focused = list.contains(document.activeElement) || history.contains(document.activeElement) ? document.activeElement : null;
+    var current = new Set(jobs.map(function (job) { return job.id; })), needs = [], past = [];
     rows.forEach(function (view, id) { if (!current.has(id)) { view.row.remove(); rows.delete(id); } });
-    jobs.forEach(function (job, index) {
+    jobs.forEach(function (job) {
       jobDetails.observe(job);
       var view = rows.get(job.id);
       if (!view) { view = createRow(job); rows.set(job.id, view); }
       updateRow(view, job);
-      if (list.children[index] !== view.row) list.insertBefore(view.row, list.children[index] || null);
+      (['queued', 'running', 'failed', 'interrupted'].includes(job.status) ? needs : past).push(view);
     });
-    $('tasks-panel').hidden = !jobs.length;
+    [[list, needs], [history, past]].forEach(function (group) {
+      group[1].forEach(function (view, index) {
+        if (group[0].children[index] !== view.row) group[0].insertBefore(view.row, group[0].children[index] || null);
+      });
+    });
+    $('tasks-panel').hidden = false;
+    $('tasks-count').textContent = needs.length ? needs.length + ' 项' : '';
+    $('tasks-empty').hidden = !!needs.length;
+    $('history-empty').hidden = !!past.length;
     if (focused) {
-      if (focused.isConnected && !focused.hidden && !focused.disabled) focused.focus({preventScroll: true});
-      else if (jobs.length) $('refresh-tasks').focus({preventScroll: true});
-      else $('refresh-library').focus({preventScroll: true});
+      var inClosedHistory = history.contains(focused) && !$('task-history').open;
+      if (focused.isConnected && !focused.hidden && !focused.disabled && !inClosedHistory) focused.focus({preventScroll: true});
+      else $('refresh-tasks').focus({preventScroll: true});
     }
   }
 
@@ -82,10 +91,10 @@ define('home.tasks', ["home.platform", "home.library"], function (deps) {
     if (taskTimer) clearTimeout(taskTimer);
     var version = ++loadVersion;
     var library = deps['home.library'].load();
-    var tasks = context.request('/jobs?view=recent').then(function (result) {
+    var tasks = context.request('/jobs').then(function (result) {
       if (version !== loadVersion) return;
       if (!Array.isArray(result.jobs)) throw new Error('任务响应不完整，请重新读取。');
-      var jobs = result.jobs.slice(0, 8);
+      var jobs = result.jobs.filter(function (job) { return typeof job.key === 'string' && job.key.startsWith(context.userId + '/'); });
       renderTasks(jobs);
       if (hasError) { ui.clear('tasks'); hasError = false; }
       if (jobs.some(function (job) { return ['queued', 'running'].includes(job.status); })) taskTimer = setTimeout(loadTasks, 5000);

@@ -44,6 +44,7 @@ node tests/test_frontend_regressions.js
 node tests/test_refinement_hierarchy_frontend.js
 node tests/test_reliability_frontend.js
 node tests/test_generation_stages_frontend.js
+node tests/test_path_boot.js
 node tests/test_job_details_frontend.js
 node tests/test_quiz_frontend.js
 node tests/test_quiz_save_state.js

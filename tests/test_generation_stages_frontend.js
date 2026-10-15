@@ -34,7 +34,7 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
   const backend=server||{jobs:new Map(),receipts:new Map(),serial:0,dropNextAck:0};
   const doc={createElement(tag){return new Element(tag,doc);},addEventListener(){},getElementById(id){return all(doc.body).find(n=>n.id===id)||null;},querySelector(selector){return doc.body.querySelector(selector);},querySelectorAll(selector){return doc.body.querySelectorAll(selector);}};
   doc.body=doc.createElement('body');const anchor=doc.createElement('div');anchor.id='resume-bar';doc.body.appendChild(anchor);const gen=doc.createElement('button');gen.id='gen-all-btn';doc.body.appendChild(gen);
-  const model={state:{stage:'learning',plan:{nodes:Array.from({length:nodeCount},(_,i)=>'n'+(i+1)).map(id=>({id,title:id+' 课程',objectives:[]}))},spec:{},nodeDetail:{},pending:null},session:{nodeMaterialStatus:{},expandedId:'n1'}};
+  const model={state:{stage:'learning',plan:{nodes:Array.from({length:nodeCount},(_,i)=>'n'+(i+1)).map(id=>({id,title:id+' 课程',objectives:[]}))},spec:{},nodeDetail:{},pending:null},session:{bootState:'ready',nodeMaterialStatus:{},expandedId:'n1'}};
   model.state.nodeState={}; model.state.nodeAccess={};
   if(prerequisiteLocked)model.state.plan.nodes.forEach((node,index)=>{node.deps=index?['n'+index]:[];});
   const calls=[],jobs=backend.jobs,storage=new Map(),observed=[],opened=[],renders=[];let clock=Date.now(),timer=0,currentKey='u0/material';

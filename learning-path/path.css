@@ -35,7 +35,7 @@ h2{font-family:var(--serif);font-weight:400;font-size:23px;margin:0 0 6px}
 
 /* ---- 采集 ---- */
 .intake-card{background:var(--paper2);border:1px solid var(--rule);border-radius:8px;padding:22px 24px}
-.chat-log{height:clamp(140px,32dvh,300px);overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:12px;padding:4px 2px 12px}
+.chat-log{height:auto;min-height:140px;max-height:clamp(140px,32dvh,300px);overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:12px;padding:4px 2px 12px}
 .chat-log .bubble{flex-shrink:0}
 .intake-card #learning-materials{max-height:30dvh;overflow:auto}
 .bubble{max-width:76%;padding:10px 14px;border-radius:10px;font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
@@ -329,3 +329,9 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 @media(max-width:600px){.workspace-reading .main{padding:20px}.workspace-reading .toolbar-inner{padding:10px 20px}.workspace-reading .brand{flex:1 1 160px}.workspace-reading .brand h1{font-size:15px}.workspace-reading .wrap{padding-top:0}}
 
 @media(max-width:800px){#stage-learning{padding-bottom:0}}
+
+/* Creation and research use the same quiet reading hierarchy. */
+.research-section-title{font:600 15px/1.5 var(--learn-font);margin:var(--learn-space-6) 0 var(--learn-space-2)}
+#stage-intake>.muted,#stage-research>.muted{max-width:70ch;line-height:1.7}
+#stage-intake .intake-card{margin-top:var(--learn-space-6)}
+#stage-intake .hint{line-height:1.7;max-width:70ch}

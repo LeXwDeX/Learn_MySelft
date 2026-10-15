@@ -11,15 +11,26 @@ define("path.persistence", ["path.model", "path.format", "path.hooks", "path.dom
 
 session.pendingEntries = null;
 
+session.pendingTarget = null;
+
 session.saveTimer = null;
 
 session.stateWrites = [];
 
 session.blockedStateKeys = {};
 
+function writeBlocked(stale) {
+    var error = new Error(stale ? '资料身份已变化，未保存内容仍保留，请恢复后重试' : '资料尚未准备好或当前为只读，未保存内容仍保留');
+    error.code = stale ? 'state_write_stale' : 'state_write_blocked';
+    return error;
+  }
+
 function putState(entries) {
-    if (window.LearnUser.readOnly) return Promise.resolve();
+    var generation = model.session.loadGeneration, target = model.session.materialSlug;
+    if (window.LearnUser.readOnly || model.session.bootState !== 'ready') return Promise.reject(writeBlocked(false));
     function send(keepalive) {
+      if (generation !== model.session.loadGeneration || target !== model.session.materialSlug) return Promise.reject(writeBlocked(true));
+      if (window.LearnUser.readOnly || model.session.bootState !== 'ready') return Promise.reject(writeBlocked(false));
       var allowed = {};
       Object.keys(entries).forEach(function (key) {
         if (!session.blockedStateKeys[key]) allowed[key] = entries[key];
@@ -41,7 +52,7 @@ function putState(entries) {
     }
     var write = send(true).catch(function (error) {
       // A conflict or recovery lock needs its own action, not the same request.
-      if (error.status && error.status < 500) throw error;
+      if (error.code === 'state_write_stale' || error.code === 'state_write_blocked' || error.status && error.status < 500) throw error;
       return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return send(false); });
     });
     session.stateWrites.push(write);
@@ -74,28 +85,28 @@ function deleteState(keys, password) {
 function flushSave() {
     if (session.saveTimer) { clearTimeout(session.saveTimer); session.saveTimer = null; }
     if (!session.pendingEntries) return Promise.resolve();
-    var entries = session.pendingEntries; session.pendingEntries = null;
-    return putState(entries);
+    var entries = session.pendingEntries;
+    function preserve(error) {
+      if ((error.code === 'state_write_stale' || error.code === 'state_write_blocked') && window.LearnSaves && window.LearnSaves.retain) {
+        window.LearnSaves.retain(Object.assign({}, entries, session.pendingEntries || {}));
+      }
+      throw error;
+    }
+    if (session.pendingTarget !== model.session.materialSlug) return Promise.reject(writeBlocked(true)).catch(preserve);
+    // Keep the pending snapshot until acknowledgement. A blocked or failed write is not a save.
+    return putState(entries).then(function () {
+      if (session.pendingEntries === entries) { session.pendingEntries = null; session.pendingTarget = null; }
+    }).catch(preserve);
   }
 
-function flushBeacon() {
-    if (session.saveTimer) { clearTimeout(session.saveTimer); session.saveTimer = null; }
-    if (!session.pendingEntries) return;
-    var payload = JSON.stringify({ entries: session.pendingEntries }); session.pendingEntries = null;
-    try {
-      window.LearnUser.fetch(model.session.API + '/state/put', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: payload, keepalive: new Blob([payload]).size <= 60000
-      }).catch(function () {});
-    } catch (e) {}
-  }
+function flushBeacon() { flushSave().catch(function () {}); }
 
 window.addEventListener('pagehide', flushBeacon);
 
 document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushBeacon(); });
 
 function save() {
-    if (window.LearnUser.readOnly) return;
+    if (window.LearnUser.readOnly || model.session.bootState !== 'ready') return;
     try {
       // 没有主题就不写：防止把空状态写进 learn-path-v1-untitled（历史 bug 的根源）
       if (!model.state.topic || session.blockedStateKeys[format.storeKey()]) return;
@@ -106,6 +117,7 @@ function save() {
         nodeDetail: model.state.nodeDetail, nodeState: model.state.nodeState, nodeAccess: model.state.nodeAccess || {},
         pending: model.state.pending || null
       };
+      session.pendingTarget = model.session.materialSlug;
       session.pendingEntries = {};
       session.pendingEntries[format.storeKey()] = JSON.stringify(payload);
       session.pendingEntries[model.session.LAST_KEY] = model.session.materialSlug || format.slug(model.state.topic);
@@ -116,6 +128,7 @@ function save() {
 // AI 辅助对话单独一个 key（learn-ai-v1-<slug>），与材料 save() 互不干扰
 
 function saveAi() {
+    if (window.LearnUser.readOnly || model.session.bootState !== 'ready') return;
     try {
       if (!model.state.topic) return;
       var o = {};
@@ -124,60 +137,112 @@ function saveAi() {
     } catch (e) { console.warn('saveAi failed', e); }
   }
 
+// Capture identity before any asynchronous work. An old response must never change a newer page.
+var activeLoad = null;
 function serverLoad() {
-    return window.LearnUser.fetch(model.session.API + '/state/all', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-      if (!j || !j.ok || !j.entries) return false;
-      var entries = j.entries;
-      // 支持 ?t=<slug> 深链（从「学习资料库」直接打开某份资料）；无参则从零开始新生成
-      var s = null;
-      try { s = new URLSearchParams(location.search).get('t'); } catch (e2) { s = null; }
-      if (s && typeof format.entryVal(entries, model.session.STORE_PREFIX + s) !== 'string') s = null;   // 指定的资料不存在则回退
-      if (!s) return false;   // 无参数 = 全新开始；已有资料请从「学习资料库」进入
-      var raw = format.entryVal(entries, model.session.STORE_PREFIX + s);
-      if (typeof raw !== 'string') return false;
-      var d; try { d = JSON.parse(raw); } catch (e3) { return false; }
-      if (!d || typeof d !== 'object') return false;
-      model.session.materialSlug = s;
-      model.state.stage = d.stage || 'intake';
-      model.state.title = window.LearnTitles.document(d);
-      hooks.renderDocumentTitle();
-      // 兼容修复：历史状态可能缺 topic 字段 → 依次从 plan/spec 恢复，而不是拒绝加载
-      model.state.topic = d.topic || (d.plan && d.plan.title) || (d.spec && d.spec.topic) || '';
-      if (!model.state.topic) return false;
-      model.state.history = Array.isArray(d.history) ? d.history : [];
-      model.state.materials = d.materials || [];
-      model.state.spec = d.spec || null;
-      model.state.queries = d.queries || [];
-      model.state.sources = d.sources || [];
-      model.state.research_version = d.research_version || 0;
-      model.state.brief = d.brief || '';
-      model.state.plan = d.plan || null;
-      model.state.nodeDetail = d.nodeDetail || {};
-      model.state.nodeState = d.nodeState || {};
-      model.state.nodeAccess = d.nodeAccess || {};
-      model.session.accessUnavailable = false;
-      model.state.pending = (d.pending && typeof d.pending === 'object') ? d.pending : null;
-      model.state.aiHist = {};
-      var aiRaw = format.entryVal(entries, 'learn-ai-v1-' + s);
-      if (typeof aiRaw === 'string') {
-        var aiD = null; try { aiD = JSON.parse(aiRaw); } catch (e4) { aiD = null; }
-        if (aiD && typeof aiD === 'object') model.state.aiHist = aiD;
+    var search = location.search, params = new URLSearchParams(search);
+    var generation = ++model.session.loadGeneration;
+    if (activeLoad) activeLoad.abort();
+    var controller = new AbortController(); activeLoad = controller;
+    model.session.bootState = 'loading';
+    // Back up the pre-load edit before a fast response can replace the model or debounce queue.
+    if (session.pendingEntries) {
+      try {
+        if (!window.LearnSaves || !window.LearnSaves.retain || !window.LearnSaves.retain(session.pendingEntries)) throw new Error('本机备份不可用，未保存内容仍保留，请重试保存后再读取资料');
+      } catch (error) {
+        model.session.bootState = 'error';
+        return Promise.reject(error);
       }
-      // 状态自洽性：learning 必须有 plan
-      if (model.state.stage === 'learning' && !model.state.plan) model.state.stage = 'research';
-      if (model.state.stage === 'research' && !model.state.spec) model.state.stage = 'intake';
-      // 历史键修复：先保存正确键；旧副本保留，用户可通过密码删除。
-      var fixSlug = format.slug(model.state.topic);
-      if (s === 'untitled' && fixSlug && fixSlug !== 'untitled') {
-        model.session.materialSlug = fixSlug;
-        save();
-        s = fixSlug;
+    }
+    function current() { return generation === model.session.loadGeneration && search === location.search; }
+    function stale() { var error = new Error('资料读取已被替换'); error.staleLoad = true; return error; }
+    var timer, timedOut = false, previousLast;
+    var timeout = new Promise(function (_, reject) {
+      timer = setTimeout(function () {
+        timedOut = true; controller.abort(); reject(new Error('读取资料超时，请重试'));
+      }, model.session.TIMEOUT);
+    });
+    var load = Promise.resolve().then(function () {
+      if (!current()) throw stale();
+      if (params.get('new') === '1' || !params.has('t')) return false;
+      var target = params.get('t');
+      if (!target || target.indexOf('/') >= 0) throw new Error('资料地址无效，请从资料库重新打开');
+      return window.LearnUser.fetch(model.session.API + '/state/all', {cache: 'no-store', signal: controller.signal}).then(function (response) {
+        if (!current()) throw stale();
+        if (!response.ok) throw new Error(response.status === 401 ? '登录已失效，请重新登录' : '读取资料失败（' + response.status + '），请重试');
+        return response.json();
+      }).then(function (snapshot) {
+        if (!current() || timedOut) throw stale();
+        function record(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
+        if (!record(snapshot) || snapshot.ok !== true || !record(snapshot.entries)) throw new Error('资料响应无效，请重试');
+        var entries = snapshot.entries, raw = format.entryVal(entries, model.session.STORE_PREFIX + target);
+        if (typeof raw !== 'string') throw new Error('资料不存在或已删除，请返回资料库');
+        var data;
+        try { data = JSON.parse(raw); } catch (_) { throw new Error('资料内容损坏，请重试'); }
+        if (!record(data)) throw new Error('资料内容损坏，请重试');
+        var topic = data.topic || (data.plan && data.plan.title) || (data.spec && data.spec.topic);
+        if (typeof topic !== 'string' || !topic.trim()) throw new Error('资料缺少学习主题，请重试');
+        ['history', 'materials', 'queries', 'sources'].forEach(function (name) {
+          if (data[name] != null && !Array.isArray(data[name])) throw new Error('资料内容损坏，请重试');
+        });
+        ['spec', 'plan', 'nodeDetail', 'nodeState', 'nodeAccess', 'pending'].forEach(function (name) {
+          if (data[name] != null && !record(data[name])) throw new Error('资料内容损坏，请重试');
+        });
+        if (data.stage != null && data.stage !== '' && ['intake', 'research', 'learning'].indexOf(data.stage) < 0 ||
+            data.plan && (!Array.isArray(data.plan.nodes) || !data.plan.nodes.every(function (node) { return record(node) && typeof node.id === 'string' && !!node.id; })) ||
+            (data.materials || []).some(function (item) { return !record(item) || typeof item.name !== 'string' || typeof item.text !== 'string'; }) ||
+            (data.history || []).some(function (item) { return !record(item) || typeof item.content !== 'string'; })) throw new Error('资料内容损坏，请重试');
+        function strings(value) { return Array.isArray(value) && value.every(function (item) { return typeof item === 'string'; }); }
+        if (data.title != null && typeof data.title !== 'string' || data.brief != null && typeof data.brief !== 'string' ||
+            data.queries && !strings(data.queries) ||
+            (data.sources || []).some(function (source) { return !record(source) || typeof source.url !== 'string'; }) ||
+            data.spec && ['preferences', 'outline_hint'].some(function (name) { return data.spec[name] != null && !strings(data.spec[name]); })) throw new Error('资料内容损坏，请重试');
+        var restored = {
+          stage: data.stage || 'intake', title: window.LearnTitles.document(data), topic: topic,
+          history: data.history || [], materials: data.materials || [], spec: data.spec || null,
+          queries: data.queries || [], sources: data.sources || [], research_version: data.research_version || 0,
+          brief: data.brief || '', plan: data.plan || null, nodeDetail: data.nodeDetail || {},
+          nodeState: data.nodeState || {}, nodeAccess: data.nodeAccess || {}, pending: data.pending || null, aiHist: {}
+        };
+        var aiRaw = format.entryVal(entries, 'learn-ai-v1-' + target);
+        if (typeof aiRaw === 'string') {
+          try { var ai = JSON.parse(aiRaw); if (record(ai)) restored.aiHist = ai; } catch (_) {}
+        }
+        if (restored.stage === 'learning' && !restored.plan) restored.stage = 'research';
+        if (restored.stage === 'research' && !restored.spec) restored.stage = 'intake';
+        if (!current() || timedOut) throw stale();
+        previousLast = format.entryVal(entries, 'learn-path-v1-last');
+        Object.assign(model.state, restored);
+        model.session.materialSlug = target;
+        model.session.accessUnavailable = false;
+        return true;
+      });
+    });
+    return Promise.race([load, timeout]).then(function (restored) {
+      if (!current()) throw stale();
+      if (!restored) { Object.assign(model.state, model.createState()); model.session.materialSlug = null; }
+      model.session.bootState = 'ready';
+      if (restored) {
+        hooks.renderDocumentTitle();
+        var target = model.session.materialSlug, fixed = format.slug(model.state.topic);
+        if (target === 'untitled' && fixed && fixed !== 'untitled') {
+          model.session.materialSlug = fixed; target = fixed; save();
+        }
+        if (previousLast !== target) {
+          var pointer = {}; pointer[model.session.LAST_KEY] = target;
+          putState(pointer).catch(function () {});
+        }
       }
-      if (format.entryVal(entries, 'learn-path-v1-last') !== s) {
-        var o = {}; o[model.session.LAST_KEY] = s; putState(o).catch(function () {});
-      }
-      return true;
-    }).catch(function () { return false; });
+      return restored;
+    }).catch(function (error) {
+      if (!current()) throw stale();
+      model.session.bootState = 'error';
+      if (error.name === 'AbortError') throw new Error('读取资料超时，请重试');
+      throw error;
+    }).finally(function () {
+      clearTimeout(timer);
+      if (current() && activeLoad === controller) activeLoad = null;
+    });
   }
 
 // ---------- 浏览器本地清理 ----------
@@ -260,6 +325,7 @@ function ensureAccess(id) {
   }
 
 function post(path, body, jobOptions) {
+    if (window.LearnUser.readOnly || model.session.bootState !== 'ready') return Promise.reject(new Error('资料尚未准备好或当前为只读，不能继续写入'));
     try {
       if (window.LearnSaves && window.LearnSaves.assertReady) window.LearnSaves.assertReady();
     } catch (error) { return Promise.reject(error); }

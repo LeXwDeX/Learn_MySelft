@@ -18,7 +18,7 @@ session.LAST_KEY = session.USER_PATH + 'learn-path-v1-last';
 
 // 指向最近一次会话的 slug（带用户前缀）
 
-session.state = {
+function createState() { return {
     stage: 'intake',                  // intake | research | learning
     topic: '',
     title: '',
@@ -35,7 +35,9 @@ session.state = {
     nodeState: {},                    // {id: {completed, score, mark}}
     aiHist: {},                       // {id: [{role, content}]} —— 每单元独立的 AI 辅助对话
     pending: null                     // {kind:'research'|'plan'|'node', nid?, at} —— 生成防中断
-  };
+  }; }
+
+session.state = createState();
 
 session.materialsPanel = null;
 
@@ -46,6 +48,10 @@ session.materialSlug = null;
 // Stable document identity, independent of its title
 
 session.selectedId = null;
+
+session.bootState = 'loading';
+
+session.loadGeneration = 0;
 
 session.busy = false;
 
@@ -79,5 +85,5 @@ session.MARK_LABELS = [['none', '未学'], ['learning', '学习中'], ['mastered
 
 session.STAGE_LABEL = { intake: '阶段 I · 需求采集', research: '阶段 R · 主动研究', learning: '阶段 L · 学习路径' };
 
-  return Object.freeze({state: session.state, session: session});
+  return Object.freeze({state: session.state, session: session, createState: createState});
 });

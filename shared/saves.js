@@ -30,6 +30,13 @@
     }
     window.LearnUI.set('state-save', message, failed ? 'error' : 'info', failed ? retry : null, '重试保存');
   }
+  function settledNotice() {
+    if (Object.keys(pending).length) return;
+    // A confirmed snapshot does not update the model of an already hydrated page.
+    // Recovery can finish only on a fresh page, including after tombstone cleanup.
+    if (recovering) notice('未保存内容已确认，请刷新后继续。', true);
+    else if (window.LearnUI) window.LearnUI.clear('state-save');
+  }
   function removed(entries, key) {
     if (Object.prototype.hasOwnProperty.call(entries, key) && entries[key] === null) return true;
     if (key.indexOf(context.userId + '/learn-ai-v1-') === 0) {
@@ -58,10 +65,7 @@
       });
     } catch (error) { /* An unavailable local store must not block server state loading. */ }
     persist();
-    if (!Object.keys(pending).length) {
-      recovering = false;
-      if (window.LearnUI) window.LearnUI.clear('state-save');
-    }
+    settledNotice();
     if (discarded && window.LearnUI) window.LearnUI.set('state-deleted', '这些资料已在服务器删除，对应旧草稿已清理，不会重新恢复。', 'info');
     return discarded;
   }
@@ -81,7 +85,10 @@
   function retry() {
     var entries = {};
     Object.keys(pending).forEach(function (key) { entries[key] = pending[key]; });
-    if (!Object.keys(entries).length) return Promise.resolve();
+    if (!Object.keys(entries).length) {
+      if (recovering) location.reload();
+      return Promise.resolve();
+    }
     retrying = true;
     var work = context.fetch(context.apiBase + '/state/put', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entries: entries})
@@ -159,7 +166,7 @@
       });
       persist();
       lastFailure = null;
-      if (!Object.keys(pending).length && window.LearnUI) window.LearnUI.clear('state-save');
+      settledNotice();
       return response;
     }).catch(function (error) {
       lastFailure = '网络中断，内容尚未保存到服务器';
@@ -169,7 +176,23 @@
     queue = request;
     return request;
   }
+  // Park a valid edit before its page replaces state during a read.
+  function retain(entries) {
+    if (context.readOnly) return false;
+    if (!recovering) {
+      var prefix = context.userId + '/';
+      Object.keys(entries || {}).forEach(function (key) {
+        if (key.indexOf(prefix) === 0 && !deleted[key] && typeof entries[key] === 'string') pending[key] = entries[key];
+      });
+    }
+    if (!Object.keys(pending).length) return true;
+    recovering = true;
+    var backedUp = persist();
+    notice(backedUp ? '未保存内容已保留，请重试保存后继续。' : '本机备份不可用，请保持页面打开并重试保存。', true);
+    return !!backedUp;
+  }
   window.LearnSaves = {
+    retain: retain,
     send: send,
     retry: retry,
     assertReady: assertReady,
@@ -187,7 +210,7 @@
     forget: function (keys) {
       keys.forEach(function (key) { delete pending[key]; });
       persist();
-      if (!Object.keys(pending).length && window.LearnUI) window.LearnUI.clear('state-save');
+      settledNotice();
     }
   };
   context.attachPersistence(window.LearnSaves);

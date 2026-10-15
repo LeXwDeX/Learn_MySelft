@@ -31,13 +31,14 @@ function renderChat() {
   }
 
 function setChatDisabled(off) {
-    format.$('chat-send').disabled = off;
-    format.$('chat-send').textContent = off ? '回复中…' : '发送';
-    if (model.session.materialsPanel) model.session.materialsPanel.lock(off || model.state.stage !== 'intake');
+    var blocked = model.session.bootState !== 'ready' || window.LearnUser.readOnly || model.session.busy || off || (model.session.materialsPanel && model.session.materialsPanel.busy());
+    format.$('chat-send').disabled = !!blocked;
+    format.$('chat-send').textContent = model.session.bootState === 'loading' ? '正在读取…' : model.session.bootState === 'error' ? '读取失败' : (off || model.session.busy) ? '回复中…' : '发送';
+    if (model.session.materialsPanel) model.session.materialsPanel.lock(blocked || model.state.stage !== 'intake');
   }
 
 function sendMessage() {
-    if (model.session.busy || (model.session.materialsPanel && model.session.materialsPanel.busy())) return;
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly || model.session.busy || (model.session.materialsPanel && model.session.materialsPanel.busy())) return;
     var el = format.$('chat-input');
     var text = (el.value || '').trim();
     if (!text) return;
@@ -63,6 +64,7 @@ function sendMessage() {
   }
 
 function callIntake(newMessage) {
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) return;
     if (newMessage === true) model.state.pending = null;
     setPending('intake');
     model.session.busy = true; setChatDisabled(true);
@@ -95,7 +97,7 @@ function callIntake(newMessage) {
       .catch(function (e) {
         thinking.remove();
         model.session.busy = false; setChatDisabled(false);
-        shell.showError('采集失败：' + e.message, callIntake);
+        shell.showError('暂时无法继续确认目标：' + e.message, callIntake);
       });
   }
 
@@ -105,7 +107,7 @@ function renderSpecCard() {
     function row(k, v) {
       return '<tr><th scope="row">' + format.esc(k) + '</th><td>' + format.esc(v || '—') + '</td></tr>';
     }
-    card.innerHTML = '<h3 id="spec-heading">需求单（Spec）</h3><table class="spec-table" aria-labelledby="spec-heading"><tbody>' +
+    card.innerHTML = '<h3 id="spec-heading">学习目标</h3><table class="spec-table" aria-labelledby="spec-heading"><tbody>' +
       row('主题', sp.topic) + row('目标', sp.goal) + row('现有基础', sp.level) +
       row('期望深度', sp.depth) +
       row('偏好形式', (sp.preferences || []).join('、')) +
@@ -156,7 +158,7 @@ function isBusyError(e) {
 function showResumeBar(msg) {
     var b = format.$('resume-bar');
     if (!b) return;
-    b.innerHTML = '<span class="spinner"></span>' + format.esc(msg || '上次的生成已在服务端继续，正在取回结果…');
+    b.innerHTML = '<span class="spinner"></span>' + format.esc(msg || '正在确认上次任务的状态，取回已有结果…');
     b.hidden = false;
   }
 
@@ -198,7 +200,7 @@ function resumeIfPending() {
         return id && (!detail || detail.manim_review && /^(pending|failed)$/.test(detail.manim_review.status));
       });
       if (!rem.length) { model.state.pending = null; persistence.save(); hideResumeBar(); return false; }
-      showResumeBar('上次批量生成未完成，继续生成剩余 ' + rem.length + ' 个节点…');
+      showResumeBar('上次的内容准备尚未完成，正在继续剩余 ' + rem.length + ' 个单元…');
       hooks.genAllStart(rem, {recovering: true});
       return true;
     }
@@ -217,10 +219,11 @@ function resumeIfPending() {
 // ---------- 阶段 B：研究 ----------
 
 function startResearch() {
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) return;
     setPending('research');
     format.$('research-card').hidden = true;
     format.$('research-status').hidden = false;
-    format.$('research-status').innerHTML = '<span class="spinner"></span>正在生成检索式并查询资料…';
+    format.$('research-status').innerHTML = '<span class="spinner"></span>正在查找与你的目标相关的资料…';
     shell.hideError();
     return persistence.post('/path/research', { spec: model.state.spec, key: format.storeKey() })
       .then(function (r) {
@@ -245,9 +248,10 @@ function startResearch() {
 // 只跑「生成路径」一段（research 成功后或自动恢复 plan 时复用）
 
 function continuePlan() {
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) return;
     setPending('plan');
     format.$('research-status').hidden = false;
-    format.$('research-status').innerHTML = '<span class="spinner"></span>研究完成，正在生成学习路径…';
+    format.$('research-status').innerHTML = '<span class="spinner"></span>资料已整理，正在安排学习单元…';
     return persistence.post('/path/plan', { spec: model.state.spec, brief: model.state.brief, key: format.storeKey() })
       .then(function (plan) {
         if (!plan || !plan.nodes || plan.nodes.length < 6) throw new Error('路径节点不足 6 个，请重试');
@@ -290,6 +294,7 @@ function renderResearch() {
   }
 
 function recheckResearch() {
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) return;
     var button = format.$('research-recheck');
     if (button.disabled) return;
     button.disabled = true;
