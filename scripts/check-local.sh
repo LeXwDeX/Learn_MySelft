@@ -51,6 +51,8 @@ node tests/test_flywheel_frontend.js
 node tests/test_markdown.js
 node tests/test_learning_scenes.js
 node tests/test_manim_player.cjs
+node tests/test_node_access_frontend.js
+node tests/test_quiz_access_guard.js
 node tests/test_scene_supplement_frontend.js
 node tests/test_logout_recovery.js
 node tests/test_ui_kit.js

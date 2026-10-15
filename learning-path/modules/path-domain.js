@@ -76,6 +76,15 @@ function isUnlocked(id) {
     });
   }
 
+function canAccess(id) {
+    if (model.session.accessUnavailable || !nodeById(id)) return false;
+    var overrides = model.state.nodeAccess || {};
+    var access = Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : null;
+    if (access === 'locked') return false;
+    if (access === 'unlocked') return true;
+    return isDone(id) || isUnlocked(id);
+  }
+
 function depTitles(id) {
     return depsOf(id).map(function (d) { var n = nodeById(d); return n ? n.title : dispId(d); });
   }
@@ -129,5 +138,5 @@ function normalizePlan(plan) {
     plan.summary = plan.summary || '';
   }
 
-  return Object.freeze({planHierarchy: planHierarchy, hierarchyEntry: hierarchyEntry, dispId: dispId, canRefine: canRefine, nodeById: nodeById, depsOf: depsOf, isDone: isDone, isUnlocked: isUnlocked, depTitles: depTitles, markNormalize: markNormalize, markOf: markOf, countReview: countReview, normalizePlan: normalizePlan});
+  return Object.freeze({planHierarchy: planHierarchy, hierarchyEntry: hierarchyEntry, dispId: dispId, canRefine: canRefine, nodeById: nodeById, depsOf: depsOf, isDone: isDone, isUnlocked: isUnlocked, canAccess: canAccess, depTitles: depTitles, markNormalize: markNormalize, markOf: markOf, countReview: countReview, normalizePlan: normalizePlan});
 });

@@ -26,9 +26,12 @@ function setStage(s) {
 // 阶段导航：只切视图，不改 state.stage（数据齐的阶段可随时回看）
 
 function viewStage(s) {
+    var returningToReading = s === 'learning' && !document.body.classList.contains('workspace-reading');
+    document.body.classList.toggle('workspace-reading', s === 'learning');
     format.$('stage-intake').hidden = s !== 'intake';
     format.$('stage-research').hidden = s !== 'research';
     format.$('stage-learning').hidden = s !== 'learning';
+    if (returningToReading && Number.isFinite(model.session.readingScrollY)) requestAnimationFrame(function () { window.scrollTo(0, model.session.readingScrollY); });
     var qb = format.$('quizmap-btn');
     if (qb) qb.hidden = !(s === 'learning' && model.state.plan);
     var ga = format.$('gen-all-btn');
@@ -73,29 +76,27 @@ function markButtonsHtml(id, cls) {
     var cur = domain.markOf(id);
     return model.session.MARK_LABELS.map(function (kv) {
       return '<button class="mark-btn ' + cls + (cur === kv[0] ? ' on' : '') + '" type="button" ' +
-        'data-mark="' + kv[0] + '" title="' + kv[1] + '">' + kv[1] + '</button>';
+        'aria-pressed="' + (cur === kv[0]) + '"' + (window.LearnUser.readOnly ? ' disabled' : '') + ' data-mark="' + kv[0] + '" title="' + kv[1] + '">' + kv[1] + '</button>';
     }).join('');
   }
 
 function setMark(id, mark) {
+    if (window.LearnUser.readOnly) return;
     var st = model.state.nodeState[id] || {};
     st.mark = mark;
     model.state.nodeState[id] = st;
     persistence.save();
-    // 就地刷新该卡片的四态按钮（不重建 DOM，避免丢掉卡内问答输入）
+    // Update only the mark buttons; preserve the reading DOM and focus.
     var card = format.$('node-' + id);
     if (card) {
       var btns = card.querySelectorAll('.mark-btn');
       for (var i = 0; i < btns.length; i++) {
         btns[i].classList.toggle('on', btns[i].getAttribute('data-mark') === mark);
+        btns[i].setAttribute('aria-pressed', String(btns[i].getAttribute('data-mark') === mark));
       }
     }
     updateReviewFilterBtn();
-    // 过滤激活时，取消「需复习」标记的卡片应从列表消失
-    if (model.session.reviewFilter && mark !== 'review') {
-      if (model.session.expandedId === id) { model.session.expandedId = null; model.session.activeScope = null; }
-      hooks.renderPlan();
-    }
+    hooks.refreshDirectory();
   }
 
 // 把一组标记按钮的点击事件绑到容器（stopPropagation 避免触发卡片其它点击）

@@ -44,9 +44,6 @@
         <div class="pbar"><span class="pfill" id="progress-fill"></span></div>
         <span class="ptext" id="progress-text">已完成 0/0</span>
       </div>
-      <button class="btn" id="quizmap-btn" type="button" hidden>生成测验</button>
-      <button class="btn" id="gen-all-btn" type="button" hidden>一键生成全部节点</button>
-      <button class="btn" id="review-filter-btn" type="button" hidden>只看需复习 (0)</button>
       <div class="lib-wrap" id="lib-wrap">
         <button class="btn" id="lib-btn" type="button">学习资料库<span class="lib-count" id="lib-count"></span> ▾</button>
         <div class="lib-pop" id="lib-pop" hidden></div>
@@ -103,21 +100,21 @@
       <!-- 阶段 C：学习 -->
       <section class="stage" id="stage-learning" hidden>
         <header class="plan-heading">
-          <p class="eyebrow">Stage L · Learning Path</p>
+
           <h2 id="plan-title">学习路径</h2>
           <p class="muted" id="plan-summary"></p>
+          <button class="btn" id="path-open" type="button" aria-haspopup="dialog" aria-controls="path-dialog">学习路径</button>
           <nav class="plan-context" aria-label="当前位置">
             <span>学习路径</span><span aria-hidden="true">›</span><span id="plan-current-unit" aria-current="location">选择单元开始学习</span>
           </nav>
         </header>
         <div class="learning-workspace">
-          <div class="unit-scroll" role="region" aria-label="学习单元列表">
+          <div class="unit-scroll" role="region" aria-label="当前单元正文">
             <div class="graph-wrap" id="graph-wrap">
-              <svg class="graph-svg" id="graph-svg"></svg>
               <div class="layer" id="graph-layer"></div>
             </div>
           </div>
-          <aside class="panel" id="node-panel">
+          <aside class="panel" id="node-panel" hidden>
             <div class="panel-head">
               <div class="panel-head-top">
                 <p class="pid" id="panel-id">AGENT</p>
@@ -133,19 +130,31 @@
             <div class="panel-foot" id="panel-foot" hidden></div>
           </aside>
         </div>
-        <button class="btn primary agent-launch" id="agent-launch" type="button" aria-haspopup="dialog" aria-controls="agent-dialog">问 AI</button>
-        <div class="legend">
-          <span><i class="legend-accent"></i>可学习</span>
-          <span><i class="legend-success"></i>已完成</span>
-          <span><i class="legend-locked"></i>锁定（前置未完成）</span>
-          <span><i class="legend-failed"></i>自测未通过</span>
-        </div>
+
       </section>
     </main>
   </div>
-  <footer>学习路径 · 后端 <span id="backend-label">—</span> · 状态实时同步到服务端，刷新/换设备自动恢复</footer>
+  <footer hidden><span id="backend-label"></span></footer>
 </div>
 
+<dialog class="workspace-path-dialog" id="path-dialog" aria-labelledby="path-title">
+  <header class="workspace-dialog-head"><h2 id="path-title">学习路径</h2><button class="btn" id="path-close" type="button">返回正文</button></header>
+  <p class="tip">完成前置单元后，后续单元按顺序开放。学习标记不改变完成与解锁。</p>
+  <div class="workspace-path-tools">
+<button class="btn" id="workspace-goal" type="button" hidden>查看学习目标</button>
+<button class="btn" id="workspace-research" type="button" hidden>查看研究资料</button><button class="btn" id="quizmap-btn" type="button" hidden>生成测验</button>
+<button class="btn" id="gen-all-btn" type="button" hidden>一键生成全部节点</button>
+<button class="btn" id="review-filter-btn" type="button" hidden>只看需复习 (0)</button></div>
+  <nav id="path-directory" aria-label="学习单元"></nav>
+</dialog>
+<dialog class="workspace-access-dialog" id="access-dialog" aria-labelledby="access-title" aria-describedby="access-description">
+  <form id="access-form">
+    <h2 id="access-title">锁定此单元</h2><p id="access-description"></p>
+    <label for="access-password">当前登录密码</label><input id="access-password" type="password" autocomplete="current-password" required>
+    <p id="access-error" role="alert" hidden></p>
+    <div class="workspace-dialog-actions"><button class="btn" id="access-cancel" type="button">取消</button><button class="btn primary" id="access-confirm" type="submit">确认锁定</button></div>
+  </form>
+</dialog>
 <dialog class="agent-dialog" id="agent-dialog" aria-labelledby="panel-title">
 </dialog>
 

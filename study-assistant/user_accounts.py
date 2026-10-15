@@ -55,6 +55,7 @@ class AccountStore:
         self.path = self.directory / 'accounts.json'
         self.lock = threading.RLock()
         self.failures = {}
+        self.confirmation_failures = {}
         with self.lock:
             if self.path.exists():
                 self.data = json.loads(self.path.read_text(encoding='utf-8'))
@@ -181,6 +182,23 @@ class AccountStore:
     def check_password(self, actor, password):
         with self.lock:
             return password_matches(password, self._user(actor['id'])['password'])
+
+    def confirm_password(self, actor, password, remote_address):
+        """Confirm the current password with independent account and IP limits."""
+        now = time.time()
+        with self.lock:
+            self.confirmation_failures = {key: failure for key, failure in self.confirmation_failures.items()
+                                          if failure['until'] > now}
+            keys = ['user:' + actor['id'], 'ip:' + remote_address]
+            if any(self.confirmation_failures.get(key, {}).get('count', 0) >= 10 for key in keys):
+                raise AccountError(429, '尝试次数过多，请5分钟后再试')
+            if not password_matches(password, self._user(actor['id'])['password']):
+                for key in keys:
+                    failure = self.confirmation_failures.setdefault(key, {'count': 0, 'until': now + 300})
+                    failure['count'] += 1
+                raise AccountError(403, '密码错误')
+            for key in keys:
+                self.confirmation_failures.pop(key, None)
 
     def login(self, username, password, remote_address):
         if not isinstance(username, str) or not isinstance(password, str) or len(username) > 100 or len(password) > 256:

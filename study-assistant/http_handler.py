@@ -58,6 +58,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Learn-User")
 
+    def send_response_only(self, code, message=None):
+        self._response_status = code
+        super().send_response_only(code, message)
+
+    def end_headers(self):
+        # Unread POST bytes must never become the next request line or its log.
+        if (getattr(self, "_response_status", 0) >= 200
+                and self.command == "POST"
+                and not getattr(self, "_post_body_consumed", False)):
+            self.close_connection = True
+            self.send_header("Connection", "close")
+        super().end_headers()
+
     def _json(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -129,6 +142,7 @@ class Handler(BaseHTTPRequestHandler):
                             "/path/refine",
                             "/state/all",
                             "/state/put",
+                            "/state/node-access",
                             "/state/del",
                             "/state/delete",
                         ],
@@ -217,12 +231,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(503, {"ok": False, "error": "读取暂时不可用，请稍后重试"})
 
     def _read_body(self):
-        return read_json_body(
+        body = read_json_body(
             self.headers,
             self.rfile,
             self.app.settings,
             getattr(self, "connection", None),
         )
+        self._post_body_consumed = True
+        return body
 
     def stream(self, messages, *, graphics_context=None):
         self.send_response(200)
@@ -368,6 +384,7 @@ class Handler(BaseHTTPRequestHandler):
             sse({"error": "%s: %s" % (type(e).__name__, e)})
 
     def do_POST(self):
+        self._post_body_consumed = False
         path = urllib.parse.urlsplit(self.path).path
         try:
             if not self._valid_origin():
@@ -395,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
             controller = routes["materials"]
         elif path == "/jobs" or path.startswith("/jobs/"):
             controller = routes["jobs"]
-        elif path in ("/state/delete", "/state/del", "/state/put"):
+        elif path in ("/state/delete", "/state/del", "/state/put", "/state/node-access"):
             controller = routes["state"]
         elif path.startswith("/path/"):
             controller = routes["path"]

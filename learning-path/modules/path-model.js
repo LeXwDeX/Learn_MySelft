@@ -31,6 +31,7 @@ session.state = {
     brief: '',
     plan: null,
     nodeDetail: {},                   // {id: NodeDetail}
+    nodeAccess: {},                  // Server-owned per-node access override
     nodeState: {},                    // {id: {completed, score, mark}}
     aiHist: {},                       // {id: [{role, content}]} —— 每单元独立的 AI 辅助对话
     pending: null                     // {kind:'research'|'plan'|'node', nid?, at} —— 生成防中断

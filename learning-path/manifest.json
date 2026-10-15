@@ -32,7 +32,8 @@
           "dependencies": [
             "path.model",
             "path.format",
-            "path.hooks"
+            "path.hooks",
+            "path.domain"
           ]
         },
         {
