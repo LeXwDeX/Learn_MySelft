@@ -134,7 +134,14 @@ function refreshReview(id, key) {
 
 function requestNodeDetail(id, manualRetry, options) {
     if (window.LearnUser.readOnly) return Promise.reject(new Error('当前视图只读'));
-    return persistence.ensureAccess(id).then(function () { return requestNodeDetailConfirmed(id, manualRetry, options); });
+    var key = format.storeKey();
+    // Preparing a whole path does not grant reading access or complete prerequisites.
+    // Still confirm the current document/node before submitting or restoring work.
+    var guard = options && options.batch ? persistence.ensureNodeExists(id) : persistence.ensureAccess(id);
+    return guard.then(function () {
+      if (format.storeKey() !== key) throw recoveryError();
+      return requestNodeDetailConfirmed(id, manualRetry, options);
+    });
   }
 
 function requestNodeDetailConfirmed(id, manualRetry, options) {
@@ -344,7 +351,7 @@ function genAllStep(key, serial) {
     var id = session.genAllQueue[0], stageError = null;
     session.genAllIdx++; genAllBtnSet('生成中 ' + session.genAllIdx + '/' + session.genAllTotal + '（点击暂停）'); setCardGenState(id, true);
     function active() { return key === format.storeKey() && serial === session.batchSerial; }
-    return requestNodeDetail(id, session.genAllManualRetry, {recovering: session.genAllRecovering,
+    return requestNodeDetail(id, session.genAllManualRetry, {batch: true, recovering: session.genAllRecovering,
       recoveryRequestIdPersisted: session.genAllRecoveryRequestIdPersisted, notifications: false,
       onJob: function (job, notice, stage) {
         if (!active()) return;

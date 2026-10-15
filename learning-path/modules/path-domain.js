@@ -77,7 +77,7 @@ function isUnlocked(id) {
   }
 
 function canAccess(id) {
-    if (model.session.accessUnavailable || !nodeById(id)) return false;
+    if (model.session.accessUnavailable || (model.session.readingAccessPending && model.session.readingAccessPending.id === id) || !nodeById(id)) return false;
     var overrides = model.state.nodeAccess || {};
     var access = Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : null;
     if (access === 'locked') return false;

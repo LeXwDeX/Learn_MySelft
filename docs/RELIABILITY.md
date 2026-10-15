@@ -63,6 +63,8 @@ Python 文件由 `study-assistant/architecture.json` 声明为 domain、infrastr
 
 `app_config.Settings` 启动验证端口、HTTP(S) 上游地址、模型、超时、请求体和队列上限。秘密值只使用服务器既有环境配置，公共 config.js 不包含密钥。
 
+JSON POST 要求唯一、正整数的 `Content-Length`，不接受 `Transfer-Encoding`。缺失、重复、零长度、非法长度、超限、超时或未读完整的请求在拒绝后关闭连接；只有完整读取并解析成功后才标记正文已消费，避免残留正文被当作下一条 HTTP 请求并进入请求日志。回归以本机套接字和虚构敏感字段验证，不代表已核验生产代理行为或发生过真实泄露。
+
 | 设置 | 默认值 | 用途 |
 | --- | --- | --- |
 | `UPSTREAM_TIMEOUT` | 180 秒 | 上游单次请求超时 |

@@ -1,6 +1,7 @@
 """StateRoutes HTTP routes use injected application services."""
 
 import sqlite3
+import urllib.parse
 from background_jobs import JobError
 from state_store import StateConflict
 from user_accounts import AccountError
@@ -10,6 +11,15 @@ class StateRoutes:
     def __init__(self, repository, accounts):
         self.repository = repository
         self.accounts = accounts
+
+    def get(self, request, path):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(request.path).query, keep_blank_values=True)
+        keys = query.get("key", [])
+        if len(keys) != 1:
+            raise AccountError(400, "请求必须指定一个状态键")
+        key = keys[0]
+        request._authorize_key(key, write=False)
+        request._json(200, {"ok": True, **self.repository.access_snapshot(key)})
 
     def post(self, request, path):
         try:

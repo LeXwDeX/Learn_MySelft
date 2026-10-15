@@ -21,8 +21,8 @@ class MaterialRepository:
         self.store = store
         self.lock = threading.RLock()
 
-    def read_key(self, key):
-        """Read a document, preserving u0 aliases without reviving tombstones."""
+    def _read_record(self, key):
+        """Resolve one record, preserving u0 aliases without reviving tombstones."""
         store = self.store
         record = store.record(key)
         if record is None and key.startswith("u0/"):
@@ -31,7 +31,39 @@ class MaterialRepository:
                 ("learn-", "quiz-map-", "knowledge-map-")
             ):
                 record = store.record(legacy)
+        return record
+
+    def read_key(self, key):
+        """Read a document, preserving u0 aliases without reviving tombstones."""
+        record = self._read_record(key)
         return record["value"] if record else None
+
+    def access_snapshot(self, key):
+        """Return only access and completion facts from one document revision."""
+        business = key.split("/", 1)[-1]
+        if not business.startswith("learn-path-v1-") or business == "learn-path-v1-last":
+            raise JobError(404, "学习资料不存在")
+        record = self._read_record(key)
+        try:
+            material = json.loads(record["value"]) if record and isinstance(record["value"], str) else None
+        except ValueError:
+            material = None
+        plan = material.get("plan") if isinstance(material, dict) else None
+        nodes = plan.get("nodes") if isinstance(plan, dict) else None
+        if not isinstance(nodes, list) or not nodes:
+            raise JobError(404, "学习路径已删除或不存在")
+        ids = [node.get("id") for node in nodes if isinstance(node, dict)]
+        if len(ids) != len(nodes) or any(not isinstance(nid, str) or not nid for nid in ids) or len(set(ids)) != len(ids):
+            raise JobError(404, "学习路径不存在")
+        access = material.get("nodeAccess") or {}
+        states = material.get("nodeState") or {}
+        return {
+            "key": key,
+            "revision": record["revision"],
+            "plan": {"nodes": [{"id": nid} for nid in ids]},
+            "nodeAccess": {nid: access[nid] for nid in ids if access.get(nid) in ("locked", "unlocked")},
+            "nodeState": {nid: {"completed": bool((states.get(nid) or {}).get("completed"))} for nid in ids},
+        }
 
     def material(self, key):
         v = self.read_key(key)
