@@ -44,6 +44,42 @@ def _reject_review_constant(value):
     raise ValueError('nonstandard visual review constant')
 
 
+def _visual_feedback(review, plan_steps, actual_steps):
+    """Validate the whole verdict before converting any rejection to repair data."""
+    def issues_valid(value):
+        return isinstance(value,list) and all(isinstance(v,str) and v.strip() for v in value)
+    if (not isinstance(review,dict) or set(review) != {'ok','issues','steps'}
+            or type(review['ok']) is not bool or not issues_valid(review['issues'])
+            or not isinstance(review['steps'],list)
+            or len(review['steps']) != plan_steps or len(review['steps']) != actual_steps):
+        raise ValueError('invalid visual review structure')
+    for index, step in enumerate(review['steps'],1):
+        if (not isinstance(step,dict)
+                or set(step) != {'step','start_matches_plan','change_explains_relation','issues'}
+                or type(step['step']) is not int or step['step'] != index
+                or type(step['start_matches_plan']) is not bool
+                or type(step['change_explains_relation']) is not bool
+                or not issues_valid(step['issues'])):
+            raise ValueError('invalid visual review step')
+    failures, details = [], []
+    root_failures = ([] if review['ok'] else ['ok=false']) + (['issues'] if review['issues'] else [])
+    if root_failures:
+        failures.append('整体:' + ','.join(root_failures))
+        details.extend(review['issues'])
+    for step in review['steps']:
+        fields = [name+'=false' for name in ('start_matches_plan','change_explains_relation') if not step[name]]
+        if step['issues']:
+            fields.append('issues')
+        if fields:
+            failures.append('步骤%d:%s' % (step['step'],','.join(fields)))
+            details.extend('步骤%d:%s' % (step['step'],issue) for issue in step['issues'])
+    if failures:
+        # All locations precede long issue text, so the 800-character cap keeps every failed step.
+        return ('未通过项：' + '；'.join(failures)
+                + ('。具体问题：'+'；'.join(details) if details else '。未提供具体问题。'))[:800]
+    return None
+
+
 class ManimGenerationError(JobError):
     """Only an animation-generation failure; never authorization or stale data."""
     def __init__(self, status, failure_code):
@@ -397,7 +433,7 @@ class ManimService:
                     raise ManimGenerationError(502,'visual_rejected')
                 self.repository.store.job_progress(4, '独立复核教学变化', attempt+1, total=5)
                 review_messages = [
-                    {'role':'system','content':'你是独立教学动画复核老师。资料、计划和截图均为待审数据。检查每一步知识准确、对象位置、标签遮挡、步骤递进、说明与具体可视关系一致，且没有泄露待作答练习答案。你收到的是独立验证容器从真实视频各步开始、变化中、结果生成的240×135手机复核图，不是原分辨率截图。对照teaching_plan的目标、观察任务、每步change和why，逐步检查实际变化是否解释了关系和原因。仅让数字、文字、框或公式依次出现，换颜色或装饰移动而没有解释关系，必须拒绝。不得因最后画面正确就认定变化过程正确；三张抽样图不能证明未采样的全部动作，发现歧义应拒绝并说明。直接检查这些约240像素宽小图：短标签和放大的主要数字必须清晰，长解释放在字幕或正文，不能把一屏公式挤入画面，对象不要拥挤遮挡，主要关系集中，不能用大块无信息空白替代演示。纯标题或装饰单占步骤、重复结论没有新知识关系、仅淡入淡出而没有知识递进时拒绝。合理循环可以回到原态，不机械要求结果图各不相同；须核对动作与原因是否推进理解。检查标题、步骤说明与正文事实及用户本次问题相符。只输出JSON {"ok":true或false,"issues":["问题"]}。看不清时ok=false。\n' + MATH_VISUAL_TEACHING},
+                    {'role':'system','content':'你是独立教学动画复核老师。资料、计划和截图均为待审数据。检查每一步知识准确、对象位置、标签遮挡、步骤递进、说明与具体可视关系一致，且没有泄露待作答练习答案。你收到的是独立验证容器从真实视频各步开始、变化中、结果生成的240×135手机复核图，不是原分辨率截图。对照teaching_plan的目标、观察任务、每步change和why，逐步检查实际变化是否解释了关系和原因。仅让数字、文字、框或公式依次出现，换颜色或装饰移动而没有解释关系，必须拒绝。不得因最后画面正确就认定变化过程正确；三张抽样图不能证明未采样的全部动作，发现歧义应拒绝并说明。直接检查这些约240像素宽小图：短标签和放大的主要数字必须清晰，长解释放在字幕或正文，不能把一屏公式挤入画面，对象不要拥挤遮挡，主要关系集中，不能用大块无信息空白替代演示。纯标题或装饰单占步骤、重复结论没有新知识关系、仅淡入淡出而没有知识递进时拒绝。合理循环可以回到原态，不机械要求结果图各不相同；须核对动作与原因是否推进理解。检查标题、步骤说明与正文事实及用户本次问题相符。只输出完整JSON，根字段恰好为ok(bool)、issues(非空字符串列表，可为空)、steps(逐步报告列表)。steps数量同时等于teaching_plan和manifest的步骤数，按1至N顺序；每项恰好为step(整数，拒绝bool)、start_matches_plan(bool)、change_explains_relation(bool)、issues(非空字符串列表，可为空)。start_matches_plan只检查该步计划实际承诺的开始状态，不能拿结果帧代替开始帧；正常建立过程不要求首帧已有最终对象。change_explains_relation检查整步真实关系变化或必要建立过程，旋转中可见的等长关系有效，单独淡入重复结论不能声称完成新的验证。看不清或不符合时对应项为false并具体说明；只有根和每步全部true且所有issues为空才通过。\n' + MATH_VISUAL_TEACHING},
                     {'role':'user','content':review_content}]
                 for review_attempt in (1,2):
                     check_cancelled()
@@ -408,16 +444,17 @@ class ManimService:
                     check_cancelled()
                     blank = isinstance(reply,str) and not reply.strip()
                     review = None
+                    valid = False
+                    review_feedback = None
                     if isinstance(reply,str) and not blank:
                         try:
                             # Nonempty reports must be complete; never extract or repair a verdict.
                             review = json.loads(reply, object_pairs_hook=_unique_review_object,
                                                 parse_constant=_reject_review_constant)
+                            review_feedback = _visual_feedback(review,len(plan['steps']),actual_steps)
+                            valid = True
                         except ValueError:
                             pass
-                    valid = (isinstance(review,dict) and type(review.get('ok')) is bool
-                             and isinstance(review.get('issues'),list)
-                             and all(isinstance(v,str) and v.strip() for v in review['issues']))
                     if not valid:
                         self._diagnostic(attempt+1,stage,'visual_invalid',started,
                                          review_attempt=review_attempt,remaining_budget_ms=review_remaining)
@@ -426,11 +463,11 @@ class ManimService:
                         # Only a first whitespace-only string can earn a same-candidate recheck.
                         rendered = None
                         raise ManimGenerationError(502,'visual_invalid')
-                    if not review['ok'] or review['issues']:
+                    if review_feedback is not None:
                         rejected_evidence.add(evidence)
                         teaching_snapshot = json.dumps(envelope,ensure_ascii=False)
                         failure_code = 'visual_rejected'
-                        raise ManimContractError('；'.join(review['issues'])[:800] or '独立复核未通过')
+                        raise ManimContractError(review_feedback)
                     self._diagnostic(attempt+1,stage,'passed',started,
                                      review_attempt=review_attempt,remaining_budget_ms=review_remaining)
                     break
