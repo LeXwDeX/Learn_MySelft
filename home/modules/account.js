@@ -34,6 +34,12 @@ define('home.account', ["home.platform"], function (deps) {
   $("password-dialog").addEventListener("cancel", function (event) {
     if (passwordBusy) event.preventDefault();
   });
+  $("password-dialog").addEventListener("keydown", function (event) {
+    if (passwordBusy && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
   $("password-form").onsubmit = function (event) {
     event.preventDefault();
     if (passwordBusy) return;

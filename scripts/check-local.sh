@@ -54,6 +54,7 @@ node tests/test_manim_player.cjs
 node tests/test_scene_supplement_frontend.js
 node tests/test_logout_recovery.js
 node tests/test_ui_kit.js
+node tests/test_account_dialog.js
 node tests/test_page_module_contracts.js
 node tests/test_home_recovery.js
 node tests/test_path_library_recovery.js
