@@ -40,6 +40,28 @@
          └─── 写入即推 / 加载即拉 ─────▶ │ SQLite 文档与任务表   │
 ```
 
+## 本地测试
+
+本地门禁需要 Python 3.10+、Node.js 和 FFmpeg。建议使用 Python 3.12。仓库提供独立的测试依赖锁文件，以下命令会在项目目录创建隔离环境并安装固定版本及哈希校验的依赖：
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements-test.txt
+sh scripts/check-local.sh
+```
+
+无需激活 `.venv`；检查脚本会优先使用显式设置的 `PYTHON`，其次使用项目内 `.venv/bin/python`，最后使用 `python3`。若要指定其他 Python，可运行 `PYTHON=/绝对路径/到/python sh scripts/check-local.sh`。每个 Git worktree 都有自己的 `.venv`，需要分别创建和安装依赖。可用 `.venv/bin/python -m pip check` 检查已安装依赖的一致性。
+
+门禁会在运行回归前检查 Python 版本、`py7zr` 测试依赖接口、Node.js 和 FFmpeg；缺少这些工具时会直接报告。更新测试依赖时，先修改 `requirements-test.in`，再使用以下命令重新生成带哈希的锁文件，并重新运行完整门禁：
+
+```bash
+uv pip compile requirements-test.in --python-version 3.10 --universal --generate-hashes --output-file requirements-test.txt
+.venv/bin/python -m pip install --require-hashes -r requirements-test.txt
+sh scripts/check-local.sh
+```
+
+本地门禁运行单元和前端回归。它不覆盖 Linux bubblewrap 沙箱、OCR 与 Office 资料解析的真实上传集成，也不替代真实模型链路和部署后的浏览器回归；这些仍按对应的部署与回归流程验证。
+
 ## 部署
 
 ### 0. 前置条件
