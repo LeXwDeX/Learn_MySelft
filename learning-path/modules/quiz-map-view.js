@@ -7,19 +7,22 @@ define("quiz-map.view", ["quiz-map.model", "quiz-map.format", "quiz-map.network"
   var identityModule = deps["quiz-map.identity"];
   var hooks = deps["quiz-map.hooks"];
 
+var renderVersion = 0;
 function renderView(slug) {
+    var version = ++renderVersion;
     var main = format.$('main');
-    main.innerHTML = '<p class="tip">加载测验地图…</p>';
-    network.fetchEntries().then(function (entries) {
+    main.innerHTML = '<p class="tip">加载综合测验…</p>';
+    return network.fetchEntries().then(function (entries) {
+      if (version !== renderVersion) return;
       var raw = format.entryVal(entries, model.session.QUIZ_PREFIX + slug);
       if (typeof raw !== 'string') {
-        main.innerHTML = '<div class="lerr">找不到这张测验地图（' + format.esc(slug) + '）。<br><a href="quiz-map.html">返回测验地图列表</a></div>';
+        main.innerHTML = '<div class="lerr">找不到这张综合测验（' + format.esc(slug) + '）。<br><a href="quiz-map.html">返回综合测验列表</a></div>';
         return;
       }
       var d = null;
       try { d = JSON.parse(raw); } catch (e) { d = null; }
       if (!d || !d.questions || !d.questions.length) {
-        main.innerHTML = '<div class="lerr">这张测验地图数据为空或已损坏。</div>';
+        main.innerHTML = '<div class="lerr">这张综合测验数据为空或已损坏。</div>';
         return;
       }
       var names = window.LearnTitles.quiz(d, entries);
@@ -28,7 +31,9 @@ function renderView(slug) {
       document.title = names.title;
       format.$('document-title').textContent = names.title;
       var tm = format.$('to-map');
-      if (d.sourceSlug) { tm.href = 'learning-path.html?t=' + encodeURIComponent(d.sourceSlug); tm.hidden = false; }
+      var source = identityModule.reviewTargets(d, entries);
+      tm.hidden = !source.sourceHref;
+      if (source.sourceHref) tm.href = source.sourceHref;
       format.$('brand-sub').textContent = '来自《' + sourceTitle + '》 · 共 ' + d.questions.length + ' 题 · 满分 100 分';
 
       var qs = d.questions;
@@ -36,19 +41,21 @@ function renderView(slug) {
       model.session.currentSlug = slug; model.session.currentD = d; model.session.currentEntries = entries;
       model.session.currentRes = (d.lastResult && typeof d.lastResult.score === 'number') ? d.lastResult : null;
       main.innerHTML =
-        '<div class="card"><p class="eyebrow">测验地图</p><h2>' + format.esc(d.displayTitle) + '</h2>' +
+        '<div class="card"><h2>' + format.esc(d.displayTitle) + '</h2>' +
         '<p class="muted">来自《' + format.esc(sourceTitle) + '》 · 共 ' + qs.length + ' 题 · 满分 100 分' +
         (d.lastResult && typeof d.lastResult.score === 'number' ? ' · 上次 ' + d.lastResult.score + ' 分' : '') + '</p></div>' +
-        '<div id="q-area"><p class="tip">完整题目与作答在测验窗口中展示。支持翻页查看历史题集，草稿自动保存。</p></div>' +
-        '<div class="foot"><button class="btn primary" id="submit" type="button">打开测验</button>' +
-        '<span class="tip">在大窗口中作答、查看答案和提交</span></div>' +
+        '<div id="q-area"><p class="tip">在测验窗口中继续作答或查看结果。题集与历史作答可按需展开。</p></div>' +
+        '<div class="foot"><button class="btn primary" id="submit" type="button">打开综合测验</button>' +
+        '<span class="tip">答案与详细标准需确认后展开</span></div>' +
         '<div id="result-area"></div>';
       format.renderMathIn(format.$('q-area'));
       format.highlightIn(format.$('q-area'));
       format.$('submit').addEventListener('click', function () { openExam(slug, d); });
       if (model.session.currentRes) showResult(model.session.currentRes);   // 重看历史 lastResult：直接展示结果页与飞轮按钮
     }).catch(function () {
-      main.innerHTML = '<div class="lerr">无法连接服务端（' + format.esc(model.session.API) + '）——请稍后刷新重试。</div>';
+      if (version !== renderVersion) return;
+      main.innerHTML = '<div class="lerr" role="alert">综合测验读取失败，请检查连接后重试。</div><button class="btn" id="quiz-reload">重新读取测验</button>';
+      format.$('quiz-reload').onclick = function () { renderView(slug); };
     });
   }
 
@@ -61,32 +68,46 @@ function syncQuiz(d, quiz) {
 
 function openExam(slug, d) {
     var related = Object.keys(model.session.currentEntries).filter(function (key) {
-      try { return JSON.parse(model.session.currentEntries[key]).sourceKey === d.sourceKey; } catch (error) { return false; }
+      try { return key.indexOf(model.session.USER_PATH + model.session.QUIZ_PREFIX) === 0 && d.sourceKey && JSON.parse(model.session.currentEntries[key]).sourceKey === d.sourceKey; } catch (error) { return false; }
     }).sort(function (a, b) { return (JSON.parse(model.session.currentEntries[a]).created || 0) - (JSON.parse(model.session.currentEntries[b]).created || 0); });
+    if (related.indexOf(model.session.USER_PATH + model.session.QUIZ_PREFIX + slug) === -1) related.push(model.session.USER_PATH + model.session.QUIZ_PREFIX + slug);
+    var owner = d;
     return window.QuizDialog.open({readOnly: window.LearnUser.readOnly, relatedKeys: related, api: model.session.API, key: model.session.USER_PATH + model.session.QUIZ_PREFIX + slug, title: d.displayTitle || d.title,
       render: format.mdRender, decorate: function (el) { format.renderMathIn(el); format.highlightIn(el); },
-      onLoad: function (quiz) { syncQuiz(d, quiz); },
-      onResult: function (res, key) { if (key !== model.session.USER_PATH + model.session.QUIZ_PREFIX + slug) return; syncQuiz(d, res.quiz); }
+      restoreFocus: function () { return format.$('submit'); },
+      resultReturn: {label: function (context) { return context.result && !context.result.pass ? '返回学习资料复习' : '返回学习资料'; },
+        onReturn: function (context) {
+          var target = identityModule.reviewTargets(owner, model.session.currentEntries, context.result, context.questions);
+          var href = !context.result.pass && target.units.length ? target.units[0].href : target.sourceHref;
+          if (href) location.href = href;
+        }},
+      onLoad: function (quiz) { if (model.session.currentD === owner) syncQuiz(d, quiz); },
+      onResult: function (res, key) { if (model.session.currentD !== owner || key !== model.session.USER_PATH + model.session.QUIZ_PREFIX + slug) return; syncQuiz(d, res.quiz); }
     });
   }
 
 function showResult(res) {
     var cls = res.pass ? 'ok' : 'bad';
     model.session.currentRes = res;
+    var targets = identityModule.reviewTargets(), readOnly = window.LearnUser.readOnly;
+    var links = targets.sourceHref ? '<a class="btn primary" href="' + format.esc(!res.pass && targets.units.length ? targets.units[0].href : targets.sourceHref) + '">' + (res.pass ? '返回学习资料' : targets.units.length ? '返回薄弱单元复习' : '返回学习资料复习') + '</a>' : '<p class="tip">关联学习资料已不可用，可在窗口回看逐题反馈。</p>';
+    if (!res.pass && targets.units.length) links += '<ul class="quiz-review-units">' + targets.units.map(function (unit) { return '<li><a href="' + format.esc(unit.href) + '">' + format.esc(unit.title) + '</a></li>'; }).join('') + '</ul>';
+    if (!res.pass && targets.hasUnmapped) links += '<p class="tip">部分旧题缺少单元对应关系。请结合逐题反馈与已有诊断回看源资料。</p>';
     format.$('result-area').innerHTML =
-      '<div class="card"><p class="eyebrow">测验结果</p>' +
+      '<section class="card quiz-result-panel" aria-label="综合测验结果"><h2>综合测验结果</h2>' +
       '<div class="result ' + cls + '"><span class="score ' + cls + '">' + format.esc(res.score) + '</span> 分 — ' +
-      (res.pass ? '通过 ✅' : '未通过 ❌') + '</div>' +
+      (res.pass ? '已通过' : '未通过，先复习失分内容') + '</div>' +
       (res.feedback ? '<p class="quiz-feedback">' + format.mdRender(res.feedback) + '</p>' : '') +
       '<p class="tip">逐题得分、作答与判分依据可在测验窗口中回看。</p>' +
-      '<div class="foot">' +
+      '<div class="quiz-result-return">' + links + '</div>' +
+      (readOnly ? '<p class="tip">管理员只读查看，可回看已有结果；不能生成、诊断或细化学习资料。</p>' : '<details class="quiz-secondary"><summary>换题与补习</summary><div class="foot">' +
         '<button class="btn" id="again" type="button">换新题，再测一次</button>' +
         '<button class="btn" id="gaps-btn" type="button">AI 诊断缺漏</button>' +
         '<button class="btn" id="refine-btn" type="button">按薄弱点细化学习地图</button>' +
-      '</div>' +
+      '</div></details>') +
       '<div id="gaps-area"></div>' +
       '<div id="refine-area"></div>' +
-      '</div>';
+      '</section>';
     format.renderMathIn(format.$('result-area'));
     format.highlightIn(format.$('result-area'));
     var b = format.$('submit'); if (b) { b.disabled = false; b.textContent = '查看作答与批改'; }

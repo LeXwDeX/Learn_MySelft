@@ -28,6 +28,7 @@ function renderGaps(resp) {
   }
 
 function runGaps(onDone) {
+    if (window.LearnUser.readOnly) return;
     var items = identityModule.collectGapItems();
     if (!items.length) {
       alert('本卷没有失分题，无需诊断。');
@@ -54,6 +55,7 @@ function runGaps(onDone) {
   }
 
 function runRefine() {
+    if (window.LearnUser.readOnly) return;
     var btn = format.$('refine-btn');
     if (!model.session.currentD) return;
     if (!identityModule.collectGapItems().length) { alert('本次作答没有失分题，无需补习。'); return; }

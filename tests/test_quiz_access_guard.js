@@ -12,7 +12,10 @@ vm.runInNewContext(fs.readFileSync('learning-path/modules/quiz-dialog-controller
 (async()=>{
  active.readOnly=true;await controller.submit();assert.equal(guardCalls,0);assert.equal(captures,0);active.readOnly=false;
  await controller.submit();assert.equal(calls,0);assert.equal(flushes,0);assert.equal(discards,0);assert.equal(removed,0);assert.equal(active.busy,false);assert.deepEqual(active.answers,['current']);assert.equal(round.attempts[0],history);assert.match(byId('qd-error').textContent,/locked/);
- active.config.beforeSubmit=()=>Promise.resolve(false);await controller.submit();assert.equal(calls,0);assert.equal(discards,0);assert.deepEqual(active.answers,['current']);
- active.config.beforeSubmit=async()=>{guardCalls++;};rejectAccess=false;await controller.submit();assert.equal(calls,1);assert.equal(flushes,1);assert.equal(discards,1);assert.equal(removed,1);assert.equal(resultCount,1);assert.deepEqual(active.answers,['current']);
+ assert.equal(active.recovering,true);const beforeRecovery=guardCalls;await controller.submit();assert.equal(guardCalls,beforeRecovery,'retry is blocked until the view is explicitly reread');
+ // Simulate a successful state/task reread. Full reread and pending-job recovery are covered in test_quiz_result_navigation.js.
+ active.recovering=false;let explicitDenials=0;
+ active.config.beforeSubmit=()=>{explicitDenials++;return Promise.resolve(false);};await controller.submit();assert.equal(explicitDenials,1);assert.equal(calls,0);assert.equal(flushes,0);assert.equal(discards,0);assert.equal(removed,0);assert.deepEqual(active.answers,['current']);assert.equal(round.attempts[0],history);assert.equal(active.recovering,true);
+ active.recovering=false;active.config.beforeSubmit=async()=>{guardCalls++;};rejectAccess=false;await controller.submit();assert.equal(calls,1);assert.equal(flushes,1);assert.equal(discards,1);assert.equal(removed,1);assert.equal(resultCount,1);assert.deepEqual(active.answers,['current']);
  console.log('PASS quiz submit access denial and async failure preserve answers/history/draft, explicit false blocks, restored access retries, readonly precedes guard');
 })().catch(error=>{console.error(error);process.exitCode=1;});

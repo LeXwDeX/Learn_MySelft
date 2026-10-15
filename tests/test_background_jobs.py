@@ -10,11 +10,42 @@ from unittest.mock import patch
 import quiz_harness as harness
 from state_store import StateStore
 from background_jobs import JobQueue, JobError, failure_detail
+from job_execution import remaining_timeout
 from material_titles import short_title
 import test_user_isolation as isolation
 
 
 class QueueTests(unittest.TestCase):
+    def test_receipts_and_workers_share_operation_specific_budget(self):
+        observed = {}
+        def execute(user_id, operation, body):
+            observed[operation] = remaining_timeout(1000)
+            return 200, {"ok": True}
+        queue = JobQueue(self.store, execute, workers=1, node_timeout=9, job_timeout=7, quizmap_timeout=11)
+        self.addCleanup(queue.stop)
+        queue.start()
+        for index, (operation, expected) in enumerate((("/path/quizmap", 11), ("/path/requiz", 7), ("/path/node", 9))):
+            with self.subTest(operation=operation):
+                receipt = queue.submit("u0", "operation-budget-%d" % index, operation, {"key": "u0/budget"})
+                self.assertEqual(receipt["timeout_seconds"], expected)
+                self.wait_status(queue, receipt["id"])
+                self.assertGreater(observed[operation], expected - 1)
+                self.assertLessEqual(observed[operation], expected)
+
+    def test_deadline_receipt_reports_the_actual_operation_budget(self):
+        def execute(*args):
+            from job_execution import JobDeadlineExceeded
+            raise JobDeadlineExceeded()
+        queue = JobQueue(self.store, execute, workers=1)
+        self.addCleanup(queue.stop)
+        queue.start()
+        for index, (operation, seconds) in enumerate((("/path/quizmap", 600), ("/path/requiz", 300))):
+            with self.subTest(operation=operation), self.assertLogs("background_jobs", level="ERROR"):
+                receipt = queue.submit("u0", "deadline-budget-%d" % index, operation, {"key": "u0/budget"})
+                failed = self.wait_status(queue, receipt["id"], "failed")
+                self.assertEqual(failed["timeout_seconds"], seconds)
+                self.assertIn("总时限：%s 秒" % seconds, failed["error"])
+
     def test_progress_persists_with_owner_isolation_and_retry_reset(self):
         entered, release = threading.Event(), threading.Event()
 

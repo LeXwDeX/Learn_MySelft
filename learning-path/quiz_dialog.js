@@ -49,7 +49,17 @@ function round() { return session.view.quiz.rounds[session.view.index]; }
 
 function roundConfig() { return Object.assign({}, session.view.config, {key: round().storageKey || session.view.config.key}); }
 
-  return Object.freeze({session: session, byId: byId, round: round, roundConfig: roundConfig});
+function resultContext() {
+    var active = session.view, issued = round();
+    var attempt = active.attempt;
+    return {key: issued.storageKey || active.config.key, nodeId: active.config.nodeId || '',
+      roundId: issued.id, attempt: attempt, result: attempt && (attempt.result || attempt),
+      isLatestAttempt: !!attempt && attempt === (issued.attempts || [])[((issued.attempts || []).length - 1)],
+      questions: issued.questions, answers: (active.answers || []).slice(),
+      isCurrentRound: (issued.storageKey || active.config.key) === active.config.key && issued.id === active.quiz.round_id};
+  }
+
+  return Object.freeze({resultContext: resultContext, session: session, byId: byId, round: round, roundConfig: roundConfig});
 });
 
 /* 题型、填空值、答案参考和评分文案。 */
@@ -271,7 +281,10 @@ function chooseDraft() {
       try { stored = JSON.parse(localStorage.getItem(question.localKey(model.roundConfig(), issued.id)) || 'null'); } catch (error) {}
     }
     var attempts = issued.attempts || [];
-    var draft = stored || issued.draft;
+    var memory = session.records[question.localKey(model.roundConfig(), issued.id)];
+    var memoryRecovery = memory && !memory.saved && (!stored || memory.version >= stored.version);
+    if (memoryRecovery) stored = null;
+    var draft = memoryRecovery ? {answers: memory.answers} : stored || issued.draft;
     model.session.view.attempt = draft ? null : (attempts.length ? attempts[attempts.length - 1] : null);
     model.session.view.readOnly = model.session.view.config.readOnly || !!model.session.view.attempt;
     model.session.view.answers = ((draft || model.session.view.attempt || {}).answers || []).slice();
@@ -312,7 +325,7 @@ function renderSaveState() {
     if (!model.session.view || !model.session.view.quiz) return;
     if (model.session.view.busy) { status('正在保存作答并按评分点判分…', false); return; }
     if (model.session.view.config.readOnly) { status('管理员只读查看', false); return; }
-    if (model.session.view.readOnly || model.session.view.attempt) { status('历史提交已保存，此视图只读', false); return; }
+    if (model.session.view.readOnly || model.session.view.attempt) { status(model.resultContext().isCurrentRound && model.resultContext().isLatestAttempt ? '本次结果已保存到服务器' : '历史结果已保存，当前仅回看', false); return; }
     var record = drafts.currentRecord();
     if (record && !record.saved) {
       var failed = record.syncState === 'failed';
@@ -322,7 +335,7 @@ function renderSaveState() {
       status(message, failed);
       return;
     }
-    status(record && record.saved ? '已自动保存到服务器' : model.session.view.localRecovery ? '已恢复本机未同步草稿' : model.round().draft ? '已恢复服务器草稿' : '输入后自动保存，可随时关闭', false);
+    status(record && record.saved ? '已自动保存到服务器' : model.session.view.localRecovery ? '已恢复本机未同步草稿' : model.round().draft ? '已恢复服务器草稿' : '尚未作答；输入后自动保存', false);
   }
 
 function updateProgress() {
@@ -332,7 +345,7 @@ function updateProgress() {
 function render() {
     var issued = model.round(), config = model.session.view.config, md = config.render || question.esc;
     var result = model.session.view.attempt && (model.session.view.attempt.result || model.session.view.attempt);
-    model.byId('qd-title').textContent = config.title || '测验';
+    model.byId('qd-title').textContent = config.title || (config.nodeId ? '单元自测' : '综合测验');
     model.byId('qd-round').innerHTML = model.session.view.quiz.rounds.map(function (r, index) {
       return '<option value="' + index + '"' + (index === model.session.view.index ? ' selected' : '') + '>' + question.roundLabel(model.session.view.quiz.rounds, index, model.session.view.quiz.round_id) + '</option>';
     }).join('');
@@ -344,7 +357,12 @@ function render() {
       return '<option value="' + index + '"' + (model.session.view.attempt === a ? ' selected' : '') + '>第 ' + (index + 1) + ' 次提交 · ' + question.esc(res.score) + ' 分</option>';
     }).join('');
     model.byId('qd-attempt').disabled = model.session.view.busy;
-    model.byId('qd-body').innerHTML = (result ? '<div class="qd-result"><strong>' + question.esc(result.score) + ' / 100 分</strong><span>' + (result.pass ? '已通过' : '继续巩固') + ' · ' + question.esc(result.feedback || '') + '</span></div>' : '') +
+    var context = model.resultContext(), action = config.resultReturn;
+    var returnButton = model.byId('qd-return');
+    returnButton.hidden = !result || !action;
+    returnButton.disabled = !!model.session.view.busy;
+    if (result && action) returnButton.textContent = typeof action.label === 'function' ? action.label(context) : action.label || '返回学习';
+    model.byId('qd-body').innerHTML = (result ? '<div class="qd-result"><strong>' + question.esc(result.score) + ' / 100 分</strong><span>' + (context.isCurrentRound && context.isLatestAttempt ? '本次结果 · ' : '历史结果 · ') + (result.pass ? '已通过' : '未通过，建议先复习失分内容') + ' · ' + question.esc(result.feedback || '') + '</span></div>' : '') +
       issued.questions.map(function (q, i) {
         var grade = result && (result.per_question || [])[i];
         var html = '<fieldset class="qd-question"><legend>第 ' + (i + 1) + ' 题 · ' + question.esc(q.points) + ' 分</legend><div class="qd-stem">' + md(q.q) + '</div>';
@@ -378,8 +396,9 @@ function render() {
         return html;
       }).join('');
     model.byId('qd-submit').hidden = model.session.view.readOnly;
-    model.byId('qd-submit').disabled = !!model.session.view.busy;
+    model.byId('qd-submit').disabled = !!(model.session.view.busy || model.session.view.recovering);
     model.byId('qd-submit').textContent = model.session.view.busy ? '逐项判分中…' : '提交本套';
+    model.byId('qd-history').querySelector('summary').textContent = '题集与历史作答 · ' + model.session.view.quiz.rounds.length + ' 套';
     model.byId('qd-retry').hidden = model.session.view.config.readOnly || !model.session.view.readOnly;
     model.byId('qd-retry').disabled = !!model.session.view.busy;
     model.byId('qd-error').hidden = true;
@@ -401,24 +420,64 @@ define("quiz-dialog.controller", ["quiz-dialog.model", "quiz-dialog.drafts", "qu
   var network = deps["quiz-dialog.network"];
 
 
-function navigate(index) {
-    if (!model.session.view || model.session.view.busy) return;
-    drafts.flushCurrent();
-    model.session.view.index = index;
-    drafts.chooseDraft(); view.render();
-    model.byId('qd-body').scrollTop = 0;
-    if (model.session.view.localRecovery) drafts.flushCurrent();
+function persistCurrent() {
+    var record = drafts.currentRecord(), active = model.session.view, index = active && active.index;
+    return Promise.resolve(drafts.flushCurrent()).then(function () {
+      if (!record || record.saved || record.localSaved) return true;
+      if (model.session.view !== active || (active && active.index !== index)) return false;
+      view.renderSaveState();
+      model.byId('qd-error').textContent = '草稿尚未保存到服务器或本机。请重试保存后再返回。';
+      model.byId('qd-error').hidden = false;
+      return false;
+    });
   }
 
-function close() {
-    drafts.flushCurrent();
-    model.session.opening += 1;
-    window.LearnUI.dialog.close(model.session.dialog);
-    if (model.session.returnFocus && model.session.returnFocus.isConnected) model.session.returnFocus.focus();
+function navigate(index) {
+    var active = model.session.view;
+    if (!active || active.busy || index < 0 || index >= active.quiz.rounds.length) return Promise.resolve(false);
+    var previous = active.index;
+    return persistCurrent().then(function (safe) {
+      if (!safe || model.session.view !== active || active.index !== previous) return false;
+      active.index = index;
+      drafts.chooseDraft(); view.render();
+      model.byId('qd-body').scrollTop = 0;
+      if (active.localRecovery) drafts.flushCurrent();
+      return true;
+    });
+  }
+
+function close(options) {
+    options = options || {};
+    var active = model.session.view, index = active && active.index, opening = model.session.opening;
+    var pending = model.session.closing;
+    if (pending && pending.active === active && pending.index === index && pending.opening === opening) return pending.promise;
+    if (!model.session.dialog || !model.session.dialog.open) return Promise.resolve(false);
+    var token = {active: active, index: index, opening: opening};
+    token.promise = persistCurrent().then(function (safe) {
+      if (!safe || model.session.view !== active || (active && active.index !== index) || model.session.opening !== opening || !model.session.dialog.open) return false;
+      model.session.opening += 1;
+      window.LearnUI.dialog.close(model.session.dialog);
+      var target = active && active.config.restoreFocus && active.config.restoreFocus();
+      if (!target || !target.isConnected) target = model.session.returnFocus;
+      if (options.restoreFocus !== false && target && target.isConnected) target.focus();
+      return true;
+    }).finally(function () { if (model.session.closing === token) model.session.closing = null; });
+    model.session.closing = token;
+    return token.promise;
+  }
+
+function returnToLearning() {
+    var active = model.session.view;
+    if (!active || !active.attempt || !active.config.resultReturn) return;
+    if (model.session.returning && model.session.returning.active === active) return model.session.returning.promise;
+    var context = model.resultContext(), action = active.config.resultReturn, token = {active: active};
+    token.promise = close().then(function (closed) { if (closed && action.onReturn) return action.onReturn(context); }).finally(function () { if (model.session.returning === token) model.session.returning = null; });
+    model.session.returning = token;
+    return token.promise;
   }
 
 function submit() {
-    if (!model.session.view || model.session.view.busy || model.session.view.readOnly) return;
+    if (!model.session.view || model.session.view.busy || model.session.view.recovering || model.session.view.readOnly) return;
     drafts.captureDraft();
     if (!model.session.view.answers.some(question.hasAnswer)) { model.byId('qd-error').textContent = '请至少回答一题再提交'; model.byId('qd-error').hidden = false; return; }
     var active = model.session.view, config = model.roundConfig(), id = model.round().id, answers = model.session.view.answers.slice();
@@ -446,9 +505,10 @@ function submit() {
       if (active.config.onResult) active.config.onResult(result, config.key);
       if (model.session.view === active) view.render();
     }).catch(function (error) {
-      active.busy = false;
+      active.busy = false; active.recovering = true;
       if (model.session.view === active) {
-        view.render(); model.byId('qd-error').textContent = '提交未完成，作答已保留：' + error.message; model.byId('qd-error').hidden = false;
+        view.render(); model.byId('qd-error').textContent = '提交结果尚未确认，作答仍在窗口中。请重新读取结果或恢复批改任务：' + error.message; model.byId('qd-error').hidden = false;
+        model.byId('qd-reload').hidden = false;
       }
     });
   }
@@ -457,24 +517,32 @@ function create() {
     if (model.session.dialog) return;
 
     model.session.dialog = document.createElement('dialog'); model.session.dialog.id = 'quiz-workspace'; model.session.dialog.setAttribute('aria-labelledby', 'qd-title');
-    model.session.dialog.innerHTML = '<div class="qd-layout"><header class="qd-head"><h2 id="qd-title">测验</h2><span id="qd-progress"></span><button class="btn qd-close" id="qd-close" aria-label="保存并关闭测验">保存并关闭</button></header><nav class="qd-nav" aria-label="题集翻页"><button class="btn" id="qd-prev">上一套</button><select id="qd-round" aria-label="选择题集"></select><button class="btn" id="qd-next">下一套</button><select id="qd-attempt" aria-label="选择历史作答"></select></nav><div id="qd-body"></div><div id="qd-error" role="alert" hidden></div><footer class="qd-foot"><span id="qd-save" role="status" aria-live="polite"></span><button class="btn" id="qd-sync">重试保存</button><button class="btn" id="qd-retry" hidden>再做本套</button><button class="btn primary" id="qd-submit">提交本套</button></footer></div>';
+    model.session.dialog.innerHTML = '<div class="qd-layout"><header class="qd-head"><h2 id="qd-title">测验</h2><span id="qd-progress"></span><button class="btn qd-close" id="qd-close" aria-label="返回学习页面">返回</button></header><details class="qd-history" id="qd-history"><summary>题集与历史作答</summary><nav class="qd-nav" aria-label="题集与历史作答"><button class="btn" id="qd-prev">上一套</button><select id="qd-round" aria-label="选择题集"></select><button class="btn" id="qd-next">下一套</button><select id="qd-attempt" aria-label="选择历史作答"></select></nav></details><div id="qd-body"></div><div id="qd-error" role="alert" hidden></div><footer class="qd-foot"><span id="qd-save" role="status" aria-live="polite"></span><button class="btn" id="qd-reload" hidden>重新读取题集</button><button class="btn primary" id="qd-return" hidden>返回学习</button><button class="btn" id="qd-sync">重试保存</button><button class="btn" id="qd-retry" hidden>再做本套</button><button class="btn primary" id="qd-submit">提交本套</button></footer></div>';
     document.body.appendChild(model.session.dialog);
     model.session.dialog.addEventListener('cancel', function (event) { event.preventDefault(); close(); });
-    model.byId('qd-close').onclick = close;
+    model.byId('qd-close').onclick = function () { close(); };
+    model.byId('qd-return').onclick = returnToLearning;
+    model.byId('qd-reload').onclick = function () { if (model.session.loadConfig) open(model.session.loadConfig); };
     model.byId('qd-prev').onclick = function () { navigate(model.session.view.index - 1); };
     model.byId('qd-next').onclick = function () { navigate(model.session.view.index + 1); };
     model.byId('qd-round').onchange = function () { navigate(Number(this.value)); };
     model.byId('qd-attempt').onchange = function () {
       if (!model.session.view || model.session.view.busy) return;
-      drafts.flushCurrent();
-      if (this.value === 'draft') {
+      var active = model.session.view, index = active.index, choice = this.value;
+      persistCurrent().then(function (safe) {
+      if (!safe || model.session.view !== active || active.index !== index) {
+        if (model.session.view === active) model.byId('qd-attempt').value = active.attempt ? String(model.round().attempts.indexOf(active.attempt)) : 'draft';
+        return;
+      }
+      if (choice === 'draft') {
         model.session.view.attempt = null; model.session.view.readOnly = !!model.session.view.config.readOnly;
         model.session.view.answers = (model.round().draft || {}).answers || model.round().questions.map(function () { return ''; });
       } else {
-        model.session.view.attempt = model.round().attempts[Number(this.value)]; model.session.view.readOnly = true;
+        model.session.view.attempt = model.round().attempts[Number(choice)]; model.session.view.readOnly = true;
         model.session.view.answers = model.session.view.attempt.answers || model.round().questions.map(function () { return ''; });
       }
       view.render();
+      });
     };
     model.byId('qd-retry').onclick = function () {
       if (!model.session.view || model.session.view.busy) return;
@@ -503,16 +571,27 @@ function create() {
 
 function open(config) {
       create();
+      if (model.session.view && !model.session.view.busy && model.session.dialog.open) {
+        return close({restoreFocus: false}).then(function (closed) { if (closed) return load(config); });
+      }
+      return load(config);
+    }
+
+function load(config) {
       if (model.session.view && model.session.view.busy) { if (!model.session.dialog.open) window.LearnUI.dialog.open(model.session.dialog); return Promise.resolve(); }
-      drafts.flushCurrent();
       model.session.view = null;
+      model.session.loadConfig = config;
+      model.byId('qd-history').open = false;
+      model.byId('qd-reload').hidden = true;
+      model.byId('qd-error').hidden = true;
+      model.byId('qd-return').hidden = true;
       model.byId('qd-sync').hidden = true;
       model.byId('qd-sync').disabled = true;
       view.status('正在恢复题集与草稿…', false);
       var request = ++model.session.opening;
       model.session.returnFocus = document.activeElement;
       if (!model.session.dialog.open) window.LearnUI.dialog.open(model.session.dialog);
-      model.byId('qd-title').textContent = config.title || '测验';
+      model.byId('qd-title').textContent = config.title || (config.nodeId ? '单元自测' : '综合测验');
       model.byId('qd-body').textContent = '正在恢复题集与草稿…';
       ['qd-prev', 'qd-next', 'qd-round', 'qd-attempt', 'qd-submit', 'qd-retry'].forEach(function (id) { model.byId(id).disabled = true; });
       var keys = config.relatedKeys || [config.key];
@@ -533,32 +612,46 @@ function open(config) {
         model.byId('qd-close').focus();
         if (window.LearnJobs && !config.readOnly) {
           var active = model.session.view;
+          active.busy = true; active.recovering = true; view.render();
+          view.status('正在核对已有批改任务…', false);
           window.LearnJobs.list().then(function (jobs) {
-            if (model.session.view !== active || !model.session.dialog.open) return;
+            if (model.session.view !== active) return;
             var job = jobs.find(function (item) {
               return item.operation === '/path/quiz' && item.key === model.roundConfig().key &&
                 item.round_id === model.round().id && (item.status === 'queued' || item.status === 'running');
             });
-            if (!job) return;
-            active.busy = true; view.render();
+            active.recovering = false;
+            if (!job) { active.busy = false; if (model.session.dialog.open) view.render(); return; }
+            active.busy = true; if (model.session.dialog.open) view.render();
             return window.LearnJobs.watch(job, {onStatus: function (message) {
               if (model.session.view === active && model.session.dialog.open) view.status(message, false);
             }}).then(function () {
               active.busy = false;
               if (model.session.view === active && model.session.dialog.open) return window.QuizDialog.open(config);
             }).catch(function (error) {
-              active.busy = false;
-              if (model.session.view === active && model.session.dialog.open) { view.render(); view.status(error.message, true); }
+              active.busy = false; active.recovering = true;
+              if (model.session.view === active && model.session.dialog.open) {
+                view.render(); model.byId('qd-reload').hidden = false;
+                view.status('批改结果尚未确认，请重新读取：' + error.message, true);
+              }
             });
-          }).catch(function (error) { if (model.session.view === active && model.session.dialog.open) view.status('任务状态暂时无法读取：' + error.message, true); });
+          }).catch(function (error) {
+            active.busy = false;
+            if (model.session.view === active && model.session.dialog.open) {
+              view.render(); model.byId('qd-reload').hidden = false;
+              view.status('批改任务状态未确认，请重新读取后再提交：' + error.message, true);
+            }
+          });
         }
       }).catch(function (error) {
         if (request !== model.session.opening || !model.session.dialog.open) return;
         model.byId('qd-body').textContent = '无法打开题集：' + error.message;
+        model.byId('qd-reload').hidden = false;
+        view.status('题集尚未读取，可重新读取或返回。', true);
       });
     }
 
-  return Object.freeze({navigate: navigate, close: close, submit: submit, create: create, open: open});
+  return Object.freeze({navigate: navigate, close: close, returnToLearning: returnToLearning, submit: submit, create: create, open: open});
 });
 
 define("quiz-dialog.entry", ["quiz-dialog.controller", "quiz-dialog.hooks", "quiz-dialog.view"], function (deps) {

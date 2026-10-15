@@ -335,3 +335,17 @@ footer{margin:34px auto 0;max-width:var(--max-w);border-top:1px solid var(--rule
 #stage-intake>.muted,#stage-research>.muted{max-width:70ch;line-height:1.7}
 #stage-intake .intake-card{margin-top:var(--learn-space-6)}
 #stage-intake .hint{line-height:1.7;max-width:70ch}
+
+/* Unit self-test loop: one primary next action, optional round controls. */
+.unit-quiz-panel{max-width:760px;margin-inline:auto}
+.unit-result-summary{font-size:16px;margin:16px 0}
+.unit-primary{display:flex;flex-wrap:wrap;gap:var(--learn-space-3);margin:24px 0}
+.unit-primary .btn,.unit-secondary .btn,.unit-secondary select{min-height:44px}
+.unit-secondary{border-top:1px solid var(--learn-border);padding-top:16px;margin-top:24px}
+.unit-secondary summary{cursor:pointer;color:var(--learn-muted);min-height:44px;display:list-item;align-content:center}
+.unit-secondary .quiz-actions{padding-top:12px}
+.unit-feedback{margin:20px 0}
+.unit-feedback h5{font:600 16px/1.5 var(--learn-font);margin:0 0 10px}
+.unit-feedback p,.unit-feedback li{font-size:14px;line-height:1.8;overflow-wrap:anywhere}
+.unit-completion-error{color:var(--learn-danger);font-size:14px}
+@media(max-width:600px){.unit-primary .btn{flex:1 1 100%}.unit-secondary .quiz-actions{align-items:stretch}}

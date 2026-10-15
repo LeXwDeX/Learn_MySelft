@@ -1,4 +1,4 @@
-#quiz-workspace{padding:0;width:min(1120px,94vw);height:92vh;max-width:none;max-height:none;box-shadow:0 20px 70px #17203433}
+#quiz-workspace{padding:0;width:min(1120px,94vw);height:92vh;height:92dvh;max-width:none;max-height:none;box-shadow:0 20px 70px #17203433}
 #quiz-workspace .qd-layout{height:100%;display:flex;flex-direction:column}
 #quiz-workspace .qd-head{padding:18px 24px;border-bottom:1px solid var(--rule);display:flex;align-items:center;gap:18px}
 #quiz-workspace h2{margin:0;font-size:21px}
@@ -19,7 +19,7 @@
 #quiz-workspace .qd-reference{margin-top:14px;font-size:14px;line-height:1.8}
 #quiz-workspace .qd-reference-content h3{font-size:14px;margin:14px 0 6px}
 #quiz-workspace .qd-reference-content .qd-rubric{margin-top:14px}
-#quiz-workspace .qd-grade{border-left:3px solid var(--accent);padding:8px 12px;margin-top:14px;line-height:1.7}
+#quiz-workspace .qd-grade{border-top:1px solid var(--learn-border);padding:8px 12px;margin-top:14px;line-height:1.7}
 #quiz-workspace .qd-result{display:flex;gap:20px;align-items:center;padding:16px;background:#f6f7f9;margin-bottom:24px}
 #quiz-workspace .qd-result strong{font-size:24px;white-space:nowrap}
 #quiz-workspace .qd-foot{width:100%;max-width:none;box-sizing:border-box;margin:0;flex:none;border-top:1px solid var(--rule);padding:14px 24px;display:flex;gap:12px;align-items:center;background:#fafbfc}
@@ -44,3 +44,27 @@
 #quiz-workspace textarea.qd-blank-input{min-height:48px}
 #quiz-workspace .qd-blank-grade{font-size:13px;line-height:1.8;margin-top:6px}
 
+
+/* Current work stays prominent; issued rounds and attempts remain available. */
+#quiz-workspace .qd-history{flex:none;border-bottom:1px solid var(--learn-border);background:var(--learn-surface)}
+#quiz-workspace .qd-history summary{padding:var(--learn-space-3) var(--learn-space-6);cursor:pointer;color:var(--learn-muted);min-height:44px;box-sizing:border-box}
+#quiz-workspace .qd-history .qd-nav{border-bottom:0;max-height:26vh;overflow:auto;background:var(--learn-surface);flex-wrap:wrap}
+#quiz-workspace .qd-head h2{min-width:0;overflow-wrap:anywhere}
+#quiz-workspace .qd-head #qd-progress{white-space:nowrap;font-size:13px;color:var(--learn-muted);font-variant-numeric:tabular-nums}
+#quiz-workspace .btn,#quiz-workspace select{min-height:44px}
+#quiz-workspace select{min-width:0;max-width:100%;font:inherit}
+#quiz-workspace .qd-result{background:var(--learn-paper);border-radius:var(--learn-radius);align-items:flex-start;line-height:1.65}
+#quiz-workspace .qd-result span{min-width:0;overflow-wrap:anywhere}
+#quiz-workspace .qd-question,#quiz-workspace .qd-stem,#quiz-workspace .qd-option span,#quiz-workspace .qd-grade{overflow-wrap:anywhere}
+#quiz-workspace #qd-body{min-height:0;overscroll-behavior:contain}
+#quiz-workspace #qd-body pre{overflow:auto;max-width:100%}
+#quiz-workspace :focus-visible{outline:2px solid var(--learn-accent);outline-offset:3px}
+@media(max-width:600px){
+ #quiz-workspace{width:calc(100vw - 16px);height:96vh;height:96dvh}
+ #quiz-workspace .qd-head h2{flex:1 1 160px}
+ #quiz-workspace .qd-history summary{padding:var(--learn-space-3)}
+ #quiz-workspace .qd-nav select{flex:1 1 140px}
+ #quiz-workspace #qd-attempt{flex-basis:100%}
+ #quiz-workspace .qd-result{flex-direction:column;gap:var(--learn-space-2)}
+ #quiz-workspace .qd-foot .btn.primary{flex:1}
+}

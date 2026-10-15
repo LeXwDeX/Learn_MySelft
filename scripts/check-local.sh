@@ -48,6 +48,8 @@ node tests/test_path_boot.js
 node tests/test_job_details_frontend.js
 node tests/test_quiz_frontend.js
 node tests/test_quiz_save_state.js
+node tests/test_quiz_result_navigation.js
+node tests/test_unit_learning_loop.js
 node tests/test_flywheel_frontend.js
 node tests/test_markdown.js
 node tests/test_learning_scenes.js

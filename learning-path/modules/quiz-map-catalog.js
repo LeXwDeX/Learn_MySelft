@@ -54,25 +54,25 @@ function renderSelect() {
       maps.sort(function (a, b) { return a.topic.localeCompare(b.topic, 'zh'); });
       quizzes.sort(function (a, b) { return (b.last || 0) - (a.last || 0); });
 
-      var h = '<div class="card"><div class="mode-h"><p class="eyebrow">' + (window.LearnUser.readOnly ? '学习地图' : '从学习地图生成测验') + '</p>' +
-              '<span class="qcount">' + maps.length + ' 张学习地图</span></div>';
-      if (!window.LearnUser.readOnly) h += '<p><a class="btn primary" href="learning-path.html?new=1&amp;mode=quiz">上传资料创建测验地图</a></p>';
-      h += window.LearnUser.readOnly ? '<p class="muted">当前为只读模式，可在下方打开已有测验地图。</p>' : '<p class="muted">选择一张学习地图，按其知识点与你的学习情况生成一整套测验（8~16 道，合计 100 分）。</p>';
+      var h = '<div class="card"><div class="mode-h"><p class="eyebrow">' + (window.LearnUser.readOnly ? '学习路径' : '从学习路径生成综合测验') + '</p>' +
+              '<span class="qcount">' + maps.length + ' 条学习路径</span></div>';
+      if (!window.LearnUser.readOnly) h += '<p><a class="btn primary" href="learning-path.html?new=1&amp;mode=quiz">上传资料创建综合测验</a></p>';
+      h += window.LearnUser.readOnly ? '<p class="muted">当前为只读模式，可在下方打开已有综合测验。</p>' : '<p class="muted">选择一条学习路径，按其知识点与你的学习情况生成一整套测验（8~16 道，合计 100 分）。</p>';
       if (!maps.length) {
-        h += window.LearnUser.readOnly ? '<p class="lempty">暂无学习地图。</p>' : '<p class="lempty">暂无学习地图——先去 <a href="learning-path.html?new=1">生成一张学习地图</a>。</p>';
+        h += window.LearnUser.readOnly ? '<p class="lempty">暂无学习路径。</p>' : '<p class="lempty">暂无学习路径——先去 <a href="learning-path.html?new=1">开始新学习</a>。</p>';
       } else {
         maps.forEach(function (m) {
           h += '<div class="lrow"><span class="lt"><span class="t">' + format.esc(m.topic) + '</span>' +
                '<span class="m">' + m.total + ' 节点 · 已完成 ' + m.done + '</span></span>' +
-               (window.LearnUser.readOnly ? '' : '<button class="btn" type="button" data-gen="' + format.esc(model.session.USER_PATH + model.session.MAP_PREFIX + m.slug) + '">生成测验</button>') + '</div>';
+               (window.LearnUser.readOnly ? '' : '<button class="btn" type="button" data-gen="' + format.esc(model.session.USER_PATH + model.session.MAP_PREFIX + m.slug) + '">生成综合测验</button>') + '</div>';
         });
       }
       h += '</div>';
 
-      h += '<div class="card"><div class="mode-h"><p class="eyebrow">已有测验地图</p>' +
-           '<span class="qcount">' + quizzes.length + ' 张测验地图</span></div>';
+      h += '<div class="card"><div class="mode-h"><p class="eyebrow">已有综合测验</p>' +
+           '<span class="qcount">' + quizzes.length + ' 张综合测验</span></div>';
       if (!quizzes.length) {
-        h += window.LearnUser.readOnly ? '<p class="lempty">暂无测验地图。</p>' : '<p class="lempty">暂无测验地图——从上面选一张学习地图生成一套吧。</p>';
+        h += window.LearnUser.readOnly ? '<p class="lempty">暂无综合测验。</p>' : '<p class="lempty">暂无综合测验——从上面选一条学习路径生成一套吧。</p>';
       } else {
         quizzes.forEach(function (q) {
           var meta = '共 ' + q.count + ' 题' + (q.last != null ? ' · 最近 ' + q.last + ' 分' : '');
@@ -104,7 +104,7 @@ function submitQuizMap(btn, key) {
       location.href = 'quiz-map.html?t=' + encodeURIComponent(r.slug);
     }).catch(function (e) {
       btn.disabled = false; btn.textContent = old;
-      alert('生成测验失败：' + e.message);
+      alert('生成综合测验失败：' + e.message);
     });
   }
 

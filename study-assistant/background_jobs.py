@@ -23,6 +23,7 @@ LOGGER = logging.getLogger(__name__)
 NODE_MAX_ATTEMPTS = 2
 LEARNING_OPERATIONS = frozenset({'/path/node', '/path/node/scene'})
 JOB_EXECUTION_SECONDS = 300
+QUIZMAP_EXECUTION_SECONDS = 600
 NODE_EXECUTION_SECONDS = JOB_EXECUTION_SECONDS
 NODE_RETRY_SECONDS = 5
 TRANSIENT_HTTP = frozenset({408, 429, 500, 502, 503, 504})
@@ -64,7 +65,7 @@ class JobError(Exception):
 def failure_detail(error):
     """Classify at the exception boundary, never expose upstream bodies or keys."""
     if isinstance(error, JobDeadlineExceeded):
-        return 'deadline', '本次后台任务超过 5 分钟执行时限，已有学习内容已保留。'
+        return 'deadline', '本次后台任务超过执行时限，已有学习内容已保留。'
     if isinstance(error, urllib.error.HTTPError):
         return 'remote_api', '远程服务端错误（API %s）：模型服务暂时不可用或拒绝请求，可稍后重试。' % error.code
     if isinstance(error, (TimeoutError, urllib.error.URLError)):
@@ -107,13 +108,14 @@ def public_job(row, include_result=True):
 class JobQueue:
     def __init__(self, store, execute, workers=2, limit=64, *,
                  node_timeout=NODE_EXECUTION_SECONDS, retry_delay=NODE_RETRY_SECONDS,
-                 job_timeout=JOB_EXECUTION_SECONDS):
+                 job_timeout=JOB_EXECUTION_SECONDS, quizmap_timeout=QUIZMAP_EXECUTION_SECONDS):
         self.store = store
         self.execute = execute
         self.workers = workers
         self.limit = limit
         self.node_timeout = node_timeout
         self.job_timeout = job_timeout
+        self.quizmap_timeout = quizmap_timeout
         self.retry_delay = retry_delay
         self.stopping = threading.Event()
         self.wake = threading.Event()
@@ -142,6 +144,11 @@ class JobQueue:
             connection.execute("DELETE FROM jobs WHERE status IN ('succeeded','failed','cancelled') AND updated_ms<?",
                                (now - 30 * 86400 * 1000,))
 
+    def timeout_for(self, operation):
+        if operation in LEARNING_OPERATIONS:
+            return self.node_timeout
+        return self.quizmap_timeout if operation == '/path/quizmap' else self.job_timeout
+
     def _public(self, connection, row, include_result=True):
         result = public_job(row, include_result=include_result)
         attempt = connection.execute('SELECT * FROM job_attempts WHERE job_id=?',
@@ -151,7 +158,7 @@ class JobQueue:
                       retry_at_ms=attempt['retry_at_ms'] if attempt else None,
                       auto_retry=row['operation'] in LEARNING_OPERATIONS,
                       max_attempts=NODE_MAX_ATTEMPTS if row['operation'] in LEARNING_OPERATIONS else 1,
-                      timeout_seconds=self.node_timeout if row['operation'] in LEARNING_OPERATIONS else self.job_timeout)
+                      timeout_seconds=self.timeout_for(row['operation']))
         if 'result' in row.keys() and row['result'] and row['status'] != 'succeeded':
             failure = json.loads(row['result'])
             result['failure_phase'] = failure.get('failure_phase')
@@ -327,7 +334,7 @@ class JobQueue:
                 if row['effect']:
                     status, result = 200, json.loads(row['effect'])
                 else:
-                    budget = execution_budget(self.node_timeout if row['operation'] in LEARNING_OPERATIONS else self.job_timeout)
+                    budget = execution_budget(self.timeout_for(row['operation']))
                     with budget:
                         status, result = self.execute(row['user_id'], row['operation'], json.loads(row['body']))
                         check_deadline()
@@ -337,6 +344,7 @@ class JobQueue:
                 category, message = failure_detail(error)
                 phase = getattr(self.store.local, 'phase', '任务处理')
                 if category == 'deadline':
+                    message += ' 总时限：%s 秒。' % self.timeout_for(row['operation'])
                     retrying = row['operation'] in LEARNING_OPERATIONS and row['attempt'] < NODE_MAX_ATTEMPTS
                     message += ' 阶段：%s。尝试 %s/%s。%s' % (
                         phase, row['attempt'], NODE_MAX_ATTEMPTS if row['operation'] in LEARNING_OPERATIONS else 1,
