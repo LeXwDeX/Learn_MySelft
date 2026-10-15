@@ -131,7 +131,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertTrue(result['asset_id'])
         self.assertEqual(renderer.call_args.args[0], TEACHING_REFERENCE_CODE)
         self.assertEqual(model.call_count, 2)
-        self.assertEqual(model.call_args_list[1].kwargs, {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'})
+        self.assertEqual(model.call_args_list[1].kwargs, {'temperature': 0, 'max_tokens': 8192, 'reasoning_effort': 'low', 'response_format': 'json_object'})
         context = json.loads(model.call_args_list[1].args[0][1]['content'][0]['text'])
         self.assertEqual(context['teaching_plan'], TEACHING_REFERENCE_ENVELOPE['teaching_plan'])
         self.assertEqual(len(context['manifest']['steps']), 2)
@@ -155,6 +155,32 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(model.call_count, 4)
         self.assertFalse(self.service.root.exists())
 
+    def test_empty_and_incomplete_visual_reviews_fail_closed_after_two_reviews(self):
+        from unittest.mock import patch
+        good = self.service.model.json([{}, {'content': 'generation'}])
+        self.repo.doc['nodeDetail'] = {'n1': {'study_notes': '原有正文', 'quiz': {'questions': [{'id': 'q1'}]}}}
+        self.repo.doc['nodeState'] = {'n1': {'completed': False, 'score': 37}}
+        original = json.dumps(self.repo.doc, sort_keys=True)
+        # The shared parser can recover missing closing delimiters. A recovered
+        # negative review must still reject; incomplete content stays invalid.
+        cases = (('', 'visual_invalid'),
+                 ('{"ok":false,"issues":[', 'visual_rejected'),
+                 ('{"ok":false,"issues":["unfinished', 'visual_invalid'))
+        for reply, failure_code in cases:
+            with self.subTest(reply=reply), \
+                 patch.object(self.service.model, 'json', side_effect=[good, reply, good, reply]) as model, \
+                 patch.object(self.renderer, 'render', wraps=self.renderer.render) as render:
+                with self.assertRaises(ManimGenerationError) as raised:
+                    self.generate()
+            self.assertEqual(raised.exception.failure_code, failure_code)
+            reviews = [call for call in model.call_args_list
+                       if isinstance(call.args[0][1]['content'], list)]
+            self.assertEqual(len(reviews), 2)
+            self.assertEqual(model.call_count, 4)
+            self.assertEqual(render.call_count, 2)
+            self.assertFalse(self.service.root.exists())
+            self.assertEqual(json.dumps(self.repo.doc, sort_keys=True), original)
+
     def test_generation_repair_and_review_use_separate_request_budgets(self):
         from unittest.mock import patch
         good = self.service.model.json([{}, {'content': 'generation'}])
@@ -167,7 +193,7 @@ class ManimServiceTests(unittest.TestCase):
             self.assertEqual(model.call_args_list[index].kwargs,
                              {'temperature': 0.3, 'max_tokens': 16384, 'reasoning_effort': 'none', 'response_format': 'json_object'})
         for index in (1, 3):
-            self.assertEqual(model.call_args_list[index].kwargs, {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'})
+            self.assertEqual(model.call_args_list[index].kwargs, {'temperature': 0, 'max_tokens': 8192, 'reasoning_effort': 'low', 'response_format': 'json_object'})
 
     def test_application_injects_admin_cap_without_changing_model_defaults(self):
         from application import create_application
@@ -464,7 +490,7 @@ class ManimServiceTests(unittest.TestCase):
             self.assertEqual(len(generation), 3)
             self.assertEqual(len(review), 2)
             self.assertTrue(all(call.kwargs['reasoning_effort'] == 'none' for call in generation))
-            self.assertTrue(all(call.kwargs == {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'} for call in review))
+            self.assertTrue(all(call.kwargs == {'temperature': 0, 'max_tokens': 8192, 'reasoning_effort': 'low', 'response_format': 'json_object'} for call in review))
             records = [json.loads(item.getMessage().split(' ', 1)[1]) for item in logs.records]
             records = [item for item in records if item['stage'] != 'publish']
             self.assertEqual([item['attempt'] for item in records], [1, 2, 3])
@@ -547,7 +573,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(render.call_count, 2)
         self.assertEqual(model.call_count, 3)
         self.assertIsInstance(model.call_args_list[2].args[0][1]['content'], list)
-        self.assertEqual(model.call_args_list[2].kwargs, {'temperature': 0, 'max_tokens': 4096, 'reasoning_effort': 'low', 'response_format': 'json_object'})
+        self.assertEqual(model.call_args_list[2].kwargs, {'temperature': 0, 'max_tokens': 8192, 'reasoning_effort': 'low', 'response_format': 'json_object'})
 
     def test_new_invalid_draft_never_reuses_previous_valid_teaching_plan(self):
         from unittest.mock import patch
@@ -662,6 +688,24 @@ class RelationPlannerTests(unittest.TestCase):
         self.assertEqual(native['focus'],self.relation()['objective'])
         self.assertIsInstance(bodies[2]['messages'][1]['content'],list)
         self.assertEqual(self.service.model.think,{'reasoning_effort':'max'})
+
+    def test_real_model_client_transport_uses_8192_for_visual_review(self):
+        from unittest.mock import patch
+        from model_client import ModelClient
+        import model_transport
+        settings=type('Settings',(),dict(llm_model='fixture',llm_base='http://127.0.0.1',max_output_tokens=16384,upstream_timeout=1))()
+        good=self.service.model.json([{}, {'content':'generation'}])
+        self.service.model=ModelClient(settings)
+        self.service.planner_model=self.service.model
+        self.service.generation_token_limit=16384
+        replies=[json.dumps(self.relation()),good,'{"ok":true,"issues":[]}']
+        responses=[json.dumps({'choices':[{'message':{'content':text}}]}).encode() for text in replies]
+        with patch.object(model_transport,'post',side_effect=responses) as transport:
+            self.generate()
+        bodies=[json.loads(call.args[1]) for call in transport.call_args_list]
+        self.assertEqual([body['max_tokens'] for body in bodies],[2048,16384,8192])
+        self.assertEqual([body['reasoning_effort'] for body in bodies],['none','none','low'])
+        self.assertEqual([body['response_format'] for body in bodies],[{'type':'json_object'}]*3)
 
     def test_known_teaching_failure_native_repair_can_succeed(self):
         from unittest.mock import patch
