@@ -30,6 +30,13 @@
     }
     window.LearnUI.set('state-save', message, failed ? 'error' : 'info', failed ? retry : null, '重试保存');
   }
+  function settledNotice() {
+    if (Object.keys(pending).length) return;
+    // A confirmed snapshot does not update the model of an already hydrated page.
+    // Recovery can finish only on a fresh page, including after tombstone cleanup.
+    if (recovering) notice('未保存内容已确认，请刷新后继续。', true);
+    else if (window.LearnUI) window.LearnUI.clear('state-save');
+  }
   function removed(entries, key) {
     if (Object.prototype.hasOwnProperty.call(entries, key) && entries[key] === null) return true;
     if (key.indexOf(context.userId + '/learn-ai-v1-') === 0) {
@@ -58,10 +65,7 @@
       });
     } catch (error) { /* An unavailable local store must not block server state loading. */ }
     persist();
-    if (!Object.keys(pending).length) {
-      recovering = false;
-      if (window.LearnUI) window.LearnUI.clear('state-save');
-    }
+    settledNotice();
     if (discarded && window.LearnUI) window.LearnUI.set('state-deleted', '这些资料已在服务器删除，对应旧草稿已清理，不会重新恢复。', 'info');
     return discarded;
   }
@@ -162,10 +166,7 @@
       });
       persist();
       lastFailure = null;
-      if (!Object.keys(pending).length && window.LearnUI) {
-        if (recovering) notice('未保存内容已确认，请刷新后继续。', true);
-        else window.LearnUI.clear('state-save');
-      }
+      settledNotice();
       return response;
     }).catch(function (error) {
       lastFailure = '网络中断，内容尚未保存到服务器';
@@ -209,7 +210,7 @@
     forget: function (keys) {
       keys.forEach(function (key) { delete pending[key]; });
       persist();
-      if (!Object.keys(pending).length && window.LearnUI) window.LearnUI.clear('state-save');
+      settledNotice();
     }
   };
   context.attachPersistence(window.LearnSaves);

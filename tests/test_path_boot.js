@@ -168,5 +168,20 @@ function harness(search='?t=original') {
     h.env.window.LearnUser.readOnly=false;h.env.window.LearnUser.fetch=async()=>Response.json({entries:{'u/dead':null}});await s.saves.refresh();
     s.saves.retain({'u/dead':'resurrection'});assert.equal(s.saves.pending(),false,'explicit tombstones must reject retained drafts');
   }
+  for (const conflict of [false,true]) {
+    const h=harness('?new=1'),s=await withSaves(h),ack=deferred();await h.persistence.serverLoad();
+    h.model.state.topic='confirmed newer content';h.model.session.materialSlug='original';h.persistence.save();
+    const user=h.env.window.LearnUser,fetch=user.fetch;let saved;
+    user.fetch=(url,options)=>url.endsWith('/state/put')?s.saves.send(options,()=>{saved=JSON.parse(options.body).entries;return ack.promise;}):fetch(url,options);
+    const writing=h.persistence.flushSave().catch(error=>error);h.env.location.search='?t=original';await h.persistence.serverLoad();
+    assert.equal(h.model.state.topic,'original');h.setReply(async()=>Response.json({ok:true,entries:saved}));
+    if(conflict) ack.resolve(Response.json({error:'conflict'},{status:409}));
+    else {await s.saves.refresh();ack.resolve(Response.json({ok:true}));}
+    await writing;assert.equal(s.saves.pending(),false);assert.throws(()=>s.saves.assertReady(),/恢复/);
+    let staleDispatches=0;
+    user.fetch=(url,options)=>s.saves.send(options,async()=>{staleDispatches++;return Response.json({ok:true});});
+    h.persistence.save();await assert.rejects(h.persistence.flushSave(),/恢复/);assert.equal(staleDispatches,0,'snapshot confirmation must not unlock a hydrated old page');
+    await s.saves.retry();assert(h.reloaded);
+  }
   console.log('PASS boot atomic restoration, loading/error write guards, HTTP/JSON/envelope/missing/malformed/empty target, timeout+retry, late success/failure/navigation, legacy topic, explicit new and readonly');
 })().catch(error=>{console.error(error);process.exitCode=1;});
