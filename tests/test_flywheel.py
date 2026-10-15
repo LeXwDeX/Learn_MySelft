@@ -102,7 +102,7 @@ class FlywheelTests(unittest.TestCase):
 
         with (
             patch.object(self.app.model, "nonempty", side_effect=generate),
-            patch.object(self.app.verification, "checked_questions"),
+            patch.object(self.app.verification, "checked_quizmap_questions"),
         ):
             status, next_exam = self.case.post("/path/quizmap", {"key": KEY})
         self.assertEqual(status, 200)
