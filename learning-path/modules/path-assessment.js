@@ -34,6 +34,29 @@ function hasLearningScene(notes, manimOnly) {
     return false;
   }
 
+// Upgrade identity requires a closed, valid legacy scene, not a sample fence
+// or a model-provided marker. Reuse the renderer's existing public validator.
+function hasValidLegacyScene(notes) {
+    if (!window.LearnScenes || !window.LearnScenes.validate || hasLearningScene(notes, true)) return false;
+    var lines = String(notes || '').split(/\r?\n/), marker = '', length = 0, legacy = false, raw = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!marker) {
+        var opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        if (!opening) continue;
+        marker = opening[1][0]; length = opening[1].length;
+        legacy = /^learn-scene(?:\s|$)/i.test(opening[2].trim()); raw = [];
+      } else if (new RegExp('^ {0,3}' + marker + '{' + length + ',}[ \\t]*$').test(line)) {
+        if (legacy) {
+          var source = raw.join('\n');
+          try { if (source.length <= 12000) { window.LearnScenes.validate(JSON.parse(source)); return true; } } catch (error) { /* Invalid scenes never authorize an upgrade identity. */ }
+        }
+        marker = ''; legacy = false;
+      } else if (legacy) raw.push(line);
+    }
+    return false;
+  }
+
 session.sceneWork = Object.create(null);
 
 function sceneWorkKey(key, id) { return key + '#' + id; }
@@ -41,26 +64,27 @@ function sceneWorkKey(key, id) { return key + '#' + id; }
 function sceneSupplementSection(id, d) {
     if (hasLearningScene(d.study_notes, true)) return '';
     var key = format.storeKey(), work = session.sceneWork[sceneWorkKey(key, id)];
-    var busy = !!(work && work.status === 'running') || !!(model.session.nodeMaterialStatus && model.session.nodeMaterialStatus[id] === 'generating-animation');
-    var notNeeded = !!(work && work.status === 'not-needed' && work.notes === d.study_notes);
+    var busy = !!(work && work.status === 'running' && work.notes === d.study_notes) || !!(model.session.nodeMaterialStatus && model.session.nodeMaterialStatus[id] === 'generating-animation');
     var retryAnimation = !!(d.manim_review && d.manim_review.status === 'failed' && d.manim_review.retryable === true);
     return '<div class="scene-supplement" data-scene-supplement="' + format.esc(id) + '">' +
       '<button class="btn scene-supplement-btn" type="button"' +
-      (window.LearnUser.readOnly || busy || notNeeded ? ' disabled' : '') +
-      '>' + (busy ? '正在生成…' : retryAnimation ? '重试教学动画' : d.manim_review && d.manim_review.status === 'pending' ? '继续准备教学动画' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
+      (window.LearnUser.readOnly || busy ? ' disabled' : '') +
+      '>' + (busy ? work && work.intent === 'original' ? '正在读取原任务…' : '正在生成…' : work && work.status === 'pending' ? '重新查询动画任务' : work && work.jobId && work.status === 'error' ? '重试原动画任务' : work && work.status === 'not-needed' ? '再次请求教学动画' : retryAnimation ? '重试教学动画' : d.manim_review && d.manim_review.status === 'pending' ? '继续准备教学动画' : hasLearningScene(d.study_notes) ? '升级教学动画' : '补充教学动画') + '</button>' +
+      '<p class="tip">这里生成的动画会保存在本单元正文；AI 辅助中的提问保留在对话里。</p>' +
       '<span class="scene-supplement-status" role="status" aria-live="polite"></span></div>';
   }
 
 function sceneSupplementMessage(id) {
     var work = session.sceneWork[sceneWorkKey(format.storeKey(), id)], detail = model.state.nodeDetail[id];
-    if (work && work.status === 'not-needed' && detail && work.notes !== detail.study_notes) return '';
-    if (work && work.status === 'running') return '正在生成教学动画…';
-    if (work && work.status === 'pending') return '动画任务的结果尚未确认。正文已保留，可以继续读取原任务。';
+    if (work && detail && work.notes !== detail.study_notes) return '';
+    if (work && work.status === 'running') return work.intent === 'original' ? '正在继续原动画任务，沿用原任务的生成方式。正文可以继续学习。' : '正在生成教学动画…';
+    if (window.LearnUser.readOnly) return '当前资料为只读视图。可以阅读已有正文和动画，不能生成或重试。';
+    if (work && work.status === 'pending') return work.message || '动画任务的结果尚未确认。正文已保留，可以继续读取原任务。';
     if (work && work.status === 'error') return '动画仍未生成，可以重试。学习正文已保留。';
     if (work && work.status === 'not-needed') return work.message;
     if (model.session.nodeMaterialStatus && model.session.nodeMaterialStatus[id] === 'generating-animation') return '学习正文已就绪，正在准备教学动画。可以先学习正文。';
     if (detail && detail.manim_review && detail.manim_review.status === 'pending') return '学习正文已就绪，动画尚未完成。可以先学习正文，或继续准备动画。';
-    if (detail && detail.manim_review && detail.manim_review.status === 'not_needed') return '本单元的正文可直接学习，无需额外动画。';
+    if (detail && detail.manim_review && detail.manim_review.status === 'not_needed') return '正文可直接学习。自动判断未选择动画；仍可手动补充教学动画。';
     if (detail && detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true) return '学习材料已就绪，动画暂未生成，可单独重试。';
     return '';
   }
@@ -177,20 +201,32 @@ function renderNodeDetail(id) {
     if (bRefine) bRefine.addEventListener('click', function () { refineNode(id); });
   }
 
-function applySceneSupplement(id, key, result) {
-    if (format.storeKey() !== key || !result || result.node_id !== id || typeof result.study_notes !== 'string') return false;
-    var node = domain.nodeById(id), detail = model.state.nodeDetail[id];
-    if (!node || !detail || !model.state.plan) return false;
+session.sceneIntent = Object.create(null);
+function sceneContext(id, key) {
+    var detail = model.state.nodeDetail[id];
+    return {key: key, id: id, detail: detail, notes: detail && detail.study_notes,
+      epoch: session.sceneIntent[sceneWorkKey(key, id)] || 0};
+  }
+function currentSceneContext(context) {
+    var detail = model.state.nodeDetail[context.id];
+    return format.storeKey() === context.key && !!domain.nodeById(context.id) && detail === context.detail &&
+      !!detail && detail.study_notes === context.notes && (session.sceneIntent[sceneWorkKey(context.key, context.id)] || 0) === context.epoch;
+  }
+function currentSceneWork(id, key, work) {
+    return currentSceneContext(work) && session.sceneWork[sceneWorkKey(key, id)] === work;
+  }
+function renderSceneWork(id) {
+    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+  }
+function applySceneSupplement(id, key, result, work) {
+    if (!currentSceneWork(id, key, work) || !result || result.node_id !== id || typeof result.study_notes !== 'string') return false;
+    var detail = model.state.nodeDetail[id];
     if (!hasLearningScene(result.study_notes)) {
       if (result.needed !== false || result.study_notes !== detail.study_notes) return false;
       if (result.manim_review) { detail.manim_review = result.manim_review; persistence.save(); assistant.syncAiMaterial(id); }
       var reason = typeof result.reason === 'string' ? result.reason.slice(0, 300) : '';
-      session.sceneWork[sceneWorkKey(key, id)] = {
-        status: 'not-needed',
-        notes: result.study_notes,
-        message: '本单元暂未找到合适图示。' + (reason ? ' ' + reason : '')
-      };
-      if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+      work.status = 'not-needed';
+      work.message = '这次未生成教学动画。正文仍可学习，也可以再次手动请求。' + (reason ? ' ' + reason : '');
       return true;
     }
     if (result.study_notes !== detail.study_notes && (typeof result.source_notes !== 'string' || result.source_notes !== detail.study_notes)) return false;
@@ -198,153 +234,153 @@ function applySceneSupplement(id, key, result) {
     if (changed) detail.study_notes = result.study_notes;
     if (Object.prototype.hasOwnProperty.call(result, 'sceneSupplement')) detail.sceneSupplement = result.sceneSupplement;
     if (Object.prototype.hasOwnProperty.call(result, 'manim_review')) detail.manim_review = result.manim_review;
-    if (changed || Object.prototype.hasOwnProperty.call(result, 'manim_review')) {
-      persistence.save();
-      assistant.syncAiMaterial(id);
-    }
-    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+    work.notes = detail.study_notes;
+    if (changed || Object.prototype.hasOwnProperty.call(result, 'manim_review')) { persistence.save(); assistant.syncAiMaterial(id); }
     return true;
   }
-
-function consumeSceneSupplement(id, key, result, workKey) {
-    if (format.storeKey() !== key) return;
-    var detail = model.state.nodeDetail[id];
-    if (result && result.needed === false && (!detail || result.study_notes !== detail.study_notes)) {
-      clearSceneSupplementWork(id, key, workKey);
-      return;
-    }
-    if (!applySceneSupplement(id, key, result)) {
-      clearSceneSupplementWork(id, key, workKey);
-      return;
-    }
-    if (result.needed !== false) {
-      session.sceneWork[workKey] = {status: 'done'};
-      if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
-    }
+function consumeSceneSupplement(id, key, result, work) {
+    if (!currentSceneWork(id, key, work)) return;
+    if (!applySceneSupplement(id, key, result, work)) { clearSceneSupplementWork(id, key, work); return; }
+    if (result.needed !== false) work.status = 'done';
+    renderSceneWork(id);
   }
-
-function clearSceneSupplementWork(id, key, workKey) {
-    if (format.storeKey() !== key) return;
-    delete session.sceneWork[workKey || sceneWorkKey(key, id)];
-    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+function clearSceneSupplementWork(id, key, work) {
+    if (!currentSceneWork(id, key, work)) return;
+    delete session.sceneWork[sceneWorkKey(key, id)]; renderSceneWork(id);
   }
-
-function markSceneSupplementError(id, key, error) {
-    if (format.storeKey() !== key) return;
-    var pending = error && (error.error_category === 'watch_timeout' || error.job && /^(queued|running)$/.test(error.job.status));
-    session.sceneWork[sceneWorkKey(key, id)] = {status: pending ? 'pending' : 'error'};
-    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
+function markSceneSupplementError(id, key, error, work) {
+    if (!currentSceneWork(id, key, work)) return;
+    var pending = error && (error.error_category === 'watch_timeout' || error.error_category === 'scene_lookup_unconfirmed' || error.job && /^(queued|running)$/.test(error.job.status));
+    work.status = pending ? 'pending' : 'error';
+    if (error && error.jobId) work.jobId = error.jobId;
+    if (error && error.error_category === 'scene_lookup_unconfirmed') work.message = '暂时无法确认原动画任务。正文已保留，请重新查询任务后再继续。';
+    renderSceneWork(id);
   }
-
-function refreshSceneReview(id, key) {
-    if (!window.LearnUser.fetch) return Promise.resolve();
+function refreshSceneReview(id, key, work) {
+    if (!currentSceneWork(id, key, work) || !window.LearnUser.fetch) return Promise.resolve();
     var controller = new AbortController(), timeout = setTimeout(function () { controller.abort(); }, 10000);
     return window.LearnUser.fetch(window.LearnUser.apiBase + '/state/all', {cache: 'no-store', signal: controller.signal}).then(function (response) {
       return response.ok ? response.json() : null;
     }).then(function (data) {
-      if (format.storeKey() !== key || !data || !data.entries) return;
+      if (!currentSceneWork(id, key, work) || !data || !data.entries) return;
       var saved; try { saved = JSON.parse(data.entries[key]); } catch (error) { return; }
       var remote = saved && saved.nodeDetail && saved.nodeDetail[id], current = model.state.nodeDetail[id];
-      if (remote && current && remote.study_notes === current.study_notes && remote.manim_review) current.manim_review = remote.manim_review;
+      if (remote && remote.study_notes === work.notes && remote.manim_review) current.manim_review = remote.manim_review;
     }).catch(function () {}).finally(function () { clearTimeout(timeout); });
   }
-
 session.sceneAccessWork = Object.create(null);
 function supplementScene(id) {
     if (window.LearnUser.readOnly) return Promise.resolve();
-    var key = sceneWorkKey(format.storeKey(), id);
-    if (session.sceneAccessWork[key]) return session.sceneAccessWork[key];
-    var work = persistence.ensureAccess(id).then(function () { return supplementSceneConfirmed(id); }).catch(function (error) { shell.showError(error.message); }).finally(function () { delete session.sceneAccessWork[key]; });
-    session.sceneAccessWork[key] = work;
+    var key = format.storeKey(), workKey = sceneWorkKey(key, id);
+    var pendingAccess = session.sceneAccessWork[workKey];
+    if (pendingAccess && currentSceneContext(pendingAccess.context)) return pendingAccess.promise;
+    var active = session.sceneWork[workKey];
+    if (active && active.status === 'running' && currentSceneWork(id, key, active)) return active.promise;
+    session.sceneIntent[workKey] = (session.sceneIntent[workKey] || 0) + 1;
+    var context = sceneContext(id, key), accessWork = {context: context};
+    var work = persistence.ensureAccess(id).then(function () {
+      if (currentSceneContext(context)) return supplementSceneConfirmed(id, key, context);
+    }).catch(function (error) { if (currentSceneContext(context)) shell.showError(error.message); }).finally(function () {
+      if (session.sceneAccessWork[workKey] === accessWork) delete session.sceneAccessWork[workKey];
+    });
+    accessWork.promise = work; session.sceneAccessWork[workKey] = accessWork;
     return work;
   }
-
-function supplementSceneConfirmed(id) {
-    var key = format.storeKey(), node = domain.nodeById(id), detail = model.state.nodeDetail[id];
-    if (!node || !detail || !model.state.plan || window.LearnUser.readOnly || hasLearningScene(detail.study_notes, true)) return Promise.resolve();
-    var workKey = sceneWorkKey(key, id), current = session.sceneWork[workKey];
-    if (current && current.status === 'running') return current.promise;
-    var work = {status: 'running'};
-    session.sceneWork[workKey] = work;
-    if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
-    var staged = detail.manim_review && /^(pending|failed)$/.test(detail.manim_review.status);
-    var body = {key: key, node: {id: id}};
-    if (staged) body.automatic = true;
-    work.promise = persistence.post('/path/node/scene', body, {
-      manualRetry: true,
-      newOperation: true,
-      onRetry: function () { return format.storeKey() === key ? supplementScene(id) : Promise.resolve(); }
-    }).then(function (result) {
-      if (format.storeKey() !== key) return;
-      consumeSceneSupplement(id, key, result, workKey);
-    }).catch(function (error) {
-      return refreshSceneReview(id, key).then(function () {
-        markSceneSupplementError(id, key, error);
-        if (format.storeKey() === key && !error.jobId && !(detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true)) {
-          shell.showError('补充图示失败，请稍后重试。', function () { return supplementScene(id); });
+function sceneLookupError(message, job) {
+    var error = new Error(message); error.error_category = 'scene_lookup_unconfirmed';
+    if (job) { error.job = job; error.jobId = job.id; }
+    return error;
+  }
+function requestSceneIntent(id, key, work) {
+    if (!window.LearnJobs) return Promise.reject(sceneLookupError('动画任务查询不可用'));
+    return window.LearnJobs.list(key).catch(function () { throw sceneLookupError('无法读取原动画任务'); }).then(function (jobs) {
+      if (!currentSceneWork(id, key, work)) return null;
+      if (!Array.isArray(jobs)) throw sceneLookupError('动画任务列表无法确认');
+      var latest = null;
+      jobs.forEach(function (job) {
+        if (job.operation !== '/path/node/scene' || job.node_id !== id) return;
+        if (job.key !== key || !job.id) throw sceneLookupError('动画任务身份无法确认');
+        if (!latest || job.created_ms > latest.created_ms) latest = job;
+      });
+      if (!latest) return null;
+      return window.LearnJobs.get(latest.id).catch(function () { throw sceneLookupError('无法读取原动画任务', latest); }).then(function (fresh) {
+        if (!currentSceneWork(id, key, work)) return null;
+        if (!fresh || fresh.id !== latest.id || fresh.key !== key || fresh.node_id !== id || fresh.operation !== '/path/node/scene') throw sceneLookupError('动画任务身份无法确认', latest);
+        return fresh;
+      });
+    }).then(function (job) {
+      if (!currentSceneWork(id, key, work)) return null;
+      var retry = function () { return currentSceneWork(id, key, work) ? supplementScene(id) : Promise.resolve(); };
+      if (job && (job.status === 'queued' || job.status === 'running')) {
+        work.jobId = job.id; work.intent = 'original'; renderSceneWork(id);
+        return window.LearnJobs.watch(job, {onRetry: retry});
+      }
+      if (job && (job.status === 'failed' || job.status === 'interrupted')) {
+        work.jobId = job.id; work.intent = 'original'; renderSceneWork(id);
+        return window.LearnJobs.retry(job.id, {onRetry: retry});
+      }
+      if (job && (job.status !== 'succeeded' || !job.result)) throw sceneLookupError('原动画任务结果尚未确认', job);
+      var upgrade = !!(job && job.result.study_notes === work.notes && hasValidLegacyScene(work.notes));
+      if (job && job.result.needed !== false && !upgrade) { work.jobId = job.id; work.intent = 'original'; return job.result; }
+      var body = {key: key, node: {id: id}};
+      if (upgrade) body.intent = 'upgrade-legacy-scene-to-manim-v1';
+      work.intent = upgrade ? body.intent : 'requested';
+      return persistence.post('/path/node/scene', body, {manualRetry: true, newOperation: true, onRetry: retry});
+    });
+  }
+function supplementSceneConfirmed(id, key, work) {
+    var node = domain.nodeById(id), detail = model.state.nodeDetail[id];
+    if (!currentSceneContext(work) || !node || !model.state.plan || window.LearnUser.readOnly || hasLearningScene(detail.study_notes, true)) return Promise.resolve();
+    work.status = 'running'; session.sceneWork[sceneWorkKey(key, id)] = work; renderSceneWork(id);
+    work.promise = requestSceneIntent(id, key, work).then(function (result) { consumeSceneSupplement(id, key, result, work); }).catch(function (error) {
+      return refreshSceneReview(id, key, work).then(function () {
+        if (!currentSceneWork(id, key, work)) return;
+        markSceneSupplementError(id, key, error, work);
+        if (error.error_category !== 'scene_lookup_unconfirmed' && !error.jobId && !(detail.manim_review && detail.manim_review.status === 'failed' && detail.manim_review.retryable === true)) {
+          shell.showError('补充教学动画失败，正文已保留。请重试原任务。', function () { return supplementScene(id); });
         }
       });
     });
     return work.promise;
   }
-
 function restoreSceneSupplement() {
     if (!window.LearnJobs || window.LearnUser.readOnly || !model.state.plan) return Promise.resolve();
-    var key = format.storeKey();
+    var key = format.storeKey(), contexts = Object.create(null);
     if (model.state.pending && model.state.pending.kind === 'nodes') return Promise.resolve();
+    Object.keys(model.state.nodeDetail).forEach(function (id) { contexts[id] = sceneContext(id, key); });
     return window.LearnJobs.list(key).then(function (jobs) {
       if (key !== format.storeKey()) return;
       var latest = Object.create(null);
       jobs.forEach(function (job) {
-        if (job.operation !== '/path/node/scene' || !job.node_id || !model.state.nodeDetail[job.node_id]) return;
+        if (job.operation !== '/path/node/scene' || !job.node_id || !contexts[job.node_id]) return;
         var previous = latest[job.node_id];
         if (!previous || job.created_ms > previous.created_ms) latest[job.node_id] = job;
       });
       return Promise.all(Object.keys(latest).map(function (id) {
-        var job = latest[id];
-        if (job.status === 'succeeded') {
-          return Promise.resolve(job.result).then(function (result) {
-            return result ? result : window.LearnJobs.get(job.id).then(function (fresh) { return fresh.result; });
-          }).then(function (result) {
-            if (result && key === format.storeKey()) consumeSceneSupplement(id, key, result, sceneWorkKey(key, id));
-          }).catch(function () {});
+        var job = latest[id], context = contexts[id], workKey = sceneWorkKey(key, id);
+        if (!currentSceneContext(context)) return;
+        var active = session.sceneWork[workKey];
+        if (active && active.status === 'running' && currentSceneWork(id, key, active)) return;
+        var work = context; work.jobId = job.id; work.intent = 'original'; work.status = job.status === 'queued' || job.status === 'running' ? 'running' : 'restoring'; session.sceneWork[workKey] = work;
+        function terminal(fresh) {
+          if (!currentSceneWork(id, key, work)) return Promise.resolve();
+          if (fresh.status === 'failed' || fresh.status === 'interrupted') return refreshSceneReview(id, key, work).then(function () { markSceneSupplementError(id, key, null, work); });
+          clearSceneSupplementWork(id, key, work); return Promise.resolve();
         }
-        if (job.status === 'failed' || job.status === 'interrupted') {
-          return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key); });
-        }
-        if (job.status === 'cancelled') {
-          clearSceneSupplementWork(id, key);
-          return;
-        }
-        if (job.status !== 'queued' && job.status !== 'running') return;
-        var workKey = sceneWorkKey(key, id), work = {status: 'running'};
-        session.sceneWork[workKey] = work;
-        if (model.session.expandedId === id && cards.cardContentEl(id)) renderNodeDetail(id);
-        work.promise = window.LearnJobs.get(job.id).then(function (fresh) {
-          if (fresh.status === 'succeeded') return fresh.result;
-          if (fresh.status === 'failed' || fresh.status === 'interrupted') {
-            return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key); return null; });
-          }
-          if (fresh.status === 'cancelled') {
-            clearSceneSupplementWork(id, key, workKey);
-            return null;
-          }
-          if (fresh.status !== 'queued' && fresh.status !== 'running') {
-            clearSceneSupplementWork(id, key, workKey);
-            return null;
-          }
-          return window.LearnJobs.watch(fresh, {onRetry: function () { return format.storeKey() === key ? supplementScene(id) : Promise.resolve(); }});
-        }).then(function (result) {
-          if (!result || format.storeKey() !== key) return;
-          consumeSceneSupplement(id, key, result, workKey);
-        }).catch(function (error) {
-          return refreshSceneReview(id, key).then(function () { markSceneSupplementError(id, key, error); });
+        if (job.status === 'failed' || job.status === 'interrupted' || job.status === 'cancelled') return terminal(job);
+        if (job.status !== 'succeeded' && job.status !== 'queued' && job.status !== 'running') { clearSceneSupplementWork(id, key, work); return; }
+        renderSceneWork(id);
+        work.promise = (job.status === 'succeeded' && job.result ? Promise.resolve(job) : window.LearnJobs.get(job.id)).then(function (fresh) {
+          if (!currentSceneWork(id, key, work)) return null;
+          if (fresh.status === 'succeeded' || !fresh.status && fresh.result && job.status === 'succeeded') { if (!fresh.result) throw sceneLookupError('动画结果尚未确认', fresh); return fresh.result; }
+          if (fresh.status !== 'queued' && fresh.status !== 'running') return terminal(fresh).then(function () { return null; });
+          return window.LearnJobs.watch(fresh, {onRetry: function () { return currentSceneWork(id, key, work) ? supplementScene(id) : Promise.resolve(); }});
+        }).then(function (result) { if (result) consumeSceneSupplement(id, key, result, work); }).catch(function (error) {
+          return refreshSceneReview(id, key, work).then(function () { markSceneSupplementError(id, key, error, work); });
         });
         return work.promise;
       }));
-    }).catch(function () {
-      // A missing jobs response must not block ordinary path restore.
-    });
+    }).catch(function () { /* An unavailable task list must not block reading. */ });
   }
 
 // 所有题目、作答和历史批改均由共享弹窗呈现。

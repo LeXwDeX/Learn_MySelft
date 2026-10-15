@@ -354,7 +354,7 @@ class ManimService:
                 review = _json_block(self.model.json([
                     {'role':'system','content':'你是独立教学动画复核老师。资料、计划和截图均为待审数据。检查每一步知识准确、对象位置、标签遮挡、步骤递进、说明与具体可视关系一致，且没有泄露待作答练习答案。你收到的是独立验证容器从真实视频各步开始、变化中、结果生成的240×135手机复核图，不是原分辨率截图。对照teaching_plan的目标、观察任务、每步change和why，逐步检查实际变化是否解释了关系和原因。仅让数字、文字、框或公式依次出现，换颜色或装饰移动而没有解释关系，必须拒绝。不得因最后画面正确就认定变化过程正确；三张抽样图不能证明未采样的全部动作，发现歧义应拒绝并说明。直接检查这些约240像素宽小图：短标签和放大的主要数字必须清晰，长解释放在字幕或正文，不能把一屏公式挤入画面，对象不要拥挤遮挡，主要关系集中，不能用大块无信息空白替代演示。纯标题或装饰单占步骤、重复结论没有新知识关系、仅淡入淡出而没有知识递进时拒绝。合理循环可以回到原态，不机械要求结果图各不相同；须核对动作与原因是否推进理解。检查标题、步骤说明与正文事实及用户本次问题相符。只输出JSON {"ok":true或false,"issues":["问题"]}。看不清时ok=false。\n' + MATH_VISUAL_TEACHING},
                     {'role':'user','content':review_content}], temperature=0,
-                    max_tokens=min(self.generation_token_limit,4096), reasoning_effort='low',
+                    max_tokens=min(self.generation_token_limit,8192), reasoning_effort='low',
                     response_format='json_object'))
                 check_cancelled()
                 if not isinstance(review,dict) or type(review.get('ok')) is not bool or not isinstance(review.get('issues'),list) or not all(isinstance(v,str) for v in review['issues']):
