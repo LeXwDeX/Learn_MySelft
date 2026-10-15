@@ -52,7 +52,7 @@ def validate_value(key, value):
     if material:
         typed_fields(data, {'title': str, 'topic': str, 'history': list, 'spec': dict, 'queries': list,
                            'sources': list, 'brief': str, 'plan': dict, 'nodeDetail': dict,
-                           'nodeState': dict, 'pending': dict}, 'material')
+                           'nodeState': dict, 'nodeAccess': dict, 'pending': dict}, 'material')
         if 'stage' in data and data['stage'] not in STAGES:
             raise ValueError('invalid learning stage')
         if data.get('history') is not None:
@@ -75,6 +75,12 @@ def validate_value(key, value):
                 raise ValueError('invalid node detail')
             typed_fields(detail, {'quiz': dict, 'study_notes': str, 'key_points': list,
                                   'examples': list, 'misconceptions': list}, 'nodeDetail.' + node_id)
+        if 'nodeAccess' in data:
+            if not isinstance(data['nodeAccess'], dict) or any(
+                not isinstance(node_id, str) or not node_id or access not in ('locked', 'unlocked')
+                for node_id, access in data['nodeAccess'].items()
+            ):
+                raise ValueError('invalid node access')
         for state in (data.get('nodeState') or {}).values():
             if not isinstance(state, dict):
                 raise ValueError('invalid node state')

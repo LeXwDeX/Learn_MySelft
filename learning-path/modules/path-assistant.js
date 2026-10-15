@@ -92,10 +92,6 @@ function bindAgentLayout() {
     }
     function updateLayout() {
       var mobile = window.matchMedia('(max-width:800px)').matches;
-      if (!mobile && dialog.open && !expanded) {
-        returnView = captureView(true);
-        window.LearnUI.dialog.close(dialog);
-      }
       var toolbar = document.querySelector('.toolbar');
       var top = Math.max(0, toolbar.getBoundingClientRect().bottom);
       document.documentElement.style.setProperty('--agent-top', top + 'px');
@@ -105,13 +101,14 @@ function bindAgentLayout() {
       }
     }
     session.refreshAgentLayout = updateLayout;
-    format.$('agent-launch').addEventListener('click', showAgent);
+    var launch = format.$('agent-launch'); if (launch) launch.addEventListener('click', showAgent);
     expandButton.addEventListener('click', function () { dialog.openAgent(true); });
     closeButton.addEventListener('click', function () { window.LearnUI.dialog.close(dialog); });
     dialog.addEventListener('close', function () {
       var saved = returnView || captureView();
       returnView = null;
       workspace.appendChild(panel);
+      panel.hidden = true;
       expanded = false;
       expandButton.hidden = false;
       closeButton.hidden = true;
@@ -160,6 +157,7 @@ function bindAgentLayout() {
       expanded = !!enlarge;
       expandButton.hidden = true;
       closeButton.hidden = false;
+      panel.hidden = false;
       dialog.appendChild(panel);
       window.LearnUI.dialog.open(dialog, closeButton);
       restoreView(saved);
@@ -177,9 +175,11 @@ function bindAgentLayout() {
     updateLayout();
   }
 
-function showAgent() {
-    if (window.matchMedia('(max-width:800px)').matches) format.$('agent-dialog').openAgent();
-    else if (format.$('ai-input')) format.$('ai-input').focus({ preventScroll: true });
+function showAgent(verified) {
+    var id = model.session.selectedId;
+    if (!id || !domain.canAccess(id)) return Promise.resolve();
+    if (verified === true) { format.$('agent-dialog').openAgent(true); return Promise.resolve(); }
+    return persistence.ensureAccess(id).then(function () { if (id === model.session.selectedId) format.$('agent-dialog').openAgent(true); }).catch(function () {});
   }
 
 session.AI_SUGGEST = ['讲讲本单元的重点', '出个小题目考我', '本单元有哪些常见误区？'];
@@ -233,15 +233,18 @@ function syncAiMaterial(id) {
     if (!view) return;
     var status = aiMaterialStatus(id);
     var ready = status === 'ready';
+    var readOnly = !!window.LearnUser.readOnly;
     var label = ready ? '学习材料已就绪' : status === 'generating' ? '学习材料正在生成' : status === 'failed' ? '学习材料生成失败，请在左侧重试' : '学习材料尚未生成';
     view.root.querySelector('.ai-intro').textContent = label + (ready ? '，可以结合正文讲解和练习。' : '。可以先聊前置知识和学习目标。');
-    view.root.querySelector('.ai-note').textContent = ready ? 'AI 可参考本单元材料；个人薄弱点需结合你的实际作答判断。可用图形和动画讲解关系、变化过程与推导。' : 'AI 当前仅有单元标题和学习目标，还没有本单元正文。材料就绪后，可用图形和动画讲解关系、变化过程与推导。';
-    view.input.placeholder = ready ? '就本单元提问，Enter 发送 / Shift+Enter 换行' : '可以先问学习目标或前置知识';
+    view.root.querySelector('.ai-note').textContent = readOnly ? '当前资料为只读视图。可以阅读已有对话，不能提问、发送或更改讲解方式。' : ready ? 'AI 可参考本单元材料；个人薄弱点需结合你的实际作答判断。可用图形和动画讲解关系、变化过程与推导。' : 'AI 当前仅有单元标题和学习目标，还没有本单元正文。材料就绪后，可用图形和动画讲解关系、变化过程与推导。';
+    view.input.placeholder = readOnly ? '只读视图，无法发送新问题' : ready ? '就本单元提问，Enter 发送 / Shift+Enter 换行' : '可以先问学习目标或前置知识';
     var methods = view.root.querySelector('.ai-methods');
     if (methods && !methods.childNodes.length) {
       ['画图解释', '动画演示', '用表格对比', '举个例子', '分步推导'].forEach(function (method) {
         var button = document.createElement('button'); button.type = 'button'; button.className = 'ai-method'; button.textContent = method;
+        button.disabled = readOnly;
         button.onclick = function () {
+          if (window.LearnUser.readOnly) return;
           var available = aiMaterialStatus(id) === 'ready';
           var request = method === '动画演示' ? '用本系统已有的交互动画分步解释本单元最适合观察的概念，让我能操作参数或控制步骤；先讲清概念与图形的关系。' : method + '，选择适合讲解的内容；';
           sendAi(id, (available ? '结合本单元及当前对话，' : '正文尚未就绪，请仅对前置知识做预习说明：') + request + '不要透露我正在作答题目的答案。');
@@ -257,11 +260,12 @@ function syncAiMaterial(id) {
       empty.appendChild(heading);
       (ready ? session.AI_SUGGEST : session.AI_PREVIEW_SUGGEST).forEach(function (text) {
         var button = document.createElement('button');
-        button.className = 'ai-chip'; button.type = 'button'; button.textContent = text;
+        button.className = 'ai-chip'; button.type = 'button'; button.textContent = text; button.disabled = readOnly;
         button.addEventListener('click', function () { sendAi(id, text); });
         empty.appendChild(button);
       });
     }
+    syncAiBusy();
   }
 
 function aiScroll(view, force) {
@@ -278,9 +282,13 @@ function aiScroll(view, force) {
 
 function syncAiBusy() {
     session.aiViews.forEach(function (view) {
-      view.send.disabled = session.aiBusy;
+      var readOnly = !!window.LearnUser.readOnly;
+      view.input.readOnly = readOnly;
+      view.input.setAttribute('aria-readonly', String(readOnly));
+      view.root.querySelectorAll('.ai-chip, .ai-method').forEach(function (button) { button.disabled = readOnly || session.aiBusy; });
+      view.send.disabled = readOnly || session.aiBusy;
       view.send.textContent = session.aiBusy ? '回复中…' : '发送';
-      view.send.title = session.aiBusy ? 'AI 正在回复，可以继续编辑下一条问题' : '';
+      view.send.title = readOnly ? '当前资料为只读视图，不能发送新问题' : session.aiBusy ? 'AI 正在回复，可以继续编辑下一条问题' : '';
     });
   }
 
@@ -371,6 +379,14 @@ function renderAiPanel(id) {
   }
 
 function sendAi(id, text) {
+    if (window.LearnUser.readOnly || session.aiBusy || session.aiAccessPending) return Promise.resolve();
+    session.aiAccessPending = true;
+    return persistence.ensureAccess(id).then(function () { return sendAiConfirmed(id, text); }).catch(function (error) {
+      var view = session.aiViews.get(id); if (view && view.box) view.box.appendChild(aiBubble('assistant', error.message));
+    }).finally(function () { session.aiAccessPending = false; });
+  }
+
+function sendAiConfirmed(id, text) {
     if (session.aiBusy) return;
     var q = String(text == null ? '' : text).trim();
     if (!q) return;

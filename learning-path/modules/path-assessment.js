@@ -85,7 +85,7 @@ session.quizResultSeen = Object.create(null);
 function renderNodeDetail(id) {
     var n = domain.nodeById(id), d = model.state.nodeDetail[id];
     var scope = cards.cardContentEl(id);
-    if (!n || !d || !scope) return;
+    if (!n || !d || !scope || !domain.canAccess(id)) return;
     model.session.activeScope = scope;
     var ownerChanged = session.matTabOwner !== id;
     if (ownerChanged) { session.matTab = 'material'; session.lastQuizShown = null; session.matTabOwner = id; }
@@ -102,7 +102,7 @@ function renderNodeDetail(id) {
     var lowScore = (typeof prev.score === 'number' && prev.score < 60) ||
       !!(prev.lastResult && typeof prev.lastResult.score === 'number' && prev.lastResult.score < 60);
     var matPane =
-      '<div class="panel-sec"><h4>学习正文</h4><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
+      '<div class="panel-sec workspace-prose"><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
       sceneSupplementSection(id, d) +
       listSection('要点', d.key_points) +
       listSection('例子', d.examples) +
@@ -175,7 +175,6 @@ function renderNodeDetail(id) {
     if (bComp) bComp.addEventListener('click', function () { completeNode(id); });
     var bRefine = scope.querySelector('#refine-node');
     if (bRefine) bRefine.addEventListener('click', function () { refineNode(id); });
-    requestAnimationFrame(cards.drawEdges);
   }
 
 function applySceneSupplement(id, key, result) {
@@ -250,7 +249,17 @@ function refreshSceneReview(id, key) {
     }).catch(function () {}).finally(function () { clearTimeout(timeout); });
   }
 
+session.sceneAccessWork = Object.create(null);
 function supplementScene(id) {
+    if (window.LearnUser.readOnly) return Promise.resolve();
+    var key = sceneWorkKey(format.storeKey(), id);
+    if (session.sceneAccessWork[key]) return session.sceneAccessWork[key];
+    var work = persistence.ensureAccess(id).then(function () { return supplementSceneConfirmed(id); }).catch(function (error) { shell.showError(error.message); }).finally(function () { delete session.sceneAccessWork[key]; });
+    session.sceneAccessWork[key] = work;
+    return work;
+  }
+
+function supplementSceneConfirmed(id) {
     var key = format.storeKey(), node = domain.nodeById(id), detail = model.state.nodeDetail[id];
     if (!node || !detail || !model.state.plan || window.LearnUser.readOnly || hasLearningScene(detail.study_notes, true)) return Promise.resolve();
     var workKey = sceneWorkKey(key, id), current = session.sceneWork[workKey];
@@ -341,11 +350,16 @@ function restoreSceneSupplement() {
 // 所有题目、作答和历史批改均由共享弹窗呈现。
 
 function openQuizModal(id, roundId) {
+    return persistence.ensureAccess(id).then(function () { return openQuizModalConfirmed(id, roundId); }).catch(function (error) { shell.showError(error.message); });
+  }
+
+function openQuizModalConfirmed(id, roundId) {
     var n = domain.nodeById(id), d = model.state.nodeDetail[id];
     if (!n || !d) return;
     return window.QuizDialog.open({
       readOnly: window.LearnUser.readOnly, api: model.session.API, key: format.storeKey(), nodeId: id, roundId: roundId, title: n.title + ' · 单元测验',
       render: format.mdRender, decorate: function (el) { format.renderMathIn(el); format.highlightIn(el); },
+      beforeSubmit: function () { return persistence.ensureAccess(id); },
       onLoad: function (quiz) { d.quiz = quiz; },
       onResult: function (res) {
         d.quiz = res.quiz;
@@ -419,6 +433,11 @@ function restoreRequiz() {
   }
 
 function redoQuiz(id) {
+    if (window.LearnUser.readOnly) return Promise.resolve();
+    return persistence.ensureAccess(id).then(function () { return redoQuizConfirmed(id); }).catch(function (error) { shell.showError(error.message); });
+  }
+
+function redoQuizConfirmed(id) {
     var n = domain.nodeById(id), d = model.state.nodeDetail[id];
     if (!n || !d || window.LearnUser.readOnly) return;
     var quiz = d.quiz || {}, st = model.state.nodeState[id] || {};
@@ -433,7 +452,13 @@ function redoQuiz(id) {
   }
 
 function completeNode(id) {
+    if (window.LearnUser.readOnly) return Promise.resolve();
+    return persistence.ensureAccess(id).then(function () { return completeNodeConfirmed(id); }).catch(function (error) { shell.showError(error.message); });
+  }
+
+function completeNodeConfirmed(id) {
     var st = model.state.nodeState[id] || {};
+    if (!st.lastResult || !st.lastResult.pass || typeof st.score !== 'number' || st.score < 60) return;
     st.completed = true;
     model.state.nodeState[id] = st;
     persistence.save();
@@ -452,6 +477,12 @@ function perQuestionSummary(per) {
   }
 
 function refineNode(id) {
+    if (!domain.canRefine(id)) { alert('已达四层细化上限，可继续学习或重新测验。'); return; }
+    if (window.LearnUser.readOnly) return Promise.resolve();
+    return persistence.ensureAccess(id).then(function () { return refineNodeConfirmed(id); }).catch(function (error) { shell.showError(error.message); });
+  }
+
+function refineNodeConfirmed(id) {
     if (!domain.canRefine(id)) { alert('已达四层细化上限，可继续学习或重新测验。'); return; }
     var n = domain.nodeById(id);
     var st = model.state.nodeState[id] || {};

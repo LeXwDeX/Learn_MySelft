@@ -77,20 +77,8 @@ function genAllSyncPending() {
 function setCardGenState(id, on) {
     var card = format.$('node-' + id);
     if (!card) return;
-    var st = card.querySelector('.status');
-    if (!st) return;
-    if (on) {
-      if (st.classList.contains('generating')) return;
-      st.dataset.prevCls = st.className;
-      st.dataset.prevHtml = st.innerHTML;
-      st.className = 'status generating';
-      st.innerHTML = '<span class="spinner"></span>生成中…';
-    } else if (st.dataset.prevHtml != null) {
-      st.className = st.dataset.prevCls || 'status';
-      st.innerHTML = st.dataset.prevHtml;
-      delete st.dataset.prevHtml;
-      delete st.dataset.prevCls;
-    }
+    if (on) card.setAttribute('aria-busy', 'true');
+    else card.removeAttribute('aria-busy');
   }
 
 // 纯请求：生成某节点的学习材料（不含 UI，供单卡与批量复用）
@@ -145,6 +133,11 @@ function refreshReview(id, key) {
   }
 
 function requestNodeDetail(id, manualRetry, options) {
+    if (window.LearnUser.readOnly) return Promise.reject(new Error('当前视图只读'));
+    return persistence.ensureAccess(id).then(function () { return requestNodeDetailConfirmed(id, manualRetry, options); });
+  }
+
+function requestNodeDetailConfirmed(id, manualRetry, options) {
     options = options || {};
     if (window.LearnUser.readOnly) return Promise.reject(new Error('当前视图只读'));
     var key = format.storeKey(), node = domain.nodeById(id);

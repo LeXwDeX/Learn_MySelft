@@ -2,7 +2,7 @@
 define("path.hooks", [], function (deps) {
   'use strict';
   var handlers = null;
-  var names = ["renderDocumentTitle","renderPlan","selectNode","genAllStart","genQuizMap","renderAgentPanel","showAgent","requestNodeDetail","syncAiMaterial","renderNodeDetail"];
+  var names = ["renderDocumentTitle","renderPlan","refreshDirectory","selectNode","genAllStart","genQuizMap","renderAgentPanel","showAgent","requestNodeDetail","syncAiMaterial","renderNodeDetail"];
   function connect(next) {
     if (handlers) throw new Error('Hooks already connected: path');
     names.forEach(function (name) { if (typeof next[name] !== 'function') throw new Error('Missing hook: ' + name); });

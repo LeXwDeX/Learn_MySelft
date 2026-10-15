@@ -1,12 +1,13 @@
 /* 服务端状态读写、顺序删除和网络请求。 */
-define("path.persistence", ["path.model", "path.format", "path.hooks"], function (deps) {
+define("path.persistence", ["path.model", "path.format", "path.hooks", "path.domain"], function (deps) {
   'use strict';
   var model = deps["path.model"];
   var format = deps["path.format"];
   var hooks = deps["path.hooks"];
+  var domain = deps["path.domain"];
   var session = {};
 
-// ---------- 服务端读写（页面不做任何本地保存；所有数据只在服务端） ----------
+// ---------- 服务端资料读写；待同步恢复由 LearnSaves 管理 ----------
 
 session.pendingEntries = null;
 
@@ -102,7 +103,7 @@ function save() {
         stage: model.state.stage, title: model.state.title, topic: model.state.topic, history: model.state.history, materials: model.state.materials,
         spec: model.state.spec, queries: model.state.queries, sources: model.state.sources,
         brief: model.state.brief, research_version: model.state.research_version, plan: model.state.plan,
-        nodeDetail: model.state.nodeDetail, nodeState: model.state.nodeState,
+        nodeDetail: model.state.nodeDetail, nodeState: model.state.nodeState, nodeAccess: model.state.nodeAccess || {},
         pending: model.state.pending || null
       };
       session.pendingEntries = {};
@@ -153,6 +154,8 @@ function serverLoad() {
       model.state.plan = d.plan || null;
       model.state.nodeDetail = d.nodeDetail || {};
       model.state.nodeState = d.nodeState || {};
+      model.state.nodeAccess = d.nodeAccess || {};
+      model.session.accessUnavailable = false;
       model.state.pending = (d.pending && typeof d.pending === 'object') ? d.pending : null;
       model.state.aiHist = {};
       var aiRaw = format.entryVal(entries, 'learn-ai-v1-' + s);
@@ -178,7 +181,7 @@ function serverLoad() {
   }
 
 // ---------- 浏览器本地清理 ----------
-  // 页面已不再本地保存任何数据（数据只在服务端）；启动时把历史遗留的本地键清干净
+  // 学习资料从服务端恢复，清理旧版资料缓存。临时阅读位置与待同步恢复由各自组件管理。
 
 function purgeLocalLegacy() {
     try {
@@ -193,6 +196,51 @@ function purgeLocalLegacy() {
   }
 
 // ---------- 网络 ----------
+
+// Read only access and completion facts. Never replace local detail or quiz drafts.
+var accessReadSerial = 0, accessRead = null;
+function applyNodeAccess(access) { accessReadSerial++; model.state.nodeAccess = access || {}; }
+function refreshAccess() {
+    var serial = accessReadSerial;
+    var key = format.storeKey();
+    if (accessRead && accessRead.key === key && accessRead.serial === serial) return accessRead.promise;
+    var read = {key: key, serial: serial}; accessRead = read;
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, model.session.TIMEOUT);
+    read.promise = window.LearnUser.fetch(model.session.API + '/state/all', {cache: 'no-store', signal: controller.signal}).then(function (response) {
+      if (!response.ok) throw new Error(response.status === 401 ? '登录已失效，请重新登录' : '无法确认单元访问状态，请重试');
+      return response.json();
+    }).then(function (snapshot) {
+      if (key !== format.storeKey() || serial !== accessReadSerial) { var stale = new Error('访问状态已更新，请重试'); stale.staleAccess = true; throw stale; }
+      if (!snapshot || !snapshot.ok || !snapshot.entries) throw new Error('无法确认单元访问状态，请重试');
+      var raw = snapshot.entries[key];
+      if (typeof raw !== 'string') throw new Error('资料已删除或无法访问，请返回资料库');
+      var saved = JSON.parse(raw), before = JSON.stringify(model.state.nodeAccess || {}), unavailable = model.session.accessUnavailable, completedChanged = false;
+      model.state.nodeAccess = saved.nodeAccess || {};
+      model.session.accessUnavailable = false;
+      Object.keys(saved.nodeState || {}).forEach(function (id) {
+        var remote = saved.nodeState[id], local = model.state.nodeState[id] || {};
+        if (remote && remote.completed && !local.completed) { local.completed = true; model.state.nodeState[id] = local; completedChanged = true; }
+      });
+      if (unavailable || completedChanged || before !== JSON.stringify(model.state.nodeAccess)) hooks.renderPlan();
+      return saved;
+    }).catch(function (error) {
+      if (key === format.storeKey() && !error.staleAccess) {
+        model.session.accessUnavailable = true;
+        hooks.renderPlan();
+      }
+      throw error;
+    }).finally(function () { clearTimeout(timer); if (accessRead === read) accessRead = null; });
+    return read.promise;
+  }
+
+function ensureAccess(id) {
+    return refreshAccess().then(function (saved) {
+      if (!saved.plan || !Array.isArray(saved.plan.nodes) || !saved.plan.nodes.some(function (node) { return node.id === id; })) { model.session.accessUnavailable = true; hooks.renderPlan(); throw new Error('单元已不存在，请返回资料库'); }
+      if (!domain.canAccess(id)) throw new Error('本单元已锁定，请返回正文查看访问条件');
+      return true;
+    });
+  }
 
 function post(path, body, jobOptions) {
     try {
@@ -230,5 +278,5 @@ function post(path, body, jobOptions) {
 
   function waitForWrites() { return Promise.all(session.stateWrites.slice()); }
 
-  return Object.freeze({waitForWrites: waitForWrites, putState: putState, deleteState: deleteState, flushSave: flushSave, flushBeacon: flushBeacon, save: save, saveAi: saveAi, serverLoad: serverLoad, purgeLocalLegacy: purgeLocalLegacy, post: post});
+  return Object.freeze({applyNodeAccess: applyNodeAccess, refreshAccess: refreshAccess, ensureAccess: ensureAccess, waitForWrites: waitForWrites, putState: putState, deleteState: deleteState, flushSave: flushSave, flushBeacon: flushBeacon, save: save, saveAi: saveAi, serverLoad: serverLoad, purgeLocalLegacy: purgeLocalLegacy, post: post});
 });

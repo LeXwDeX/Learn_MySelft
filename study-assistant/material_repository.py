@@ -80,6 +80,36 @@ class MaterialRepository:
         """Write in the calling transaction, or start a single-document transaction."""
         self.store.put(key, value)
 
+    def validate_node_access(self, key, node_id):
+        """Resolve a current issued node after the caller authorizes its key."""
+        business = key.split("/", 1)[-1]
+        if not business.startswith("learn-path-v1-") or business == "learn-path-v1-last":
+            raise JobError(404, "学习资料不存在")
+        material = self.material(key)
+        if material is None:
+            raise JobError(404, "学习资料已删除或不存在")
+        nodes = (material.get("plan") or {}).get("nodes") or []
+        if sum(isinstance(node, dict) and node.get("id") == node_id for node in nodes) != 1:
+            raise JobError(404, "学习单元不存在")
+        return material
+
+    def set_node_access(self, key, node_id, access):
+        """Change one override atomically without replacing other learning data."""
+        if not isinstance(node_id, str) or not node_id or access not in ("locked", "unlocked"):
+            raise ValueError("无效的单元访问设置")
+        with self.lock, self.store.transaction():
+            material = self.validate_node_access(key, node_id)
+            overrides = {**(material.get("nodeAccess") or {}), node_id: access}
+            if material.get("nodeAccess") != overrides:
+                material["nodeAccess"] = overrides
+                value = json.dumps(material, ensure_ascii=False)
+                validate_value(key, value)
+                if len(value) > STATE_MAX_VALUE:
+                    raise ValueError("state value too large")
+                self.write_key(key, value)
+            record = self.store.record(key)
+            return {"nodeAccess": overrides, "revision": record["revision"] if record else 0}
+
     def merge(self, mkey, patch):
         """Apply a generated patch in one transaction; merge node results by id."""
         if not mkey or not isinstance(patch, dict):
@@ -89,6 +119,8 @@ class MaterialRepository:
             if material is None:
                 return False
             for field, value in patch.items():
+                if field == "nodeAccess":
+                    continue
                 if field == "nodeDetail" and isinstance(value, dict):
                     material[field] = {**(material.get(field) or {}), **value}
                 else:
@@ -407,6 +439,11 @@ class MaterialRepository:
                         ):
                             raise ValueError("quiz must contain questions")
                         current = self.material(key)
+                        if is_material:
+                            # Only the password-confirmed operation may change access.
+                            obj.pop("nodeAccess", None)
+                            if current and "nodeAccess" in current:
+                                obj["nodeAccess"] = current["nodeAccess"]
                         if not trusted:
                             obj["title"] = document_title(current)
                             obj.pop("refinementReceipts", None)

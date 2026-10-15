@@ -45,7 +45,7 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
   env.LearnUser.fetch=async(url,opts={})=>{
     calls.push({url,method:opts.method||'GET',body:opts.body&&JSON.parse(opts.body)});
     if(url.endsWith('/state/all')) {
-      const saved={nodeDetail:Object.fromEntries(Object.entries(model.state.nodeDetail).map(([id,d])=>[id,{...d,manim_review:failScenes.includes(id)?{status:'failed',retryable:true,failure_code:'render_unavailable'}:d.manim_review}]))};
+      const saved={plan:model.state.plan,nodeState:{},nodeDetail:Object.fromEntries(Object.entries(model.state.nodeDetail).map(([id,d])=>[id,{...d,manim_review:failScenes.includes(id)?{status:'failed',retryable:true,failure_code:'render_unavailable'}:d.manim_review}]))};
       return Response.json({ok:true,entries:{[currentKey]:JSON.stringify(saved)}});
     }
     if(url.includes('/jobs?'))return Response.json({jobs:[...jobs.values()].map(j=>{const thin={...j,status:j.finalStatus};delete thin.result;return thin;})});
@@ -71,13 +71,13 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
     return Response.json({job:{...job,status:env.keepRunning?'running':job.finalStatus}});
   };
   for(const file of ['shared/ui.js','shared/jobs.js'])vm.runInContext(fs.readFileSync(file,'utf8'),env);
-  let persistence={save(){env.saves=(env.saves||0)+1;},post(path,body,options){return env.LearnJobs.run(path,body,options);}};
+  let persistence={ensureAccess:()=>Promise.resolve(true),save(){env.saves=(env.saves||0)+1;},post(path,body,options){return env.LearnJobs.run(path,body,options);}};
   const format={$:id=>doc.getElementById(id),storeKey:()=>currentKey};
-  const domain={nodeById:id=>model.state.plan.nodes.find(n=>n.id===id),depTitles:()=>[]};
-  const hooks={syncAiMaterial(){},renderNodeDetail(id){renders.push({id,detail:model.state.nodeDetail[id]});}};
+  const domain={canAccess:()=>true,nodeById:id=>model.state.plan.nodes.find(n=>n.id===id),depTitles:()=>[]};
+  const hooks={renderPlan(){},syncAiMaterial(){},renderNodeDetail(id){renders.push({id,detail:model.state.nodeDetail[id]});}};
   if(realPersistence) {
     env.addEventListener=()=>{};env.Blob=Blob;model.session.API='http://api';
-    const ports={'path.model':model,'path.format':format,'path.hooks':hooks};
+    const ports={'path.model':model,'path.format':format,'path.hooks':hooks,'path.domain':domain};
     env.define=(name,names,factory)=>{persistence=factory(ports);};
     vm.runInContext(fs.readFileSync('learning-path/modules/path-persistence.js','utf8'),env);
   }

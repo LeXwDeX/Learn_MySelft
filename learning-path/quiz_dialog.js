@@ -423,7 +423,12 @@ function submit() {
     if (!model.session.view.answers.some(question.hasAnswer)) { model.byId('qd-error').textContent = '请至少回答一题再提交'; model.byId('qd-error').hidden = false; return; }
     var active = model.session.view, config = model.roundConfig(), id = model.round().id, answers = model.session.view.answers.slice();
     model.session.view.busy = true; view.render();
-    drafts.flushCurrent().then(function () {
+    return Promise.resolve().then(function () {
+      if (active.config.beforeSubmit) return active.config.beforeSubmit();
+    }).then(function (allowed) {
+      if (allowed === false) throw new Error('本单元暂时不可访问，请返回正文确认访问状态');
+      return drafts.flushCurrent();
+    }).then(function () {
       return network.api(config, '/path/quiz', {key: config.key, node: {id: config.nodeId || ''}, round_id: id, answers: answers});
     }).then(function (result) {
       active.busy = false;

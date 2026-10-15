@@ -10,168 +10,178 @@ define("path.cards", ["path.model", "path.format", "path.shell", "path.domain", 
   var workflow = deps["path.workflow"];
   var generation = deps["path.generation"];
 
-// ---------- 阶段 C：路径图 ----------
-
+// One reading surface; the path is a directory opened only on request.
+var accessPending = false, accessNode = null, accessTarget = null, bound = false;
+function anchorKey() { return 'learn-workspace-v1:' + format.storeKey(); }
+function rememberNode(id) {
+    if (!document.body.classList.contains('workspace-reading')) return;
+    try {
+      var url = new URL(location.href); url.searchParams.set('node', id);
+      window.history.replaceState(null, '', url.pathname + url.search);
+      sessionStorage.setItem(anchorKey(), JSON.stringify({node: id, scroll: window.scrollY}));
+    } catch (error) { /* Navigation remains usable without browser storage. */ }
+  }
+function captureReadingPosition() {
+    if (!document.body.classList.contains('workspace-reading') || !model.session.selectedId) return;
+    model.session.readingScrollY = window.scrollY;
+    rememberNode(model.session.selectedId);
+  }
+function restoredNode() {
+    try {
+      var requested = new URLSearchParams(location.search).get('node');
+      if (domain.nodeById(requested)) return requested;
+      var saved = JSON.parse(sessionStorage.getItem(anchorKey()) || 'null');
+      if (saved && domain.nodeById(saved.node)) return saved.node;
+    } catch (error) {}
+    var nodes = model.state.plan.nodes;
+    var next = nodes.find(function (node) { return domain.canAccess(node.id) && !domain.isDone(node.id); });
+    return next ? next.id : nodes.length ? nodes[0].id : null;
+  }
 function renderDocumentTitle() {
     var title = window.LearnTitles.document(model.state);
     document.title = title;
     format.$('document-title').textContent = title;
     format.$('plan-title').textContent = title;
   }
-
 function renderPlan() {
-    var plan = model.state.plan;
+    var plan = model.state.plan; if (!plan) return;
     renderDocumentTitle();
     format.$('plan-summary').textContent = plan.summary || '';
-    var layerEl = format.$('graph-layer');
-    layerEl.innerHTML = '';
-    var visible = domain.planHierarchy(plan.nodes).filter(function (entry) { return !model.session.reviewFilter || domain.markOf(entry.node.id) === 'review'; });
-    if (!visible.length) {
-      layerEl.innerHTML = '<p class="empty-note">没有标记为「需复习」的单元</p>';
-      model.session.expandedId = null; model.session.activeScope = null;
-      shell.renderProgress();
-      var svg0 = format.$('graph-svg'); if (svg0) svg0.innerHTML = '';
-      return;
+    format.$('workspace-goal').hidden = !model.state.spec && !(model.state.history || []).length;
+    format.$('workspace-research').hidden = !model.state.spec;
+    var key = format.storeKey(), savedPosition = null;
+    if (model.session.workspaceKey !== key) {
+      model.session.workspaceKey = key; model.session.selectedId = null; model.session.readingScrollY = null;
+      try { savedPosition = JSON.parse(sessionStorage.getItem(anchorKey()) || 'null'); } catch (error) {}
     }
-    var layer = document.createElement('div');
-    layer.className = 'layer';
-    visible.forEach(function (entry) { layer.appendChild(nodeCard(entry.node, entry)); });
-    layerEl.appendChild(layer);
+    var id = domain.nodeById(model.session.selectedId) ? model.session.selectedId : restoredNode();
+    model.session.selectedId = id; model.session.expandedId = id;
+    refreshDirectory();
+    var layer = format.$('graph-layer'); layer.innerHTML = '';
+    if (id) { layer.appendChild(nodeCard(domain.nodeById(id))); renderCardContent(id); rememberNode(id); }
+    else layer.innerHTML = '<p class="tip">当前资料尚无学习单元。</p>';
+    if (savedPosition && savedPosition.node === id && Number.isFinite(savedPosition.scroll)) requestAnimationFrame(function () { window.scrollTo(0, savedPosition.scroll); });
     shell.renderProgress();
-    applyCardStates();
-    // 重建后恢复手风琴展开的卡片（含卡内内容重渲染）
-    if (model.session.expandedId) {
-      if (format.$('node-' + model.session.expandedId)) renderCardContent(model.session.expandedId);
-      else { model.session.expandedId = null; model.session.activeScope = null; }
+    hooks.renderAgentPanel();
+    if (!domain.canAccess(id)) { var dialog = format.$('agent-dialog'); if (dialog.open) window.LearnUI.dialog.close(dialog);
     }
-    requestAnimationFrame(drawEdges);
   }
-
-// 卡片结构：标题与学习状态 → 说明与门控状态 → AI 操作 → 卡体（选项卡+内容）
-
-function nodeCard(n, entry) {
-    var done = domain.isDone(n.id);
-    var unlocked = domain.isUnlocked(n.id);
-    var st = model.state.nodeState[n.id] || {};
-    var cls, label;
-    if (done) { cls = 'done'; label = '✅ 已完成'; }
-    else if (!unlocked) { cls = 'locked'; label = '🔒 锁定'; }
-    else if (typeof st.score === 'number' && st.score < 60) { cls = 'failed'; label = '❌ 自测未过'; }
-    else { cls = 'unlocked'; label = '可学习'; }
-    var el = document.createElement('article');
-    el.className = 'node ' + cls;
-    el.id = 'node-' + n.id;
-    el.dataset.id = n.id;
-    entry = entry || domain.hierarchyEntry(n.id);
-    el.dataset.group = entry.root_id;
-    el.dataset.depth = entry.depth;
-    el.style.setProperty('--group-color', 'var(--learn-level-' + Math.min(Math.max(entry.depth, 1), 4) + ')');
-    el.innerHTML = '<div class="node-header"><div class="node-head">' +
-      '<span class="node-caret">▸</span>' +
-      '<span class="node-no">' + format.esc(domain.dispId(n.id)) + '</span>' +
-      '<h3 class="node-title">' + format.esc(n.title) + '</h3></div>' +
-      '<div class="node-actions"><div class="marks" role="group" aria-label="学习状态">' + shell.markButtonsHtml(n.id, 'mini') + '</div></div></div>' +
-      '<div class="node-description"><p class="node-ess">' + format.esc(n.essence || '') + '</p>' +
-      '<div class="node-state"><span class="status ' + cls + '">' + label + '</span></div></div>' +
-      '<div class="node-foot" role="group" aria-label="单元操作">' +
-      '<button class="btn ai-mini" type="button" data-ai="' + format.esc(n.id) + '">AI 辅助</button></div>' +
-      '<div class="node-content" hidden></div>';
-    el.querySelectorAll('.node-actions .mark-btn').forEach(function (button) {
-      button.classList.remove('mini');
-      button.classList.add('btn');
+function refreshDirectory() {
+    var plan = model.state.plan; if (!plan) return;
+    var id = model.session.selectedId;
+    var directory = format.$('path-directory'); directory.innerHTML = '';
+    domain.planHierarchy(plan.nodes).filter(function (entry) { return !model.session.reviewFilter || domain.markOf(entry.node.id) === 'review'; }).forEach(function (entry) {
+      var n = entry.node, button = document.createElement('button');
+      button.className = 'workspace-path-unit'; button.type = 'button';
+      button.setAttribute('aria-current', String(id === n.id));
+      button.innerHTML = '<strong>' + format.esc(domain.dispId(n.id) + ' · ' + n.title) + '</strong><span>' +
+        format.esc(domain.isDone(n.id) ? '已完成' : !domain.canAccess(n.id) ? ((model.state.nodeAccess || {})[n.id] === 'locked' ? '已手动锁定' : '前置未完成') : model.state.nodeDetail[n.id] ? '可继续阅读' : '正文尚未生成') + '</span>';
+      button.onclick = function () { window.LearnUI.dialog.close(format.$('path-dialog')); selectNode(n.id); };
+      directory.appendChild(button);
     });
-    if (window.LearnJobDetails) window.LearnJobDetails.mount(el.querySelector('.node-state'), {
-      key: format.storeKey(), nodeId: n.id, operation: '/path/node', panelHost: el.querySelector('.node-description')
-    });
-    el.addEventListener('click', function () { onCardClick(n.id); });
+    if (!directory.children.length) directory.textContent = '没有标记为「需复习」的单元。';
+  }
+function nodeCard(n) {
+    var el = document.createElement('article'); el.className = 'node workspace-unit'; el.id = 'node-' + n.id; el.dataset.id = n.id;
+    var entry = domain.hierarchyEntry(n.id);
+    el.dataset.group = entry.root_id; el.dataset.depth = entry.depth;
+    el.innerHTML = '<header class="workspace-unit-header"><h2 class="workspace-title" tabindex="-1">' + format.esc(n.title) + '</h2>' +
+      '<div class="workspace-actions" role="group" aria-label="单元标记与辅助"><div class="marks" role="group" aria-label="学习标记">' + shell.markButtonsHtml(n.id, '') + '</div>' +
+      '<span class="workspace-divider" aria-hidden="true">|</span><button class="btn workspace-ai" type="button"' + (!domain.canAccess(n.id) ? ' disabled' : '') + '>AI 辅助</button>' +
+      '<button class="btn workspace-access" type="button"' + (window.LearnUser.readOnly ? ' disabled' : '') + '>' + (domain.canAccess(n.id) ? '锁定此单元' : '解锁此单元') + '</button></div>' +
+      (domain.isDone(n.id) ? '<p class="workspace-completed">本单元已完成' + (typeof (model.state.nodeState[n.id] || {}).score === 'number' ? ' · 最近自测 ' + format.esc(model.state.nodeState[n.id].score) + ' 分' : '') + '</p>' : '') +
+      '</header><div class="node-content"></div>';
     shell.bindMarkButtons(el, n.id);
-    var aiBtn = el.querySelector('.ai-mini');
-    if (aiBtn) aiBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      openAiView(n.id);
-    });
-    // 卡内交互（单选框/输入框/按钮）不应冒泡触发卡片折叠
-    var content = el.querySelector('.node-content');
-    content.addEventListener('click', function (e) { e.stopPropagation(); });
+    el.querySelector('.workspace-ai').onclick = function () { openAiView(n.id); };
+    el.querySelector('.workspace-access').onclick = function () { openAccess(n.id); };
     return el;
   }
-
-// 卡片选中/展开态同步（不动 DOM 内容）
-
-function applyCardStates() {
-    if (!model.state.plan) return;
-    model.state.plan.nodes.forEach(function (n) {
-      var el = format.$('node-' + n.id);
-      if (!el) return;
-      el.classList.toggle('selected', n.id === model.session.selectedId);
-      el.classList.toggle('expanded', n.id === model.session.expandedId);
-      var c = el.querySelector('.node-caret');
-      if (c) c.textContent = (n.id === model.session.expandedId) ? '▾' : '▸';
-      var content = el.querySelector('.node-content');
-      if (content) content.hidden = (n.id !== model.session.expandedId);
+function selectUnit(id) { if (!domain.nodeById(id)) return; model.session.selectedId = id; model.session.expandedId = id; rememberNode(id); }
+function selectNode(id) {
+    var recovering = !!model.session.recoveringGeneration;
+    if (!domain.nodeById(id)) return Promise.resolve();
+    selectUnit(id); renderPlan();
+    return persistence.refreshAccess().then(function () {
+      if (model.session.selectedId !== id) return;
+      renderCardContent(id, recovering ? {generate: true, recovering: true} : null);
+      var title = format.$('node-' + id).querySelector('.workspace-title'); title.focus({preventScroll: true}); title.scrollIntoView({block: 'start'});
+    }).catch(function (error) { shell.showError(error.message); });
+  }
+function openAiView(id) {
+    return persistence.ensureAccess(id).then(function () {
+      if (model.session.selectedId !== id) { selectUnit(id); renderPlan(); }
+      hooks.showAgent(true);
+    }).catch(function (error) { shell.showError(error.message); });
+  }
+function cardContentEl(id) { var card = format.$('node-' + id); return card ? card.querySelector('.node-content') : null; }
+function generateUnit(id) {
+    if (window.LearnUser.readOnly) return Promise.resolve();
+    return persistence.ensureAccess(id).then(function () { if (model.session.selectedId === id) renderCardContent(id, {generate: true, manualRetry: true}); }).catch(function (error) { shell.showError(error.message); });
+  }
+function openAccess(id) {
+    if (window.LearnUser.readOnly || accessPending || !domain.nodeById(id)) return;
+    accessNode = id; accessTarget = domain.canAccess(id) ? 'locked' : 'unlocked';
+    format.$('access-title').textContent = accessTarget === 'locked' ? '锁定此单元' : '解锁此单元';
+    format.$('access-description').textContent = domain.nodeById(id).title + '：' + (accessTarget === 'locked' ? '锁定后，正文、AI 辅助和自测暂时不可用。已有内容、成绩和草稿会保留。' : '只解锁当前单元，不改变完成状态、成绩或其他单元。');
+    format.$('access-confirm').textContent = accessTarget === 'locked' ? '确认锁定' : '确认解锁';
+    window.LearnUI.dom.showError('access-error', '', 'access-password');
+    window.LearnUI.dialog.open(format.$('access-dialog'), format.$('access-password'));
+  }
+function submitAccess(event) {
+    event.preventDefault();
+    if (accessPending || window.LearnUser.readOnly || !accessNode) return;
+    var input = format.$('access-password'); if (!input.value) { window.LearnUI.dom.showError('access-error', '请输入当前登录密码', input); input.focus(); return; }
+    var key = format.storeKey(), id = accessNode, target = accessTarget;
+    accessPending = true; format.$('access-confirm').disabled = true; format.$('access-cancel').disabled = true;
+    format.$('access-form').setAttribute('aria-busy', 'true');
+    window.LearnUI.dom.showError('access-error', '', input);
+    persistence.post('/state/node-access', {key: key, node_id: id, access: target, password: input.value}).then(function (result) {
+      if (!result.ok || !result.nodeAccess) throw new Error('服务器未确认访问状态，请重试');
+      if (format.storeKey() !== key) return;
+      persistence.applyNodeAccess(result.nodeAccess); model.session.accessUnavailable = false;
+      window.LearnUI.dialog.close(format.$('access-dialog')); renderPlan();
+      var title = format.$('node-' + id); if (title) title.querySelector('.workspace-title').focus({preventScroll:true});
+    }).catch(function (error) { window.LearnUI.dom.showError('access-error', error.message, input); input.value = ''; input.focus();
+      // Failed authorization, deletion and lost responses must not expose cached content.
+      persistence.refreshAccess().catch(function () {});
+    }).finally(function () {
+      accessPending = false; format.$('access-confirm').disabled = false; format.$('access-cancel').disabled = false;
+      format.$('access-form').removeAttribute('aria-busy');
     });
   }
-
-// 选中单元（仅更新右侧 Agent 上下文与高亮，不展开）
-
-function selectUnit(id) {
-    model.session.selectedId = id;
-    applyCardStates();
-    hooks.renderAgentPanel();
-  }
-
-// 展开卡片（手风琴：不切换）
-
-function expandCard(id, options) {
-    var n = domain.nodeById(id);
-    if (!n) return;
-    model.session.expandedId = id;
-    applyCardStates();
-    renderCardContent(id, options);
-    requestAnimationFrame(drawEdges);
-  }
-
-function collapseCard() {
-    model.session.expandedId = null;
-    model.session.activeScope = null;
-    applyCardStates();
-    requestAnimationFrame(drawEdges);
-  }
-
-// 点卡片：选中 + 手风琴切展/收（锁定卡不展开）
-
-function onCardClick(id) {
-    selectUnit(id);
-    if (model.session.expandedId === id) { collapseCard(); return; }
-    var n = domain.nodeById(id);
-    if (!n) return;
-    expandCard(id, {manualRetry: true});
-  }
-
-// 明确聚焦某单元的卡（恢复重放/显式打开用，不 toggle）
-
-function selectNode(id) {
-    selectUnit(id);
-    expandCard(id);
-  }
-
-function openAiView(id) {
-    selectUnit(id);
-    expandCard(id, {manualRetry: true});
-    hooks.showAgent();
-  }
-
-// 卡内内容：未生成→卡内 loading 并请求 /path/node；已生成→渲染选项卡正文
-
-function cardContentEl(id) {
-    var card = format.$('node-' + id);
-    return card ? card.querySelector('.node-content') : null;
+function bindWorkspace() {
+    if (bound) return; bound = true;
+    var path = format.$('path-dialog'), dialog = format.$('access-dialog');
+    window.LearnUI.dialog.bind(path, format.$('path-close'));
+    format.$('path-open').onclick = function () { window.LearnUI.dialog.open(path, format.$('path-close')); };
+    window.LearnUI.dialog.bind(dialog, null, function () { accessNode = null; accessTarget = null; window.LearnUI.dom.showError('access-error', '', 'access-password'); });
+    format.$('access-cancel').onclick = function () { if (!accessPending) window.LearnUI.dialog.close(dialog); };
+    dialog.addEventListener('keydown', function (event) { if (event.key === 'Escape' && accessPending) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
+    dialog.addEventListener('cancel', function (event) { if (accessPending) event.preventDefault(); });
+    format.$('access-form').addEventListener('submit', submitAccess);
+    window.addEventListener('focus', function () { if (model.state.plan) persistence.refreshAccess().catch(function (error) { shell.showError(error.message); }); });
+    window.addEventListener('pagehide', captureReadingPosition);
   }
 
 function renderCardContent(id, options) {
     var scope = cardContentEl(id);
     if (!scope) return;
     model.session.activeScope = scope;
+    if (!domain.canAccess(id)) {
+      var manual = (model.state.nodeAccess || {})[id] === 'locked';
+      var missing = domain.depsOf(id).filter(function (dependency) { return !domain.isDone(dependency); });
+      scope.innerHTML = '<section class="workspace-empty"><h3>' + (model.session.accessUnavailable ? '暂时无法确认单元访问状态' : manual ? '此单元已手动锁定' : '先完成前置单元') + '</h3><p class="tip">' +
+        (model.session.accessUnavailable ? '请连接网络并重新确认。已有正文、成绩和草稿已保留。' : manual ? '正文、AI 辅助和自测暂时不可用。已有内容、成绩和草稿会保留。验证当前登录密码可重新解锁。' : '请先通过前置单元自测，再确认完成。手动标记不影响解锁；也可以验证密码，只解锁当前单元。') + '</p>' +
+        (!manual && !model.session.accessUnavailable ? missing.map(function (dependency) {
+          var parent = domain.nodeById(dependency);
+          return '<button class="btn prerequisite" type="button" data-node="' + format.esc(dependency) + '">前往 ' + format.esc(parent ? parent.title : '前置单元') + '</button>';
+        }).join('') : '') +
+        (model.session.accessUnavailable ? '<button class="btn refresh-access" type="button">重新确认访问状态</button>' : '<button class="btn access-inline" type="button"' + (window.LearnUser.readOnly ? ' disabled' : '') + '>密码解锁</button>') + '</section>';
+      scope.querySelectorAll('.prerequisite').forEach(function (button) { button.onclick = function () { selectNode(button.dataset.node); }; });
+      var access = scope.querySelector('.access-inline'); if (access) access.onclick = function () { openAccess(id); };
+      var refresh = scope.querySelector('.refresh-access'); if (refresh) refresh.onclick = function () { persistence.refreshAccess().then(function () { renderPlan(); }).catch(function (e) { shell.showError(e.message); }); };
+      return;
+    }
     if (model.state.nodeDetail[id]) { hooks.renderNodeDetail(id); return; }
     if (generation.isRunning()) {   // 批量进行中：忽略单节点生成并轻提示
       scope.innerHTML = '<p class="tip">批量生成进行中，请稍候…</p>';
@@ -182,33 +192,26 @@ function renderCardContent(id, options) {
       scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成并校验学习材料，完成后会自动显示…</p>';
       return;
     }
-    if (!domain.isUnlocked(id) && !domain.isDone(id)) {
-      var missing = domain.depsOf(id).filter(function (dependency) { return !domain.isDone(dependency); });
-      scope.innerHTML = '<p class="tip">本单元尚未解锁。请先通过前置单元测验，并点击“完成本节点并解锁下一节点”。“已掌握”等手动标记不会自动解锁。</p>' +
-        missing.map(function (dependency) {
-          var parent = domain.nodeById(dependency);
-          return '<button class="btn prerequisite" type="button" data-node="' + format.esc(dependency) + '">前往 ' + format.esc(domain.dispId(dependency) + ' · ' + (parent ? parent.title : '前置单元')) + '</button>';
-        }).join('');
-      scope.querySelectorAll('.prerequisite').forEach(function (button) {
-        button.onclick = function () { selectNode(button.dataset.node); };
-      });
+    if (!options || !options.generate) {
+      scope.innerHTML = '<section class="workspace-empty"><h3>' + (model.session.nodeMaterialStatus[id] === 'failed' ? '这次未能生成正文' : '准备学习这个单元') + '</h3><p class="tip">' +
+        (model.session.nodeMaterialStatus[id] === 'failed' ? '已有学习记录已保留。你可以重试，或先学习其他可用单元。' : '本单元的正文尚未生成。生成后会显示在这里。') + '</p><button class="btn primary generate-unit" type="button"' + (window.LearnUser.readOnly ? ' disabled' : '') + '>' + (model.session.nodeMaterialStatus[id] === 'failed' ? '重新生成' : '生成本单元内容') + '</button></section>';
+      scope.querySelector('.generate-unit').onclick = function () { generateUnit(id); };
       return;
     }
     scope.innerHTML = '<p class="tip"><span class="spinner"></span>正在生成并校验学习材料，完成后会自动显示…</p>';
-    requestAnimationFrame(drawEdges);
     model.session.generatingNode = id;
     generation.setCardGenState(id, true);
     model.session.nodeMaterialStatus[id] = 'generating';
     hooks.syncAiMaterial(id);
     workflow.setPending('node', id);
-    hooks.requestNodeDetail(id, options && options.manualRetry ? true : false).then(function (detail) {
+    hooks.requestNodeDetail(id, options && options.manualRetry ? true : false, {recovering: !!(options && options.recovering)}).then(function (detail) {
       model.session.generatingNode = null;
       generation.setCardGenState(id, false);
       model.state.nodeDetail[id] = detail;
       hooks.syncAiMaterial(id);
       model.state.pending = null; model.session.resumeAttempts = 0; workflow.hideResumeBar();
       persistence.save();
-      if (model.session.expandedId === id) hooks.renderNodeDetail(id);
+      if (model.session.expandedId === id) renderCardContent(id);
     }).catch(function (e) {
       model.session.generatingNode = null;
       generation.setCardGenState(id, false);
@@ -224,36 +227,13 @@ function renderCardContent(id, options) {
       var rb = scope.querySelector('.reload-node');
       if (rb) rb.addEventListener('click', function (e2) {
         e2.stopPropagation();
-        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id, {manualRetry: true});
+        generateUnit(id);
       });
       shell.showError('学习材料生成失败：' + e.message, function () {
-        delete model.state.nodeDetail[id]; persistence.save(); renderCardContent(id, {manualRetry: true});
+        generateUnit(id);
       });
     });
   }
 
-function drawEdges() {
-    var wrap = format.$('graph-wrap'), svg = format.$('graph-svg');
-    if (!model.state.plan || !wrap || !svg) return;
-    var wr = wrap.getBoundingClientRect();
-    svg.setAttribute('width', wrap.clientWidth);
-    svg.setAttribute('height', wrap.clientHeight);
-    var parts = [];
-    (model.state.plan.edges || []).forEach(function (e) {
-      var a = document.getElementById('node-' + e[0]);
-      var b = document.getElementById('node-' + e[1]);
-      if (!a || !b) return;
-      var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
-      var x1 = ra.left - wr.left + ra.width / 2, y1 = ra.bottom - wr.top;
-      var x2 = rb.left - wr.left + rb.width / 2, y2 = rb.top - wr.top;
-      var my = (y1 + y2) / 2;
-      var d = 'M' + x1 + ',' + y1 + ' C' + x1 + ',' + my + ' ' + x2 + ',' + my + ' ' + x2 + ',' + y2;
-      var ok = domain.isDone(e[0]);
-      parts.push('<path d="' + d + '" fill="none" stroke="' + (ok ? '#2f7d5d' : '#c9ced8') +
-        '" stroke-width="2"' + (ok ? '' : ' stroke-dasharray="5 4"') + '/>');
-    });
-    svg.innerHTML = parts.join('');
-  }
-
-  return Object.freeze({renderDocumentTitle: renderDocumentTitle, renderPlan: renderPlan, nodeCard: nodeCard, applyCardStates: applyCardStates, selectUnit: selectUnit, expandCard: expandCard, collapseCard: collapseCard, onCardClick: onCardClick, selectNode: selectNode, openAiView: openAiView, cardContentEl: cardContentEl, renderCardContent: renderCardContent, drawEdges: drawEdges});
+  return Object.freeze({bindWorkspace: bindWorkspace, captureReadingPosition: captureReadingPosition, renderDocumentTitle: renderDocumentTitle, renderPlan: renderPlan, refreshDirectory: refreshDirectory, nodeCard: nodeCard, selectNode: selectNode, openAiView: openAiView, cardContentEl: cardContentEl, renderCardContent: renderCardContent});
 });

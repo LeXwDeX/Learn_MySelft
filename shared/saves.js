@@ -6,7 +6,7 @@
   var deleted = {}, leaving = false, sessionExpired = false;
   // Extend only when /state/put already protects the corresponding field.
   // Unprotected and unknown fields must continue to reveal real edit differences.
-  var protectedMaterialFields = ['quizMaterials', 'refinementReceipts', 'title'];
+  var protectedMaterialFields = ['quizMaterials', 'refinementReceipts', 'title', 'nodeAccess'];
   function confirmed(response, data) {
     return response.ok && data && data.ok === true && !data.read_only && !data.error;
   }

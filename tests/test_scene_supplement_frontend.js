@@ -53,6 +53,7 @@ function harness({readOnly = false, key = 'u0/topic-a'} = {}) {
   let currentKey = key;
   let postImpl = () => Promise.reject(new Error('Unexpected post'));
   const persistence = {
+    ensureAccess() { return Promise.resolve(true); },
     post(...args) { calls.post.push(args); return postImpl(...args); },
     save() { calls.save++; }
   };
@@ -61,7 +62,7 @@ function harness({readOnly = false, key = 'u0/topic-a'} = {}) {
     storeKey: () => currentKey, renderMathIn() {}, highlightIn() {}, bindAutoGrow() {},
     dispId: id => id, $: () => null
   };
-  const domain = {nodeById: id => model.state.plan.nodes.find(node => node.id === id) || null, isDone: () => false, canRefine: () => false};
+  const domain = {canAccess: () => true, nodeById: id => model.state.plan.nodes.find(node => node.id === id) || null, isDone: () => false, canRefine: () => false};
   let api;
   const cards = {cardContentEl: id => model.state.nodeDetail[id] ? scope : null, drawEdges() {}, renderPlan() { if (api && model.session.expandedId) api.renderNodeDetail(model.session.expandedId); }};
   const assistant = {setFoot() {}, syncAiMaterial(id) { calls.sync.push(id); }};
@@ -191,7 +192,7 @@ function assertMaterialSelected(h, message) {
     const h = harness();
     h.api.renderNodeDetail('n1');
     h.clickTab('material');
-    h.api.openQuizModal('n1', 'r1');
+    await h.api.openQuizModal('n1', 'r1');
     h.window.quizDialogOptions.onResult({quiz: {round_id: 'r1', questions: [{q: 'new'}]}, round_id: 'r1', score: 90, pass: true});
     assert.equal(h.tabs[1].on, true, 'a new quiz result switches the view to the quiz tab');
     h.expand('n2');
@@ -208,6 +209,7 @@ function assertMaterialSelected(h, message) {
     const beforeQuiz = JSON.stringify(h.quiz), beforeState = JSON.stringify(h.nodeState);
     const work = h.api.supplementScene('n1');
     assert.equal(h.api.supplementScene('n1'), work, 'duplicate clicks share the running operation');
+    await tick(); // Access is confirmed before starting the operation.
     assert.equal(h.calls.post.length, 1);
     pending.resolve({node_id: 'n1', source_notes: '原有正文', study_notes: sceneNotes, sceneSupplement: marker, reused: false});
     await work;
@@ -308,6 +310,7 @@ function assertMaterialSelected(h, message) {
     h.detail.manim_review = {status: 'failed', retryable: true, failure_code: 'render_unavailable'};
     h.setPost(() => pending.promise);
     const work = h.api.supplementScene('n1');
+    await tick();
     assert.match(h.status.textContent, /正在生成教学动画/ , 'running work overrides persisted failure text');
     assert.match(h.scope.innerHTML, /scene-supplement-btn[^>]*disabled/);
     pending.reject(new Error('worker unavailable'));

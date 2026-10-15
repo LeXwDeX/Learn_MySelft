@@ -1,7 +1,7 @@
 /* 页面装配；具名回调在此连接一次。 */
 define("path.entry", ["path.model", "path.format", "path.persistence", "path.shell", "path.workflow", "path.cards", "path.assistant", "path.generation", "path.assessment", "path.library", "path.hooks"], function (deps) {
   'use strict';
-  deps["path.hooks"].connect({renderDocumentTitle: deps["path.cards"].renderDocumentTitle, renderPlan: deps["path.cards"].renderPlan, selectNode: deps["path.cards"].selectNode, genAllStart: deps["path.generation"].genAllStart, genQuizMap: deps["path.assessment"].genQuizMap, renderAgentPanel: deps["path.assistant"].renderAgentPanel, showAgent: deps["path.assistant"].showAgent, requestNodeDetail: deps["path.generation"].requestNodeDetail, syncAiMaterial: deps["path.assistant"].syncAiMaterial, renderNodeDetail: deps["path.assessment"].renderNodeDetail});
+  deps["path.hooks"].connect({renderDocumentTitle: deps["path.cards"].renderDocumentTitle, renderPlan: deps["path.cards"].renderPlan, refreshDirectory: deps["path.cards"].refreshDirectory, selectNode: deps["path.cards"].selectNode, genAllStart: deps["path.generation"].genAllStart, genQuizMap: deps["path.assessment"].genQuizMap, renderAgentPanel: deps["path.assistant"].renderAgentPanel, showAgent: deps["path.assistant"].showAgent, requestNodeDetail: deps["path.generation"].requestNodeDetail, syncAiMaterial: deps["path.assistant"].syncAiMaterial, renderNodeDetail: deps["path.assessment"].renderNodeDetail});
   var model = deps["path.model"];
   var format = deps["path.format"];
   var persistence = deps["path.persistence"];
@@ -14,13 +14,25 @@ define("path.entry", ["path.model", "path.format", "path.persistence", "path.she
   var library = deps["path.library"];
 
 // ---------- 初始化 ----------
-  // 页面不做任何本地保存；每次打开都从服务端远程加载
+  // 学习资料从服务端恢复；临时阅读位置和待同步恢复由各自组件管理。
 
 function init() { window.LearnUser.ready.then(boot); }
 
 function boot() {
     model.session.quizCreation = new URLSearchParams(location.search).get("mode") === "quiz";
     assistant.bindAgentLayout();
+    cards.bindWorkspace();
+    function revisitStage(stage) {
+      cards.captureReadingPosition();
+      window.LearnUI.dialog.close(format.$('path-dialog'));
+      if (stage === 'research') { workflow.renderSpecCard(); workflow.renderResearch(); }
+      else workflow.renderChat();
+      shell.viewStage(stage);
+      var heading = format.$('stage-' + stage).querySelector('h2');
+      if (heading) { heading.tabIndex = -1; heading.focus(); }
+    }
+    format.$('workspace-goal').addEventListener('click', function () { revisitStage('intake'); });
+    format.$('workspace-research').addEventListener('click', function () { revisitStage('research'); });
     model.session.materialsPanel = window.LearnMaterials.mount(format.$('learning-materials'), {
       get: function () { return model.state.materials; },
       set: async function (next) {
@@ -48,7 +60,6 @@ function boot() {
     format.$('restart-btn').addEventListener('click', library.restart);
     shell.bindStageNav();
     format.$('errretry').addEventListener('click', function () { var f = model.session.retryFn; shell.hideError(); if (f) f(); });
-    window.addEventListener('resize', function () { if (model.state.plan) cards.drawEdges(); });
     format.$('backend-label').textContent = model.session.API;
     window.LearnUI.dialog.bind(format.$('del-modal'), null, function () { if (!format.$('del-modal').open) library.resetDeletion(); });
     format.$('dm-cancel').addEventListener('click', library.closeDelModal);
@@ -62,12 +73,12 @@ function boot() {
     if (rfb) rfb.addEventListener('click', function () {
       model.session.reviewFilter = !model.session.reviewFilter;
       shell.updateReviewFilterBtn();
-      cards.renderPlan();
+      cards.refreshDirectory();
     });
     if (window.LearnUser.readOnly) format.$('restart-btn').hidden = true;
     library.libBind();
 
-    persistence.purgeLocalLegacy();   // 清理历史遗留的浏览器本地数据（页面已不再本地保存任何东西）
+    persistence.purgeLocalLegacy();   // 清理旧版资料缓存；保留临时阅读位置与待同步恢复。
     // ?new=1：强制新开（不恢复历史；已有资料仍保留在「学习资料库」里）
     var fresh = false;
     try { fresh = !!new URLSearchParams(location.search).get('new'); } catch (e) {}

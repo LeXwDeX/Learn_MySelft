@@ -129,6 +129,7 @@ class Handler(BaseHTTPRequestHandler):
                             "/path/refine",
                             "/state/all",
                             "/state/put",
+                            "/state/node-access",
                             "/state/del",
                             "/state/delete",
                         ],
@@ -395,7 +396,7 @@ class Handler(BaseHTTPRequestHandler):
             controller = routes["materials"]
         elif path == "/jobs" or path.startswith("/jobs/"):
             controller = routes["jobs"]
-        elif path in ("/state/delete", "/state/del", "/state/put"):
+        elif path in ("/state/delete", "/state/del", "/state/put", "/state/node-access"):
             controller = routes["state"]
         elif path.startswith("/path/"):
             controller = routes["path"]

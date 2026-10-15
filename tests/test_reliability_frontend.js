@@ -78,12 +78,13 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
     load(check, 'shared/saves.js'); await check.LearnUser.ready; return check;
   }
   const accessKey = 'u0/learn-path-v1-access';
-  const accessLocal = JSON.stringify({topic:'access',nodeAccess:{n1:true}});
-  const accessRemote = JSON.stringify({topic:'access',nodeAccess:{n1:false}});
+  const accessLocal = JSON.stringify({topic:'access',nodeAccess:{n1:'unlocked'}});
+  const accessRemote = JSON.stringify({topic:'access',nodeAccess:{n1:'locked'}});
   const access = environment({'learn-unsaved-v1/u0':JSON.stringify({[accessKey]:accessLocal})});
   access.LearnUser.fetch = async () => Response.json({entries:{[accessKey]:accessRemote}});
   load(access, 'shared/saves.js'); await access.LearnUser.ready;
-  assert(access.LearnSaves.pending(), 'nodeAccess remains a real difference until the server protects it');
+  assert(!access.LearnSaves.pending(), 'server-owned nodeAccess must not create a false unacknowledged save');
+  assert((await recoveryCheck(materialKey, {...base,nodeAccess:{n1:'unlocked'},materials:[{name:'notes.txt',text:'real edit'}]}, {...base,nodeAccess:{n1:'locked'}})).LearnSaves.pending(), 'protected nodeAccess does not hide real reference edits');
   const extra = [{name:'quiz.txt',text:'server-owned supplement'}];
   assert(!(await recoveryCheck(materialKey, base, {...base,quizMaterials:extra})).LearnSaves.pending(), 'independent quiz draft must not masquerade as an unacknowledged save');
   assert(!(await recoveryCheck(materialKey, {topic:'legacy'}, {topic:'legacy',materials:[],quizMaterials:extra})).LearnSaves.pending(), 'absent legacy materials equal the default empty list');
