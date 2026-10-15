@@ -367,24 +367,27 @@ class ManimService:
                         response_format='json_object')
                     check_cancelled()
                     try:
-                        # Review the complete response; never repair truncated JSON into a verdict.
+                        # Never repair truncated JSON into a verdict or discard a parsed rejection.
                         review = json.loads(reply)
-                        if (not isinstance(review,dict) or type(review.get('ok')) is not bool
-                                or not isinstance(review.get('issues'),list)
-                                or not all(isinstance(v,str) and v.strip() for v in review['issues'])
-                                or review['ok'] != (not review['issues'])):
-                            raise ValueError('invalid visual review')
                     except (ValueError,TypeError):
+                        review = None
+                    negative = isinstance(review,dict) and (
+                        review.get('ok') is False
+                        or (isinstance(review.get('issues'),list) and bool(review['issues'])))
+                    valid = (isinstance(review,dict) and type(review.get('ok')) is bool
+                             and isinstance(review.get('issues'),list)
+                             and all(isinstance(v,str) and v.strip() for v in review['issues']))
+                    if not valid:
                         self._diagnostic(attempt+1,stage,'visual_invalid',started,
                                          review_attempt=review_attempt,remaining_budget_ms=review_remaining)
-                        if review_attempt == 2:
-                            # This terminal error must bypass the teaching-repair catch below.
+                        if negative or review_attempt == 2:
+                            # A malformed rejection is terminal; it cannot earn a same-candidate pass.
                             rendered = None
                             raise ManimGenerationError(502,'visual_invalid')
                         continue
-                    if not review['ok']:
+                    if negative:
                         failure_code = 'visual_rejected'
-                        raise ManimContractError('；'.join(review['issues'])[:800])
+                        raise ManimContractError('；'.join(review['issues'])[:800] or '独立复核未通过')
                     self._diagnostic(attempt+1,stage,'passed',started,
                                      review_attempt=review_attempt,remaining_budget_ms=review_remaining)
                     break

@@ -852,15 +852,13 @@ class VisualReviewRecoveryTests(unittest.TestCase):
         self.assertEqual(reviews[0][1], reviews[1][1])
         self.assertEqual(reviews[0][1], dict(temperature=0,max_tokens=8192,reasoning_effort='low',response_format='json_object'))
 
-    def test_all_invalid_shapes_stop_without_repair_or_publication(self):
+    def test_nonnegative_invalid_shapes_stop_without_repair_or_publication(self):
         self.repo.doc['nodeDetail']={'n1':{'study_notes':'原正文','quiz':{'questions':[{'id':'old'}]}}}
         self.repo.doc['nodeState']={'n1':{'completed':True,'score':83}}
         original=json.dumps(self.repo.doc,sort_keys=True)
         invalid=['', '{"ok":false,"issues":[', 'prefix {"ok":true,"issues":[]}',
                  '{"ok":true,"issues":[]} trailing', '{"ok":true}', '{"ok":1,"issues":[]}',
-                 '{"ok":false,"issues":[]}', '{"ok":true,"issues":["problem"]}',
-                 '{"ok":false,"issues":["problem",null]}', '{"ok":false,"issues":[" "]}',
-                 '{"ok":false,"issues":["problem",""]}']
+                 '{"ok":"invalid","issues":[]}']
         for reply in invalid:
             with self.subTest(reply=reply), self.assertRaises(ManimGenerationError) as raised:
                 self.run_reviews([reply,reply])
@@ -995,3 +993,36 @@ class VisualReviewRecoveryTests(unittest.TestCase):
         self.assertEqual(self.render.call_count,1)
         self.assertFalse(self.service.root.exists())
         self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
+
+    def test_every_well_formed_negative_requires_new_candidate_before_pass(self):
+        passed='{"ok":true,"issues":[]}'
+        for negative in ('{"ok":true,"issues":["actual quality issue"]}', '{"ok":false,"issues":[]}'):
+            for prefix in ([],['']):
+                with self.subTest(negative=negative,prefix=bool(prefix)):
+                    self.run_reviews(prefix+[negative,passed])
+                    self.assertEqual(self.generated,2)
+                    self.assertEqual(self.render.call_count,2)
+                    self.assertEqual(len(self.reviews()),len(prefix)+2)
+                    self.assertIsNot(self.reviews()[-2][0],self.reviews()[-1][0])
+                    repair=json.loads([c[0][1]['content'] for c in self.calls if isinstance(c[0][1]['content'],str)][1])
+                    self.assertTrue(repair['repair'].strip())
+                    if 'actual quality issue' in negative:self.assertIn('actual quality issue',repair['repair'])
+
+    def test_malformed_negative_never_reasks_or_repairs_even_with_queued_pass(self):
+        self.repo.doc['nodeDetail']={'n1':{'study_notes':'原正文','quiz':{'questions':[{'id':'old'}]}}}
+        self.repo.doc['nodeState']={'n1':{'completed':True,'score':83}}
+        original=json.dumps(self.repo.doc,sort_keys=True)
+        negatives=[{'ok':False}, {'ok':False,'issues':None}, {'ok':False,'issues':'issue'},
+                   {'issues':['quality']}, {'ok':1,'issues':['quality']},
+                   {'ok':True,'issues':[None]}, {'ok':False,'issues':['quality','']},
+                   {'ok':False,'issues':['quality',None]}, {'ok':False,'issues':[' ']}]
+        for negative in negatives:
+            for prefix in ([],['']):
+                with self.subTest(negative=negative,prefix=bool(prefix)),self.assertRaises(ManimGenerationError) as raised:
+                    self.run_reviews(prefix+[json.dumps(negative),'{"ok":true,"issues":[]}'])
+                self.assertEqual(raised.exception.failure_code,'visual_invalid')
+                self.assertEqual(self.generated,1)
+                self.assertEqual(self.render.call_count,1)
+                self.assertEqual(len(self.reviews()),len(prefix)+1)
+                self.assertFalse(self.service.root.exists())
+                self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
