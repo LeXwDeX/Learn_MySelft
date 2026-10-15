@@ -10,7 +10,7 @@ import quiz_harness as harness
 from background_jobs import JobError
 from quiz_generation import QuizVerificationFormatError, QuizVerificationQualityError
 from material_titles import document_title
-from service_limits import GEN_WAIT_MAX
+from service_limits import GEN_WAIT_MAX, QUIZMAP_EXECUTION_SECONDS
 from job_execution import JobDeadlineExceeded, remaining_timeout, check_deadline
 from text_utils import clip
 from prompts import _path_system
@@ -130,7 +130,7 @@ class QuizService:
         gate_key = "quizmap:" + key
         _gate, _owner = self.cache.join(gate_key)
         if not _owner:
-            _gate["ev"].wait(remaining_timeout(GEN_WAIT_MAX))
+            _gate["ev"].wait(remaining_timeout(QUIZMAP_EXECUTION_SECONDS))
             check_deadline()
             hit = _gate["out"]
             if hit is not None:

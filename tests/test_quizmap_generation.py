@@ -5,6 +5,8 @@ from concurrent.futures import CancelledError
 from pathlib import Path
 import sys
 import tempfile
+import threading
+from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -317,6 +319,89 @@ class QuizmapGenerationTests(unittest.TestCase):
         self.assertEqual(self.put.call_count, 1)
         self.assertEqual(self.repo.all("u0"), self.before)
         self.assertEqual(self.events[-1]["failure_stage"], "save")
+
+    def pending_owner(self, follower_budget=600, owner_fails=False):
+        """Run a real single-flight owner and simulate only elapsed Event waiting."""
+        entered, release = threading.Event(), threading.Event()
+        owner_out, follower_out = [], []
+        clock = [0.0]
+        def generate():
+            entered.set()
+            if not release.wait(3):
+                raise RuntimeError("test owner was not released")
+            if owner_fails:
+                raise RuntimeError("synthetic owner failure")
+            return json.dumps({"questions": questions()})
+        self.generate = generate
+        def owner():
+            try:
+                owner_out.append(self.run_quizmap())
+            except Exception as error:
+                owner_out.append(error)
+        worker = threading.Thread(target=owner)
+        worker.start()
+        self.assertTrue(entered.wait(3))
+        gate = self.app.cache.gates["quizmap:" + KEY]
+        original_event = gate["ev"]
+        test = self
+        class SimulatedCompletion:
+            waited = None
+            def wait(event, timeout):
+                event.waited = timeout
+                clock[0] += min(timeout, 200)
+                if timeout >= 200:
+                    release.set()
+                    test.assertTrue(original_event.wait(3))
+                    return True
+                return False
+            def set(event):
+                original_event.set()
+        event = SimulatedCompletion()
+        gate["ev"] = event
+        try:
+            with patch("job_execution.time", SimpleNamespace(monotonic=lambda: clock[0])):
+                with execution_budget(follower_budget) if follower_budget is not None else nullcontext():
+                    try:
+                        follower_out.append(self.run_quizmap())
+                    except Exception as error:
+                        follower_out.append(error)
+                if clock[0] < 200:
+                    self.assertTrue(worker.is_alive(), "a follower timeout does not cancel the owner")
+        finally:
+            release.set()
+            worker.join(3)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(len(self.generations()), 1, "the follower must not generate another candidate")
+        self.assertEqual(len(owner_out), 1)
+        self.assertEqual(len(follower_out), 1)
+        return owner_out[0], follower_out[0], event
+
+    def test_quizmap_follower_receives_owner_finishing_at_200_seconds(self):
+        owner, follower, event = self.pending_owner()
+        self.assertEqual(follower[0], 200, "the legacy 150-second wait exits before the owner finishes")
+        self.assertIs(follower[1], owner[1], "both requests receive the same single-flight result")
+        self.assertEqual(event.waited, 600)
+        self.assertEqual(self.put.call_count, 1)
+
+    def test_quizmap_follower_shares_owner_failure(self):
+        owner, follower, event = self.pending_owner(owner_fails=True)
+        self.assertIsInstance(owner, RuntimeError)
+        self.assertEqual(follower, (502, {"error": "quizmap verification failed"}))
+        self.assertEqual(event.waited, 600)
+        self.assert_unchanged()
+
+    def test_quizmap_follower_shorter_budget_expires_without_cancelling_owner(self):
+        owner, follower, event = self.pending_owner(follower_budget=100)
+        self.assertIsInstance(follower, JobDeadlineExceeded)
+        self.assertEqual(event.waited, 100)
+        self.assertEqual(owner[0], 200)
+        self.assertEqual(self.put.call_count, 1, "the owner can still commit after its follower leaves")
+
+    def test_quizmap_follower_without_execution_budget_waits_up_to_600(self):
+        owner, follower, event = self.pending_owner(follower_budget=None)
+        self.assertEqual(event.waited, 600)
+        self.assertEqual(follower[0], 200)
+        self.assertIs(follower[1], owner[1])
 
     def test_deadline_is_not_a_new_candidate_or_new_budget(self):
         self.generate = lambda: (_ for _ in ()).throw(JobDeadlineExceeded())

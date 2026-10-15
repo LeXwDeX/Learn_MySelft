@@ -152,6 +152,108 @@ class QueueTests(unittest.TestCase):
             )
         self.assertEqual(short_title(None), "")
 
+    def test_list_and_recent_titles_are_owned_document_snapshots(self):
+        queue = JobQueue(self.store, lambda *args: (200, {"secret": "result body"}))
+        documents = {
+            "u0/alpha": json.dumps({"title": "甲课程", "private": "正文秘密"}),
+            "u0/beta": json.dumps({"title": "乙课程"}),
+            "u0/missing": None,
+            "u0/broken": "{broken",
+            "u0/array": json.dumps(["不能读作标题"]),
+            "u1111111111111111/foreign": json.dumps({"title": "外部标题秘密"}),
+        }
+        for key, value in documents.items():
+            self.store.put(key, value)
+
+        jobs = []
+        specs = [
+            ("alpha", "u0/alpha", {"title": "伪造标题", "topic": "伪造主题"}),
+            ("alpha-again", "u0/alpha", {"title": "伪造标题2", "topic": "另一个主题"}),
+            ("beta", "u0/beta", {}),
+            ("missing", "u0/missing", {}),
+            ("broken", "u0/broken", {}),
+            ("array", "u0/array", {}),
+            ("foreign", "u1111111111111111/foreign", {"title": "外部正文不得读取"}),
+            ("non-string", 123, {"title": "非字符串key"}),
+        ]
+        for name, key, extra in specs:
+            jobs.append(queue.submit(
+                "u0", "title-list-%s" % name, "/path/intake",
+                {"key": key, "topic": "不得显示的主题", **extra},
+            ))
+
+        expected = {
+            "u0/alpha": "甲课程",
+            "u0/beta": "乙课程",
+            "u0/missing": "学习资料",
+            "u0/broken": "学习资料",
+            "u0/array": "学习资料",
+            "u1111111111111111/foreign": "学习资料",
+            123: "学习资料",
+        }
+        rows = queue.list("u0")
+        self.assertEqual(len(rows), len(specs))
+        by_id = {row["id"]: row for row in rows}
+        for job, (_, key, _) in zip(jobs, specs):
+            self.assertEqual(by_id[job["id"]]["title"], expected[key])
+            self.assertNotIn("result", by_id[job["id"]])
+        public_rows = json.dumps(rows, ensure_ascii=False)
+        self.assertNotIn("正文秘密", public_rows)
+        self.assertNotIn("外部标题秘密", public_rows)
+        self.assertNotIn("不得显示的主题", public_rows)
+        self.assertNotIn("伪造标题", public_rows)
+        self.assertEqual(len(queue.list("u0", "u0/alpha")), 2)
+        self.assertTrue(
+            all(row["title"] == "甲课程" for row in queue.list("u0", "u0/alpha"))
+        )
+
+        recent_rows = queue.recent("u0", limit=20)
+        recent = {row["key"]: row for row in recent_rows}
+        self.assertEqual(len(recent_rows), len(expected))
+        for key, title in expected.items():
+            self.assertEqual(recent[key]["title"], title)
+        self.assertNotIn("result", json.dumps(recent_rows, ensure_ascii=False))
+        self.assertEqual(queue.recent("other"), [])
+
+        self.store.put("u0/alpha", json.dumps({"title": "改名后的课程"}))
+        self.assertEqual(queue.list("u0", "u0/alpha")[0]["title"], "改名后的课程")
+        self.assertEqual(
+            next(
+                row for row in queue.recent("u0", limit=20)
+                if row["key"] == "u0/alpha"
+            )["title"],
+            "改名后的课程",
+        )
+
+    def test_list_and_recent_cache_document_titles_once_per_query(self):
+        queue = JobQueue(self.store, lambda *args: (200, {}))
+        queue.submit("u0", "title-cache-one", "/path/intake", {"key": "u0/shared"})
+        queue.submit("u0", "title-cache-two", "/path/intake", {"key": "u0/shared"})
+        self.store.put("u0/shared", json.dumps({"title": "共享资料"}))
+        original_connection = self.store.connection
+
+        def query_with_trace(reads):
+            from contextlib import contextmanager
+
+            @contextmanager
+            def traced_connection(*args, **kwargs):
+                with original_connection(*args, **kwargs) as connection:
+                    connection.set_trace_callback(
+                        lambda sql: reads.append(sql)
+                        if "FROM documents WHERE key" in sql
+                        else None
+                    )
+                    yield connection
+
+            return traced_connection
+
+        for query in (queue.list, queue.recent):
+            reads = []
+            with patch.object(self.store, "connection", query_with_trace(reads)):
+                rows = query("u0")
+            self.assertEqual(len(reads), 1)
+            self.assertEqual({row["title"] for row in rows}, {"共享资料"})
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
