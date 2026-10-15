@@ -106,6 +106,22 @@
         boundRequestId(options.requestId, operation, body) : requestId(), created: Date.now()};
       if (options.requestId && learningOperation(operation)) receipt.baseRequestId = options.requestId;
     }
+    var confirmedScene;
+    if (operation === '/path/node/scene' && options.newOperation && !options.resumeOnly && body.automatic !== true && receipt.id) {
+      // A new explicit animation request is allowed only after this exact
+      // server task has finished without producing an animation. Thin local
+      // receipts and caller intent alone never authorize a new identity.
+      confirmedScene = await request('/jobs/' + encodeURIComponent(receipt.id));
+      var scene = confirmedScene.job;
+      if (!scene || scene.id !== receipt.id || scene.key !== body.key || scene.node_id !== (body.node && body.node.id) || scene.operation !== operation) {
+        throw new Error('动画任务身份无法确认，请重新读取原任务');
+      }
+      if (scene.status === 'succeeded' && scene.result && scene.result.needed === false) {
+        var nextScene = {requestId: requestId(), created: Date.now()};
+        if (!saveReceipt(key, nextScene)) throw new Error('无法保留动画任务标识，请恢复浏览器存储后重试');
+        receipt = nextScene; confirmedScene = null;
+      }
+    }
     if (options.newOperation && receipt.id && !learningOperation(operation)) {
       // Only an explicit next exam rotates a completed receipt. Unconfirmed,
       // running and failed work stays resumable with its original identity.
@@ -115,13 +131,15 @@
       }
     }
     if (options.requestId && !learningOperation(operation)) receipt.requestId = options.requestId;
-    saveReceipt(key, receipt);
+    if (!saveReceipt(key, receipt) && operation === '/path/node/scene' && body.intent === 'upgrade-legacy-scene-to-manim-v1') {
+      throw new Error('无法保留升级任务标识，请恢复浏览器存储后重试');
+    }
     var preparing = {id: 'prepare-' + receipt.requestId, operation: operation};
     if (operation === '/path/requiz') showJob(preparing, '正在准备新的题目，目前进度：步骤 0/4 · 提交任务');
     var accepted, submitted = false;
     try {
       if (receipt.id && (options.resumeOnly || operation === '/path/node' || operation === '/path/node/scene')) {
-        accepted = await request('/jobs/' + encodeURIComponent(receipt.id));
+        accepted = confirmedScene || await request('/jobs/' + encodeURIComponent(receipt.id));
       } else if (options.resumeOnly) {
         var missing = new Error('未找到原任务。请点击重试，继续准备学习材料。');
         missing.error_category = 'recovery_required'; throw missing;

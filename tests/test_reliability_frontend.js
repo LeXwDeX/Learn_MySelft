@@ -380,5 +380,68 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
   await sceneConflict.LearnJobs.run('/path/node/scene',boundBody,{requestId:baseId});assert.equal(sceneIds.length,2);assert.notEqual(sceneIds[1],submitted[1],'operation is part of rebound identity');
   const otherOperation=environment();let otherPosts=0;otherOperation.LearnUser.fetch=async()=>{otherPosts++;return Response.json({error:'conflict',error_category:'request_id_conflict'},{status:409});};load(otherOperation,'shared/jobs.js');
   await assert.rejects(otherOperation.LearnJobs.run('/path/plan',boundBody,{requestId:baseId}));assert.equal(otherPosts,1,'no rebind outside two learning operations');
+
+  {
+    const h=environment(),body={key:'u0/explicit',node:{id:'n1'}},posts=[];
+    let current;
+    h.LearnUser.fetch=async(url,options)=>{
+      if(options.method==='POST') {const request=JSON.parse(options.body);posts.push(request);current={id:'explicit-'+posts.length,key:body.key,node_id:'n1',operation:'/path/node/scene',status:'succeeded',result:{node_id:'n1',study_notes:'body',needed:false}};}
+      return Response.json({job:current});
+    };
+    load(h,'shared/jobs.js');await h.LearnJobs.run('/path/node/scene',body,{newOperation:true});await h.LearnJobs.run('/path/node/scene',body,{newOperation:true});
+    assert.equal(posts.length,2,'explicit request can create animation work after a confirmed no-animation success');assert.notEqual(posts[0].request_id,posts[1].request_id);
+    await h.LearnJobs.run('/path/node/scene',body,{newOperation:true,resumeOnly:true});assert.equal(posts.length,2,'resumeOnly cannot rotate succeeded no-animation identity');
+  }
+
+  for(const scenario of ['needed-true','thin-success','running','queued','failed','interrupted','cancelled','unknown','automatic','resume-only','wrong-id','wrong-key','wrong-node','wrong-operation','storage-failure']) {
+    const h=environment(),body={key:'u0/scene-matrix',node:{id:'n1'},...(scenario==='automatic'?{automatic:true}:{})};let calls=[],phase='seed',gets=0;
+    let stored={id:'scene-old',key:body.key,node_id:'n1',operation:'/path/node/scene',status:'succeeded',result:{node_id:'n1',study_notes:'body',needed:false}};
+    h.LearnUser.fetch=async(url,options)=>{
+      calls.push({url,method:options.method,body:options.body&&JSON.parse(options.body)});
+      if(url.endsWith('/retry'))return Response.json({job:{...stored,status:'succeeded',result:{retried:true}}});
+      if(options.method==='GET') {gets++;if((scenario==='running'||scenario==='queued')&&gets>1)return Response.json({job:{...stored,status:'succeeded',result:{needed:true}}});}
+      return Response.json({job:stored});
+    };
+    load(h,'shared/jobs.js');await h.LearnJobs.run('/path/node/scene',body);phase='second';
+    if(scenario==='needed-true')stored.result.needed=true;
+    if(scenario==='thin-success')delete stored.result;
+    if(['running','queued','failed','interrupted','cancelled','unknown'].includes(scenario))stored.status=scenario;
+    if(scenario==='wrong-id')stored.id='different';
+    if(scenario==='wrong-key')stored.key='u0/other';
+    if(scenario==='wrong-node')stored.node_id='n2';
+    if(scenario==='wrong-operation')stored.operation='/path/node';
+    if(scenario==='storage-failure')h.localStorage.setItem=()=>{throw Error('full');};
+    const work=h.LearnJobs.run('/path/node/scene',body,{newOperation:true,manualRetry:true,...(scenario==='resume-only'?{resumeOnly:true}:{})});
+    if(['cancelled','unknown'].includes(scenario)||scenario.startsWith('wrong-')||scenario==='storage-failure')await assert.rejects(work);else await work;
+    assert.equal(calls.filter(call=>call.method==='POST'&&call.url.endsWith('/jobs')).length,1,scenario+' cannot create a new task');
+    const retries=calls.filter(call=>call.url.endsWith('/retry'));
+    assert.equal(retries.length,['failed','interrupted'].includes(scenario)?1:0,scenario+' only retries the original failed identity');
+    if(retries.length)assert(retries[0].url.endsWith('/jobs/scene-old/retry'));
+  }
+  {
+    const initial=environment(),body={key:'u0/lost-animation-ack',node:{id:'n1'}},ids=[];let phase='seed';
+    const old={id:'old-animation',key:body.key,node_id:'n1',operation:'/path/node/scene',status:'succeeded',result:{node_id:'n1',study_notes:'body',needed:false}};
+    initial.LearnUser.fetch=async(url,options)=>{if(options.method==='POST'){ids.push(JSON.parse(options.body).request_id);if(phase==='lost')throw Error('accepted, ack lost');}return Response.json({job:old});};
+    load(initial,'shared/jobs.js');await initial.LearnJobs.run('/path/node/scene',body,{newOperation:true});phase='lost';await assert.rejects(initial.LearnJobs.run('/path/node/scene',body,{newOperation:true}));
+    const restored=environment(Object.fromEntries(initial.storage));let recoveredId;
+    restored.LearnUser.fetch=async(url,options)=>{recoveredId=JSON.parse(options.body).request_id;return Response.json({job:{...old,id:'new-animation',result:{needed:true}}});};load(restored,'shared/jobs.js');
+    await restored.LearnJobs.run('/path/node/scene',body,{newOperation:true});assert.equal(recoveredId,ids[1],'lost rotated ACK resumes the already-persisted new request identity');assert.notEqual(ids[0],ids[1]);
+  }
+
+  {
+    const h=environment(),base={key:'u0/upgrade',node:{id:'n1'}},upgrade={...base,intent:'upgrade-legacy-scene-to-manim-v1'},posts=[],server=new Map();let dropAck=false;
+    const legacy={node_id:'n1',study_notes:'```learn-scene\nlegacy\n```',needed:true},manim={node_id:'n1',study_notes:'```learn-manim\nnew\n```',needed:true};
+    h.LearnUser.fetch=async(url,options)=>{
+      if(options.method==='GET')return Response.json({job:server.get(url.split('/').pop())});
+      const request=JSON.parse(options.body);posts.push(request);let job=[...server.values()].find(item=>item.requestId===request.request_id);
+      if(!job){job={id:'upgrade-job-'+server.size,key:base.key,node_id:'n1',operation:'/path/node/scene',status:'succeeded',requestId:request.request_id,result:request.body.intent?manim:legacy};server.set(job.id,job);}
+      const durable=[...h.storage.values()].some(value=>{try{return JSON.parse(value).requestId===request.request_id;}catch{return false;}});assert(durable,'upgrade identity is saved before submission');
+      if(dropAck){dropAck=false;throw Error('upgrade accepted, ACK lost');}return Response.json({job});
+    };load(h,'shared/jobs.js');await h.LearnJobs.run('/path/node/scene',base,{newOperation:true});dropAck=true;
+    const lost=h.LearnJobs.run('/path/node/scene',upgrade,{newOperation:true});assert.strictEqual(lost,h.LearnJobs.run('/path/node/scene',upgrade,{newOperation:true}),'upgrade double click shares one promise');await assert.rejects(lost);assert.equal(posts.length,2);assert.notEqual(posts[0].request_id,posts[1].request_id);
+    const reload=environment(Object.fromEntries(h.storage));reload.LearnUser.fetch=h.LearnUser.fetch;load(reload,'shared/jobs.js');await reload.LearnJobs.run('/path/node/scene',upgrade,{newOperation:true});assert.equal(posts[2].request_id,posts[1].request_id,'upgrade reload after lost ACK resumes the exact persisted request ID');const count=posts.length;await reload.LearnJobs.run('/path/node/scene',upgrade,{newOperation:true});assert.equal(posts.length,count,'needed:true success cannot rotate the same upgrade intent');
+    assert.equal((await reload.LearnJobs.run('/path/node/scene',base,{newOperation:true})).study_notes,legacy.study_notes,'old and upgrade receipts remain independently addressable');
+    const blocked=environment();let blockedPosts=0;blocked.localStorage.setItem=()=>{throw Error('full');};blocked.LearnUser.fetch=async()=>{blockedPosts++;};load(blocked,'shared/jobs.js');await assert.rejects(blocked.LearnJobs.run('/path/node/scene',upgrade,{newOperation:true}));assert.equal(blockedPosts,0,'new upgrade never submits without durable identity');
+  }
   console.log('PASS ordered saves, offline retry, protected recovery, task deduplication and reconnect');
 })().catch(error => { console.error(error); process.exitCode = 1; });

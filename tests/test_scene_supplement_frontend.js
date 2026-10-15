@@ -67,7 +67,8 @@ function harness({readOnly = false, key = 'u0/topic-a'} = {}) {
   const cards = {cardContentEl: id => model.state.nodeDetail[id] ? scope : null, drawEdges() {}, renderPlan() { if (api && model.session.expandedId) api.renderNodeDetail(model.session.expandedId); }};
   const assistant = {setFoot() {}, syncAiMaterial(id) { calls.sync.push(id); }};
   const shell = {showError(message) { calls.errors.push(message); }, hideError() {}};
-  const window = {LearnUser: {readOnly}, LearnTitles: {document: () => '测试资料'}, QuizDialog: {open(options) { window.quizDialogOptions = options; }}};
+  const window = {LearnJobs:{list:async()=>[]},LearnUser: {readOnly}, LearnTitles: {document: () => '测试资料'}, QuizDialog: {open(options) { window.quizDialogOptions = options; }}};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'shared/learning-scenes.js'), 'utf8'), {window});
   const context = {window, define(name, deps, factory) { context.factory = factory; }, requestAnimationFrame() {}, alert() {}, Promise, console, AbortController, setTimeout, clearTimeout};
   vm.runInNewContext(source, context, {filename: 'path-assessment.js'});
   const deps = {'path.format': format, 'path.model': model, 'path.domain': domain, 'path.cards': cards,
@@ -80,7 +81,7 @@ function harness({readOnly = false, key = 'u0/topic-a'} = {}) {
     setKey(value) { currentKey = value; }, setPost(fn) { postImpl = fn; }};
 }
 
-async function tick() { await Promise.resolve(); await Promise.resolve(); }
+async function tick() { for(let i=0;i<14;i++)await Promise.resolve(); }
 
 function assertMaterialSelected(h, message) {
   assert.equal(h.tabs[0].on, true, message + ': material tab remains selected');
@@ -100,7 +101,7 @@ function assertMaterialSelected(h, message) {
     await h.api.supplementScene('n1');
     assert.equal(reads,1,'scene failure refreshes authoritative review without replacing material');
     assert.equal(h.detail.manim_review.failure_code,'render_unavailable');
-    assert.equal(h.calls.post[0][1].automatic,true,'staged retry only requests automatic animation');
+    assert.equal(h.calls.post[0][1].automatic,undefined,'explicit animation retry must use requested semantics');
     assert.equal(h.calls.post[0][2].manualRetry,true);
     assert.equal(h.detail.study_notes,'原有正文');
     assert.equal(h.quiz.round_id,'r1');
@@ -232,8 +233,8 @@ function assertMaterialSelected(h, message) {
     assert.equal(h.detail.sceneSupplement, oldMarker, 'not-needed must leave the marker unchanged');
     assert.equal(h.calls.save, 0, 'not-needed must not persist a no-op');
     assert.equal(JSON.stringify(h.quiz), JSON.stringify(h.detail.quiz));
-    assert.equal(h.status.textContent, '本单元暂未找到合适图示。 <img src=x onerror=alert(1)>', 'model reason is assigned as text');
-    assert.match(h.scope.innerHTML, /scene-supplement-btn[^>]*disabled/);
+    assert.equal(h.status.textContent, '这次未生成教学动画。正文仍可学习，也可以再次手动请求。 <img src=x onerror=alert(1)>', 'model reason is assigned as text');
+    assert.doesNotMatch(h.scope.innerHTML, /scene-supplement-btn[^>]*disabled/, 'no-animation result must keep manual action available');
   }
 
   {
@@ -438,5 +439,96 @@ function assertMaterialSelected(h, message) {
     }
   }
 
+
+  for (const listedStatus of ['succeeded','failed','interrupted','cancelled','running']) {
+    const h=harness(), oldList=deferred(), manual=deferred();
+    let reads=0;h.window.LearnJobs={list:()=>++reads===1?oldList.promise:Promise.resolve([]),get:()=>Promise.resolve({id:'old',status:'succeeded',result:{node_id:'n1',study_notes:'原有正文',needed:false}}),watch:()=>Promise.resolve({node_id:'n1',study_notes:'原有正文',needed:false})};
+    const restore=h.api.restoreSceneSupplement();h.setPost(()=>manual.promise);const request=h.api.supplementScene('n1');await tick();
+    oldList.resolve([{id:'old',operation:'/path/node/scene',node_id:'n1',created_ms:1,status:listedStatus,result:{node_id:'n1',study_notes:'原有正文',needed:false}}]);await restore;
+    assert.match(h.status.textContent,/正在生成教学动画/,'late '+listedStatus+' list cannot replace active manual work');
+    assert.match(h.scope.innerHTML,/scene-supplement-btn[^>]*disabled/);
+    manual.resolve({node_id:'n1',source_notes:'原有正文',study_notes:manimNotes,sceneSupplement:marker});await request;
+    assert.equal(h.detail.study_notes,manimNotes);assert.equal(h.quiz.round_id,'r1');assert.equal(h.nodeState.score,80);
+  }
+  {
+    const h=harness(), oldGet=deferred(), manual=deferred();
+    let reads=0;h.window.LearnJobs={list:async()=>++reads===1?[{id:'thin',operation:'/path/node/scene',node_id:'n1',created_ms:1,status:'succeeded'}]:[],get:()=>oldGet.promise};
+    const restore=h.api.restoreSceneSupplement();await tick();h.setPost(()=>manual.promise);const request=h.api.supplementScene('n1');await tick();
+    oldGet.resolve({id:'thin',status:'succeeded',result:{node_id:'n1',study_notes:'原有正文',needed:false}});await restore;
+    assert.match(h.status.textContent,/正在生成教学动画/,'late thin result cannot stop new manual task');
+    manual.resolve({node_id:'n1',source_notes:'原有正文',study_notes:manimNotes});await request;assert.equal(h.detail.study_notes,manimNotes);
+  }
+
+  for(const oldStatus of ['failed','interrupted','cancelled','unknown','succeeded']) {
+    const h=harness(),oldGet=deferred(),manual=deferred();
+    let reads=0;h.window.LearnJobs={list:async()=>++reads===1?[{id:'old-get',operation:'/path/node/scene',node_id:'n1',status:oldStatus,created_ms:1}]:[],get:()=>oldGet.promise};
+    let refresh;
+    if(oldStatus==='failed'||oldStatus==='interrupted')h.window.LearnUser.fetch=()=>new Promise(resolve=>{refresh=resolve;});
+    const restore=h.api.restoreSceneSupplement();await tick();h.setPost(()=>manual.promise);const request=h.api.supplementScene('n1');await tick();
+    if(refresh)refresh(Response.json({entries:{'u0/topic-a':JSON.stringify({nodeDetail:{n1:{study_notes:'原有正文',manim_review:{status:'failed',failure_code:'old'}}}})}}));
+    oldGet.resolve({id:'old-get',status:oldStatus,result:{node_id:'n1',study_notes:'原有正文',needed:false}});await restore;
+    assert.match(h.status.textContent,/正在生成教学动画/,'late '+oldStatus+' GET/refresh cannot replace manual work');
+    assert.notEqual((h.detail.manim_review||{}).failure_code,'old');manual.resolve({node_id:'n1',source_notes:'原有正文',study_notes:manimNotes});await request;assert.equal(h.detail.study_notes,manimNotes);
+  }
+  {
+    const h=harness(),manual=deferred(),refresh=deferred();h.window.LearnUser.fetch=()=>refresh.promise;h.setPost(()=>manual.promise);
+    const request=h.api.supplementScene('n1');await tick();manual.reject(Error('old failure'));await tick();h.detail.study_notes='new source';
+    refresh.resolve(Response.json({entries:{'u0/topic-a':JSON.stringify({nodeDetail:{n1:{study_notes:'原有正文',manim_review:{status:'failed',failure_code:'old'}}}})}}));await request;
+    assert.equal(h.detail.study_notes,'new source');assert.equal(h.detail.manim_review,undefined);assert.deepEqual(h.calls.errors,[],'old POST failure/refresh cannot report against a newer source');
+  }
+  {
+    const h=harness();h.detail.manim_review={status:'not_needed'};h.api.renderNodeDetail('n1');assert.doesNotMatch(h.scope.innerHTML,/scene-supplement-btn[^>]*disabled/);assert.match(h.status.textContent,/仍可手动/);
+    h.setPost(async()=>({node_id:'n1',study_notes:'原有正文',needed:false}));await h.api.supplementScene('n1');await h.api.supplementScene('n1');assert.equal(h.calls.post.length,2,'a completed no-animation response permits another explicit request');
+    assert.equal(h.quiz.round_id,'r1');assert.equal(h.nodeState.score,80);
+  }
+
+  for(const status of ['failed','interrupted','running','queued']) {
+    const h=harness(),gate=deferred(),original={id:'old-automatic',key:'u0/topic-a',operation:'/path/node/scene',node_id:'n1',status,created_ms:1,automatic:true};let retries=0,watches=0;
+    h.window.LearnJobs={list:async()=>[original],get:async()=>original,retry:async id=>{assert.equal(id,original.id);retries++;return gate.promise;},watch:async job=>{assert.equal(job.id,original.id);watches++;return gate.promise;}};
+    const work=h.api.supplementScene('n1');await tick();assert.equal(h.calls.post.length,0,status+' automatic task must keep its identity');assert.equal(retries,['failed','interrupted'].includes(status)?1:0);assert.equal(watches,['running','queued'].includes(status)?1:0);assert.match(h.status.textContent,/原动画任务/);
+    assert.equal(h.api.supplementScene('n1'),work,'repeated clicks share original task work');gate.resolve({node_id:'n1',study_notes:'原有正文',needed:false});await work;
+    original.status='succeeded';original.result={node_id:'n1',study_notes:'原有正文',needed:false};h.setPost(async()=>({node_id:'n1',source_notes:'原有正文',study_notes:manimNotes}));await h.api.supplementScene('n1');assert.equal(h.calls.post.length,1);assert.equal(h.calls.post[0][1].automatic,undefined,'only the next explicit action starts requested semantics');assert.equal(original.automatic,true,'retry never rewrites the original automatic intent');
+  }
+  for(const queryFailure of ['list','get','unknown','thin']) {
+    const h=harness(),job={id:'unconfirmed',key:'u0/topic-a',node_id:'n1',operation:'/path/node/scene',status:queryFailure==='unknown'?'mystery':'succeeded',created_ms:1};
+    h.window.LearnJobs={list:async()=>{if(queryFailure==='list')throw Error('offline');return [job];},get:async()=>{if(queryFailure==='get')throw Error('offline');return job;}};
+    await h.api.supplementScene('n1');assert.equal(h.calls.post.length,0,queryFailure+' does not guess that no prior task exists');assert.match(h.status.textContent,/无法确认原动画任务/);assert.match(h.scope.innerHTML,/重新查询动画任务/);assert.equal(h.detail.study_notes,'原有正文');assert.equal(h.calls.save,0);
+    h.window.LearnJobs.list=async()=>[];h.setPost(async()=>({node_id:'n1',study_notes:'原有正文',needed:false}));await h.api.supplementScene('n1');assert.equal(h.calls.post.length,1,'a successful retry query allows the explicit action');
+  }
+  {
+    const h=harness(),oldList=deferred(),gate=deferred(),active={id:'active-before-click',key:'u0/topic-a',node_id:'n1',operation:'/path/node/scene',status:'running',created_ms:2};let lists=0,watches=0;
+    h.window.LearnJobs={list:()=>++lists===1?oldList.promise:Promise.resolve([active]),get:async()=>active,watch:async job=>{watches++;assert.equal(job.id,active.id);return gate.promise;}};
+    const restore=h.api.restoreSceneSupplement(),manual=h.api.supplementScene('n1');await tick();assert.equal(h.calls.post.length,0);assert.equal(watches,1,'click before old list resolves reads back and watches the original active job');oldList.resolve([active]);await restore;assert.equal(watches,1,'late restore list cannot start a second watcher');gate.resolve({node_id:'n1',study_notes:'原有正文',needed:false});await manual;
+  }
+
+  {
+    const h=harness(),old=deferred(),fresh=deferred();let posts=0;
+    h.setPost(()=>++posts===1?old.promise:fresh.promise);const previous=h.api.supplementScene('n1');await tick();
+    h.detail.study_notes='new source';const current=h.api.supplementScene('n1');await tick();assert.equal(posts,2,'changed source can own a separate current work after a fresh empty task lookup');
+    old.resolve({node_id:'n1',study_notes:'原有正文',needed:false});await previous;assert.match(h.status.textContent,/正在生成教学动画/,'old POST result cannot replace current work');
+    const updated='new source\n\n```learn-manim\n{"version":1,"asset_id":"'+'b'.repeat(32)+'","title":"变换","summary":"观察"}\n```';
+    fresh.resolve({node_id:'n1',source_notes:'new source',study_notes:updated});await current;assert.equal(h.detail.study_notes,updated);assert.equal(h.quiz.round_id,'r1');assert.equal(h.nodeState.score,80);
+  }
+
+  for(const needed of [undefined,true]) {
+    const h=harness();const legacy=sceneNotes.replace('"matrix":[[1,0],[0,1]]','"matrix":[[1,0],[0,1]],"vector":[1,1]');h.detail.study_notes=legacy;
+    const old={id:'legacy-success',key:'u0/topic-a',node_id:'n1',operation:'/path/node/scene',created_ms:1,status:'succeeded',result:{node_id:'n1',study_notes:legacy,...(needed===undefined?{}:{needed})}};
+    h.window.LearnJobs={list:async()=>[old],get:async()=>old};const gate=deferred();h.setPost(()=>gate.promise);
+    const work=h.api.supplementScene('n1');assert.equal(h.api.supplementScene('n1'),work);await tick();assert.equal(h.calls.post.length,1,'a confirmed legacy successful result is a different explicit Manim upgrade intent');assert.equal(h.calls.post[0][1].intent,'upgrade-legacy-scene-to-manim-v1');assert.equal(h.calls.post[0][1].automatic,undefined);
+    gate.resolve({node_id:'n1',source_notes:legacy,study_notes:manimNotes});await work;assert.equal(h.detail.study_notes,manimNotes);assert.equal(h.quiz.round_id,'r1');assert.equal(h.nodeState.score,80);
+    await h.api.restoreSceneSupplement();assert.equal(h.detail.study_notes,manimNotes,'the old legacy result cannot undo the upgraded material');
+  }
+
+  for(const invalid of ['invalid-json','invalid-spec','unclosed','nested-example','mismatch','manim','wrong-identity']) {
+    const h=harness(),valid=sceneNotes.replace('"matrix":[[1,0],[0,1]]','"matrix":[[1,0],[0,1]],"vector":[1,1]');let notes=valid;
+    if(invalid==='invalid-json')notes='```learn-scene\nnot json\n```';if(invalid==='invalid-spec')notes='```learn-scene\n{"version":1,"type":"unsupported"}\n```';if(invalid==='unclosed')notes=valid.slice(0,-3);if(invalid==='nested-example')notes='````text\n'+valid+'\n````';if(invalid==='manim')notes=manimNotes;
+    h.detail.study_notes=notes;const old={id:'legacy-invalid',key:'u0/topic-a',node_id:'n1',operation:'/path/node/scene',status:'succeeded',created_ms:1,result:{node_id:'n1',study_notes:invalid==='mismatch'?'other source':notes,needed:true}};
+    h.window.LearnJobs={list:async()=>[old],get:async()=>({...old,...(invalid==='wrong-identity'?{node_id:'other'}:{})})};await h.api.supplementScene('n1');assert.equal(h.calls.post.length,0,invalid+' cannot authorize a separate upgrade intent');
+  }
+  {
+    const h=harness(),valid=sceneNotes.replace('"matrix":[[1,0],[0,1]]','"matrix":[[1,0],[0,1]],"vector":[1,1]');h.detail.study_notes=valid;let retries=0;
+    const original={id:'upgrade-failed',key:'u0/topic-a',node_id:'n1',operation:'/path/node/scene',status:'failed',created_ms:2,intent:'upgrade-legacy-scene-to-manim-v1'};
+    h.window.LearnJobs={list:async()=>[original],get:async()=>original,retry:async id=>{retries++;assert.equal(id,original.id);return {node_id:'n1',source_notes:valid,study_notes:manimNotes};}};await h.api.supplementScene('n1');assert.equal(retries,1);assert.equal(h.calls.post.length,0,'failed upgrade retries its original identity');assert.equal(h.detail.study_notes,manimNotes);
+  }
   console.log('Frontend scene supplement: source matching, duplicate results, stale-topic guard, read-only, and job recovery passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
