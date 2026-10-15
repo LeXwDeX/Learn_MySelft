@@ -451,24 +451,42 @@ define('home.account', ["home.platform"], function (deps) {
         $("login-form").setAttribute("aria-busy", "false");
       });
   });
-  $("password-cancel").onclick = function () {
-    ui.dialog.close($("password-dialog"));
-  };
+  var passwordBusy = false;
+  ui.dialog.bind($("password-dialog"), $("password-cancel"), function () {
+    error("password-error", "", "old-password");
+  });
+  $("password-dialog").addEventListener("cancel", function (event) {
+    if (passwordBusy) event.preventDefault();
+  });
   $("password-form").onsubmit = function (event) {
     event.preventDefault();
-    error("password-error", "");
+    if (passwordBusy) return;
+    passwordBusy = true;
+    error("password-error", "", "old-password");
     $("password-save").disabled = true;
+    $("password-cancel").disabled = true;
+    $("password-save").textContent = "正在保存…";
+    $("password-form").setAttribute("aria-busy", "true");
     context
       .request("/auth/password", {
         old_password: $("old-password").value,
         new_password: $("new-password").value,
       })
       .then(function () {
+        $("old-password").value = "";
+        $("new-password").value = "";
         location.href = "/learn/";
       })
       .catch(function (e) {
-        error("password-error", e.message);
+        error("password-error", e.message, "old-password");
+        $("old-password").focus();
+      })
+      .finally(function () {
+        passwordBusy = false;
         $("password-save").disabled = false;
+        $("password-cancel").disabled = false;
+        $("password-save").textContent = "保存并重新登录";
+        $("password-form").setAttribute("aria-busy", "false");
       });
   };
 

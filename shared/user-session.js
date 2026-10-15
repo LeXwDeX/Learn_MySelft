@@ -38,15 +38,12 @@
       return Promise.resolve(
         new Response(
           JSON.stringify({
-            ok: endpoint === "/state/put",
+            ok: false,
             read_only: true,
-            error:
-              endpoint === "/state/put"
-                ? undefined
-                : "管理员查看其他用户资料时只读",
+            error: "管理员查看其他用户资料时只读，修改不会保存",
           }),
           {
-            status: endpoint === "/state/put" ? 200 : 403,
+            status: 403,
             headers: { "Content-Type": "application/json" },
           },
         ),

@@ -4,6 +4,16 @@
   var context = window.LearnUser;
   var pending = {}, queue = Promise.resolve(), storageKey, lastFailure = null, recovering = false, retrying = false, outstanding = 0;
   var deleted = {}, leaving = false, sessionExpired = false;
+  // Extend only when /state/put already protects the corresponding field.
+  // Unprotected and unknown fields must continue to reveal real edit differences.
+  var protectedMaterialFields = ['quizMaterials', 'refinementReceipts', 'title'];
+  function confirmed(response, data) {
+    return response.ok && data && data.ok === true && !data.read_only && !data.error;
+  }
+  function readOnlyResponse() {
+    return new Response(JSON.stringify({ok:false, read_only:true, error:'管理员查看其他用户资料时只读，修改不会保存'}),
+      {status:403, headers:{'Content-Type':'application/json'}});
+  }
   function persist() {
     if (!storageKey) return;
     try {
@@ -75,8 +85,9 @@
     retrying = true;
     var work = context.fetch(context.apiBase + '/state/put', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entries: entries})
-    }).then(function (response) {
-      if (!response.ok) throw new Error(lastFailure || '保存失败，内容仍待同步');
+    }).then(async function (response) {
+      var data = await response.clone().json();
+      if (!confirmed(response, data)) throw new Error(data && data.error || lastFailure || '保存未获确认，内容仍待同步');
       // Keep the old page locked: its pagehide save may contain stale content.
       // The replacement page starts unlocked after the recovery is acknowledged.
       if (recovering) location.reload();
@@ -92,6 +103,7 @@
     throw error;
   }
   function send(options, dispatch) {
+    if (context.readOnly) return Promise.resolve(readOnlyResponse());
     var entries;
     if (recovering && !retrying) {
       notice('请先恢复上次未保存的内容，再继续编辑。', true);
@@ -118,7 +130,14 @@
       try {
         var response = await dispatch();
         // An acknowledgement includes the JSON body, not just response headers.
-        await response.clone().json();
+        var data = await response.clone().json();
+        if (response.ok && !confirmed(response, data)) {
+          var readOnly = data && data.read_only;
+          return new Response(JSON.stringify({ok:false, read_only:!!readOnly,
+            error:data && data.error || (readOnly ? '当前页面只读，修改未保存' : '服务器未确认保存，内容仍待同步'),
+            code:readOnly ? 'state_read_only' : 'state_save_unconfirmed'}),
+            {status:readOnly ? 403 : 502, headers:{'Content-Type':'application/json'}});
+        }
         return response;
       } finally { clearTimeout(timer); }
     }
@@ -185,11 +204,9 @@
       var before = JSON.parse(left), after = JSON.parse(right);
       if (/^[^/]+\/learn-path-v1-/.test(key) && !key.endsWith('/learn-path-v1-last') &&
           before && after && typeof before === 'object' && typeof after === 'object') {
-        // This field is saved independently by /materials/quiz-draft and is
-        // protected from whole-document browser writes by the server.
-        delete before.quizMaterials; delete after.quizMaterials;
-        // Refinement receipts are server-owned replay guards, not browser edits.
-        delete before.refinementReceipts; delete after.refinementReceipts;
+        protectedMaterialFields.forEach(function (field) {
+          delete before[field]; delete after[field];
+        });
         // Match /state/put's protected plan and additive node merge. A stale
         // acknowledged browser snapshot cannot remove server-generated nodes.
         // Existing editable notes, marks, references and unknown fields still
@@ -230,7 +247,6 @@
           delete local.study_notes; delete server.study_notes;
           delete local.sceneSupplement; delete server.sceneSupplement;
         });
-        delete before.title; delete after.title;
         if (!Object.prototype.hasOwnProperty.call(before, 'materials')) before.materials = [];
         if (!Object.prototype.hasOwnProperty.call(after, 'materials')) after.materials = [];
       }

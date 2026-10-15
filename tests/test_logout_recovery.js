@@ -27,6 +27,18 @@ function savesEnvironment(saved,entries){
   let prepared=0;env.LearnUser.attachPersistence({pending:()=>pending,refresh:async()=>{},prepareExit:()=>prepared++,cancelExit(){}});
   const one=env.LearnUser.logout(),two=env.LearnUser.logout();assert.equal(one,two);await one;return {calls,events,env,prepared};
  }
+ const readOnlyCalls=[],readOnlyEnv={console,URL,Headers,Response,AbortController,Event,setTimeout,clearTimeout,
+ location:{href:'http://localhost/learn/',pathname:'/learn/',protocol:'http:',hostname:'localhost'},
+ document:{readyState:'loading',addEventListener(){}},addEventListener(){},LearnUserShell:{mount(){},errorView(){}}};
+ readOnlyEnv.fetch=async url=>{readOnlyCalls.push(url);return Response.json({ok:true,user:null})};readOnlyEnv.window=readOnlyEnv;
+ vm.createContext(readOnlyEnv);vm.runInContext(fs.readFileSync('shared/user-session.js','utf8'),readOnlyEnv);await readOnlyEnv.LearnUser.ready;
+ readOnlyEnv.LearnUser.readOnly=true;let readOnlySaves=0;
+ readOnlyEnv.LearnUser.attachPersistence({send(){readOnlySaves++;throw new Error('read-only writes must not reach persistence')}});
+ const blockedWrite=await readOnlyEnv.LearnUser.fetch(readOnlyEnv.LearnUser.apiBase+'/state/put',{method:'POST',body:JSON.stringify({entries:{'u0/other':'forbidden'}})});
+ assert.equal(blockedWrite.status,403);assert.equal(blockedWrite.ok,false);
+ const blockedBody=await blockedWrite.json();assert.equal(blockedBody.ok,false);assert.equal(blockedBody.read_only,true);assert.match(blockedBody.error,/只读/);
+ await assert.rejects(readOnlyEnv.LearnUser.request('/state/put',{entries:{'u0/other':'forbidden'}}),/只读/);
+ assert.equal(readOnlySaves,0);assert(!readOnlyCalls.some(url=>url.endsWith('/state/put')));
  const logged=await logoutCase(false,true,false);assert.equal(logged.prepared,1);assert.equal(logged.env.location.href,'/learn/');assert(!logged.events.includes('pagehide'));assert.equal(logged.calls.filter(x=>x.endsWith('/auth/logout')).length,1);
  const cancelled=await logoutCase(true,true,false);assert.equal(cancelled.prepared,0);assert(!cancelled.calls.some(x=>x.endsWith('/auth/logout')));
  const preserved=await logoutCase(true,true,true);assert.equal(preserved.prepared,1);assert(preserved.events.includes('pagehide'));
