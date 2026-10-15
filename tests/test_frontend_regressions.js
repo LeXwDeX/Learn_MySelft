@@ -25,6 +25,7 @@ vm.createContext(context);require('./load_uikit.cjs')(context);
 vm.runInContext(src, context);
 (async () => {
   const get = context.window.LearnPathApp.get;
+  get('path.model').session.bootState = 'ready';
   const api = {...get('path.domain'), ...get('path.persistence'), ...get('path.library'), state: get('path.model').state};
   const key = 'u0/learn-path-v1-test';
   api.state.topic = 'test';

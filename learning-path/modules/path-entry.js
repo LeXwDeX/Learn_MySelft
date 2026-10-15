@@ -36,6 +36,7 @@ function boot() {
     model.session.materialsPanel = window.LearnMaterials.mount(format.$('learning-materials'), {
       get: function () { return model.state.materials; },
       set: async function (next) {
+        if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) throw new Error('资料尚未准备好或当前为只读');
         model.state.materials = next;
         if (!model.state.topic && next.length) {
           model.state.topic = next[0].name.replace(/\.[^.]+$/, '');
@@ -48,6 +49,7 @@ function boot() {
       },
       busy: function (off) { workflow.setChatDisabled(off); }
     });
+    workflow.setChatDisabled(false);
     if (model.session.quizCreation) {
       format.$('stage-intake').querySelector('h2').textContent = '用自己的资料创建测验地图';
       format.$('chat-input').placeholder = '说明测验范围、难度和目标，回车开始…';
@@ -79,35 +81,47 @@ function boot() {
     library.libBind();
 
     persistence.purgeLocalLegacy();   // 清理旧版资料缓存；保留临时阅读位置与待同步恢复。
-    // ?new=1：强制新开（不恢复历史；已有资料仍保留在「学习资料库」里）
-    var fresh = false;
-    try { fresh = !!new URLSearchParams(location.search).get('new'); } catch (e) {}
-    (fresh ? Promise.resolve(false) : persistence.serverLoad()).then(function (restored) {
-      if (restored) {
-        workflow.renderChat();
-        if (model.state.spec) workflow.renderSpecCard();
-        if (model.state.stage === 'learning' && model.state.plan) {
-          shell.setStage('learning');
-          cards.renderPlan();
-        } else if (model.state.stage === 'research') {
-          shell.setStage('research');
-          workflow.renderResearch();
-          format.$('research-status').innerHTML = '上次研究已完成或中断，<button class="btn" id="resume-research" type="button">继续生成路径</button>';
-          var rb = format.$('resume-research');
-          if (rb) rb.addEventListener('click', function () { workflow.startResearch(); });
+    var bootRun = 0;
+    function loadDocument() {
+      var run = ++bootRun, search = location.search;
+      model.session.bootState = 'loading';
+      workflow.setChatDisabled(false);
+      shell.hideError();
+      persistence.serverLoad().then(function (restored) {
+        if (run !== bootRun || search !== location.search) return;
+        if (restored) {
+          workflow.renderChat();
+          if (model.state.spec) workflow.renderSpecCard();
+          if (model.state.stage === 'learning' && model.state.plan) {
+            shell.setStage('learning');
+            cards.renderPlan();
+          } else if (model.state.stage === 'research') {
+            shell.setStage('research');
+            workflow.renderResearch();
+            format.$('research-status').innerHTML = '上次研究已完成或中断，<button class="btn" id="resume-research" type="button">继续生成路径</button>';
+            var rb = format.$('resume-research');
+            if (rb) rb.addEventListener('click', function () { workflow.startResearch(); });
+          } else {
+            shell.setStage('intake');
+          }
         } else {
           shell.setStage('intake');
+          workflow.renderChat();
         }
-      } else {
-        shell.setStage('intake');
-        workflow.renderChat();
-      }
-      model.session.materialsPanel.render();
-      shell.renderProgress();
-      assistant.renderAgentPanel();
-      if (restored) assessment.restoreRequiz();
-      if (restored && !window.LearnUser.readOnly) workflow.resumeIfPending();   // 上次生成中断→自动取回/重放（节点会自动展开卡片）
-    });
+        workflow.setChatDisabled(false);
+        model.session.materialsPanel.render();
+        shell.renderProgress();
+        assistant.renderAgentPanel();
+        if (restored) assessment.restoreRequiz();
+        if (restored && !window.LearnUser.readOnly) workflow.resumeIfPending();   // 上次生成中断→自动取回/重放（节点会自动展开卡片）
+      }).catch(function (error) {
+        if (run !== bootRun || search !== location.search || error.staleLoad) return;
+        model.session.bootState = 'error';
+        workflow.setChatDisabled(false);
+        shell.showError('无法读取学习资料：' + error.message, loadDocument);
+      });
+    }
+    loadDocument();
   }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

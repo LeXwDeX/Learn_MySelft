@@ -31,13 +31,14 @@ function renderChat() {
   }
 
 function setChatDisabled(off) {
-    format.$('chat-send').disabled = off;
-    format.$('chat-send').textContent = off ? '回复中…' : '发送';
-    if (model.session.materialsPanel) model.session.materialsPanel.lock(off || model.state.stage !== 'intake');
+    var blocked = model.session.bootState !== 'ready' || window.LearnUser.readOnly || model.session.busy || off || (model.session.materialsPanel && model.session.materialsPanel.busy());
+    format.$('chat-send').disabled = !!blocked;
+    format.$('chat-send').textContent = model.session.bootState === 'loading' ? '正在读取…' : model.session.bootState === 'error' ? '读取失败' : (off || model.session.busy) ? '回复中…' : '发送';
+    if (model.session.materialsPanel) model.session.materialsPanel.lock(blocked || model.state.stage !== 'intake');
   }
 
 function sendMessage() {
-    if (model.session.busy || (model.session.materialsPanel && model.session.materialsPanel.busy())) return;
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly || model.session.busy || (model.session.materialsPanel && model.session.materialsPanel.busy())) return;
     var el = format.$('chat-input');
     var text = (el.value || '').trim();
     if (!text) return;
@@ -63,6 +64,7 @@ function sendMessage() {
   }
 
 function callIntake(newMessage) {
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) return;
     if (newMessage === true) model.state.pending = null;
     setPending('intake');
     model.session.busy = true; setChatDisabled(true);
@@ -217,6 +219,7 @@ function resumeIfPending() {
 // ---------- 阶段 B：研究 ----------
 
 function startResearch() {
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) return;
     setPending('research');
     format.$('research-card').hidden = true;
     format.$('research-status').hidden = false;
@@ -245,6 +248,7 @@ function startResearch() {
 // 只跑「生成路径」一段（research 成功后或自动恢复 plan 时复用）
 
 function continuePlan() {
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) return;
     setPending('plan');
     format.$('research-status').hidden = false;
     format.$('research-status').innerHTML = '<span class="spinner"></span>资料已整理，正在安排学习单元…';
@@ -290,6 +294,7 @@ function renderResearch() {
   }
 
 function recheckResearch() {
+    if (model.session.bootState !== 'ready' || window.LearnUser.readOnly) return;
     var button = format.$('research-recheck');
     if (button.disabled) return;
     button.disabled = true;

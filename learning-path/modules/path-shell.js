@@ -18,7 +18,7 @@ function hideError() { format.$('errbar').hidden = true; model.session.retryFn =
 
 function setStage(s) {
     model.state.stage = s;
-    if (model.session.materialsPanel) model.session.materialsPanel.lock(s !== 'intake' || model.session.busy);
+    if (model.session.materialsPanel) model.session.materialsPanel.lock(model.session.bootState !== 'ready' || window.LearnUser.readOnly || s !== 'intake' || model.session.busy || model.session.materialsPanel.busy());
     viewStage(s);
     persistence.save();
   }

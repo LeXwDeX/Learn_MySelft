@@ -22,6 +22,7 @@
         remove.setAttribute('aria-label', '移除 ' + item.name);
         remove.disabled = input.disabled;
         remove.onclick = async function () {
+          if (uploading || locked || window.LearnUser.readOnly) return;
           var next = options.get().slice(); next.splice(index, 1);
           uploading = true; render(); if (options.busy) options.busy(true);
           try { await options.set(next); status.textContent = '已移除并保存'; }
@@ -32,6 +33,7 @@
       });
     }
     input.onchange = async function () {
+      if (uploading || locked || window.LearnUser.readOnly) return;
       var files = Array.from(input.files || []);
       if (!files.length) return;
       uploading = true; render();
@@ -102,10 +104,10 @@
           });
           var result = await r.json(); if (!r.ok) throw new Error(result.error || '保存失败'); additions = next;
         },
-        busy: function (value) { button.disabled = value; cancel.disabled = value; }
+        busy: function (value) { button.disabled = value || window.LearnUser.readOnly; cancel.disabled = value; }
       });
       button.disabled = window.LearnUser.readOnly;
-      button.onclick = function () { close(); generate(); };
+      button.onclick = function () { if (button.disabled || window.LearnUser.readOnly || panel.busy()) return; close(); generate(); };
     }).catch(function (error) { dialog.querySelector('.materials-error').textContent = error.message; });
   }
   window.LearnMaterials = {mount: mount, quiz: quiz};

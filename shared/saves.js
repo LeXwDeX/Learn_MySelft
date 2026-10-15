@@ -81,7 +81,10 @@
   function retry() {
     var entries = {};
     Object.keys(pending).forEach(function (key) { entries[key] = pending[key]; });
-    if (!Object.keys(entries).length) return Promise.resolve();
+    if (!Object.keys(entries).length) {
+      if (recovering) location.reload();
+      return Promise.resolve();
+    }
     retrying = true;
     var work = context.fetch(context.apiBase + '/state/put', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entries: entries})
@@ -159,7 +162,10 @@
       });
       persist();
       lastFailure = null;
-      if (!Object.keys(pending).length && window.LearnUI) window.LearnUI.clear('state-save');
+      if (!Object.keys(pending).length && window.LearnUI) {
+        if (recovering) notice('未保存内容已确认，请刷新后继续。', true);
+        else window.LearnUI.clear('state-save');
+      }
       return response;
     }).catch(function (error) {
       lastFailure = '网络中断，内容尚未保存到服务器';
@@ -169,7 +175,23 @@
     queue = request;
     return request;
   }
+  // Park a valid edit before its page replaces state during a read.
+  function retain(entries) {
+    if (context.readOnly) return false;
+    if (!recovering) {
+      var prefix = context.userId + '/';
+      Object.keys(entries || {}).forEach(function (key) {
+        if (key.indexOf(prefix) === 0 && !deleted[key] && typeof entries[key] === 'string') pending[key] = entries[key];
+      });
+    }
+    if (!Object.keys(pending).length) return true;
+    recovering = true;
+    var backedUp = persist();
+    notice(backedUp ? '未保存内容已保留，请重试保存后继续。' : '本机备份不可用，请保持页面打开并重试保存。', true);
+    return !!backedUp;
+  }
   window.LearnSaves = {
+    retain: retain,
     send: send,
     retry: retry,
     assertReady: assertReady,
