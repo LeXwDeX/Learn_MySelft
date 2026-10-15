@@ -9,14 +9,21 @@ body { margin: 0; background: var(--learn-paper); color: var(--learn-ink); font:
   border-radius: var(--learn-radius-control); background: var(--learn-surface);
   color: var(--learn-ink); font: 14px var(--learn-font); text-decoration: none; cursor: pointer;
 }
-.btn:hover { border-color: var(--learn-accent); }
+.btn:hover, .learn-action:hover { border-color: var(--learn-accent); }
 .btn.primary { background: var(--learn-accent); border-color: var(--learn-accent); color: #fff; }
+.btn.danger { color: var(--learn-danger); border-color: var(--learn-danger); }
+.btn.danger:hover { background: var(--learn-danger-tint); }
+.btn[aria-pressed="true"] { color: var(--learn-accent); border-color: var(--learn-accent); background: var(--learn-accent-tint); }
 .btn:disabled, .learn-action:disabled { opacity: .55; cursor: default; }
 .learn-action { border-color: currentColor; background: transparent; color: inherit; font: inherit; }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible {
   outline: 2px solid var(--learn-accent); outline-offset: 3px;
 }
 input, textarea, select { max-width: 100%; font: inherit; color: var(--learn-ink); }
+input, textarea { caret-color: var(--learn-accent); }
+input::placeholder, textarea::placeholder { color: var(--learn-muted); opacity: 1; }
+input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--learn-danger); }
+::selection { color: var(--learn-ink); background: var(--learn-accent-tint); }
 input:not([type=checkbox]):not([type=radio]):not([type=file]), textarea, select {
   padding: 10px 12px; border: 1px solid var(--learn-border); border-radius: var(--learn-radius-control); background: var(--learn-surface);
 }

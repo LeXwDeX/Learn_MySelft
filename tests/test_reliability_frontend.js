@@ -16,6 +16,34 @@ function environment(saved) {
 const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
 (async () => {
   const env = environment(); load(env, 'shared/saves.js'); await Promise.resolve();
+  for (const body of [{ok:false,error:'明确拒绝保存'}, {ok:true,read_only:true}, {}, {ok:true,error:'保存未完成'}]) {
+    const rejected = environment(); load(rejected, 'shared/saves.js'); await rejected.LearnUser.ready;
+    const response = await rejected.LearnSaves.send({body:JSON.stringify({entries:{'u0/rejected':'unsaved'}})}, async () => Response.json(body));
+    assert.equal(response.ok, false, 'a successful HTTP status alone is not an acknowledgement');
+    assert(rejected.LearnSaves.pending(), 'unacknowledged edits remain recoverable');
+    assert.equal(JSON.parse(rejected.storage.get('learn-unsaved-v1/u0'))['u0/rejected'], 'unsaved');
+    assert(rejected.notices.has('state-save'));
+  }
+  const readOnly = environment(); readOnly.LearnUser.readOnly = true;
+  load(readOnly, 'shared/saves.js'); await readOnly.LearnUser.ready;
+  let readOnlyDispatches = 0;
+  const readOnlyResponse = await readOnly.LearnSaves.send({body:JSON.stringify({entries:{'u0/other':'forbidden'}})}, async () => {readOnlyDispatches++; return Response.json({ok:true});});
+  assert.equal(readOnlyResponse.status, 403);
+  assert.equal((await readOnlyResponse.json()).read_only, true);
+  assert.equal(readOnlyDispatches, 0);
+  assert.equal(readOnly.LearnSaves.pending(), false, 'known read-only requests do not create false emergency drafts');
+  for (const acknowledgement of [{ok:false}, {ok:true,read_only:true}, null]) {
+    const retryUnconfirmed = environment({'learn-unsaved-v1/u0':JSON.stringify({'u0/retry':'retained'})});
+    retryUnconfirmed.LearnUser.fetch = async () => Response.json({entries:{}});
+    load(retryUnconfirmed, 'shared/saves.js'); await retryUnconfirmed.LearnUser.ready;
+    retryUnconfirmed.LearnUser.fetch = async () => Response.json(acknowledgement);
+    await assert.rejects(retryUnconfirmed.LearnSaves.retry(), /未获确认|待同步/);
+    assert(retryUnconfirmed.LearnSaves.pending());
+    assert.equal(retryUnconfirmed.reloaded, undefined, 'retry without acknowledgement must not reload away the pending content');
+  }
+  const incomplete = environment(); load(incomplete, 'shared/saves.js'); await incomplete.LearnUser.ready;
+  await assert.rejects(incomplete.LearnSaves.send({body:JSON.stringify({entries:{'u0/incomplete':'keep'}})}, async () => new Response('{')));
+  assert(incomplete.LearnSaves.pending(), 'an incomplete response body is not an acknowledgement');
   let calls = [], fail = true;
   env.LearnUser.fetch = (url, options) => env.LearnSaves.send(options, async () => {
     calls.push(JSON.parse(options.body).entries);
@@ -49,6 +77,13 @@ const load = (env, file) => vm.runInContext(fs.readFileSync(file, 'utf8'), env);
     check.LearnUser.fetch = async () => Response.json({entries:{[key]:JSON.stringify(remote)}});
     load(check, 'shared/saves.js'); await check.LearnUser.ready; return check;
   }
+  const accessKey = 'u0/learn-path-v1-access';
+  const accessLocal = JSON.stringify({topic:'access',nodeAccess:{n1:true}});
+  const accessRemote = JSON.stringify({topic:'access',nodeAccess:{n1:false}});
+  const access = environment({'learn-unsaved-v1/u0':JSON.stringify({[accessKey]:accessLocal})});
+  access.LearnUser.fetch = async () => Response.json({entries:{[accessKey]:accessRemote}});
+  load(access, 'shared/saves.js'); await access.LearnUser.ready;
+  assert(access.LearnSaves.pending(), 'nodeAccess remains a real difference until the server protects it');
   const extra = [{name:'quiz.txt',text:'server-owned supplement'}];
   assert(!(await recoveryCheck(materialKey, base, {...base,quizMaterials:extra})).LearnSaves.pending(), 'independent quiz draft must not masquerade as an unacknowledged save');
   assert(!(await recoveryCheck(materialKey, {topic:'legacy'}, {topic:'legacy',materials:[],quizMaterials:extra})).LearnSaves.pending(), 'absent legacy materials equal the default empty list');

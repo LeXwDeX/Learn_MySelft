@@ -18,6 +18,10 @@
     function freeze() {
       document.querySelectorAll(selectors).forEach(function (element) {
         if (!element.disabled) { element.disabled = true; element.title = '管理员只读查看'; }
+        var descriptions = (element.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+        if (descriptions.indexOf('learn-readonly-notice') === -1) {
+          descriptions.push('learn-readonly-notice'); element.setAttribute('aria-describedby', descriptions.join(' '));
+        }
       });
     }
     freeze();
@@ -35,7 +39,7 @@
         var manage = document.createElement('a'); manage.href = '/learn/'; manage.textContent = '管理所有用户'; bar.appendChild(manage);
       }
       if (context.readOnly) {
-        var badge = document.createElement('span'); badge.className = 'user-readonly'; badge.textContent = '管理员只读查看'; bar.appendChild(badge);
+        var badge = document.createElement('span'); badge.className = 'user-readonly'; badge.id = 'learn-readonly-notice'; badge.textContent = '只读查看：修改和生成不可用'; bar.appendChild(badge);
       }
       var account = document.createElement('span'); account.className = 'user-end'; account.textContent = '当前账号：' + context.user.username;
       var settings = document.createElement('a'); settings.href = context.space(context.user.id) + '?account=1'; settings.textContent = '修改密码';

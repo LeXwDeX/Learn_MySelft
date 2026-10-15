@@ -11,7 +11,11 @@ class Element {
   replaceChildren(...nodes) { this.children.forEach(n=>n.parentElement=null);this.children=[];nodes.forEach(n=>this.appendChild(n)); }
   after(node) { const parent=this.parentElement;parent.appendChild(node);parent.children.splice(parent.children.indexOf(node),1);parent.children.splice(parent.children.indexOf(this)+1,0,node); }
   prepend(node) { this.appendChild(node);this.children.unshift(this.children.pop()); }
-  setAttribute(k,v) { this.attributes[k]=v; }
+  setAttribute(k,v) { this.attributes[k]=String(v); }
+  getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attributes,k)?this.attributes[k]:null; }
+  removeAttribute(k) { delete this.attributes[k]; }
+  get parentNode() { return this.parentElement||null; }
+  remove() { if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(node=>node!==this);this.parentElement=null; }
   addEventListener(k,fn) { (this.listeners[k] ||= []).push(fn); }
   get isConnected() { return this===this.ownerDocument.body || !!(this.parentElement&&this.parentElement.isConnected); }
   focus(options) { this.ownerDocument.activeElement=this;this.focusOptions=options; }
@@ -91,14 +95,14 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
     assert.equal(h.model.state.nodeDetail.n3.manim_review.status,'not_needed');assert.deepEqual(Array.from(h.model.state.pending.remaining),['n1','n2']);
     const panel=all(h.doc.body).find(n=>n.tagName==='dialog');const list=panel.querySelector('ol');assert.equal(list.children.length,4,'actual material and animation receipts stay accessible');
     const trigger=list.children[0].children[1].children[0];trigger.click();assert.equal(h.opened[0].job.id,'j1');
-    h.notices()[0].children.at(-1).click();assert.equal(panel.open,true);assert.strictEqual(h.doc.activeElement,panel.querySelector('.learn-task-dialog-body'));assert.equal(h.observed.some(j=>j.status==='failed'),true);
+    h.notices()[0].querySelector('.learn-job-detail-button').click();assert.equal(panel.open,true);assert.strictEqual(h.doc.activeElement,panel.querySelector('.learn-task-dialog-body'));assert.equal(h.observed.some(j=>j.status==='failed'),true);
     panel.children[0].children[1].click();assert.equal(panel.open,false,'close button closes the batch dialog');
     const currentTrigger=h.notices()[0].querySelector('.learn-job-detail-button');assert.strictEqual(h.doc.activeElement,currentTrigger,'closing restores focus to the current trigger after status redraw');assert.equal(currentTrigger.focusOptions.preventScroll,true);
   }
   {
     const h=harness(),gate=deferred();h.env.blockRead=gate;const work=h.generation.genAllStart(['n1','n2']);await flush();
     const panel=all(h.doc.body).find(n=>n.tagName==='dialog'),list=panel.querySelector('ol'),row=list.children[0],button=row.children[1].children[0];
-    h.notices()[0].children.at(-1).click();button.focus();gate.resolve();await work;
+    h.notices()[0].querySelector('.learn-job-detail-button').click();button.focus();gate.resolve();await work;
     assert.strictEqual(list.children[0],row,'polls preserve the existing task row');assert.strictEqual(h.doc.activeElement,button,'polls keep task-list focus');assert.equal(panel.open,true);
     panel.children[0].children[1].click();assert.equal(panel.open,false);assert.strictEqual(h.doc.activeElement,h.notices()[0].querySelector('.learn-job-detail-button'),'closing after a status redraw focuses the current trigger');
     assert.match(h.notices()[0].children[0].textContent,/已完成 2\/2，失败 0/);

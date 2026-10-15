@@ -36,7 +36,16 @@
   }
   function updateHeading(view) {
     var job = view.job;
-    view.summary.textContent = '任务状态：' + (statusLabels[job.status] || job.status || '未知') +
+    var guidance = {
+      queued: '任务已排队，可以返回继续阅读。',
+      running: '正在准备内容。可以关闭此窗口，稍后查看结果。',
+      succeeded: '内容处理完成，请返回学习页面查看结果。',
+      failed: '任务未完成，请返回原入口查看重试操作。已有内容仍保留。',
+      interrupted: '任务已中断，请返回原入口继续处理。已有内容仍保留。',
+      cancelled: '任务已取消，已有内容仍保留。'
+    };
+    view.summary.textContent = guidance[job.status] || '暂时无法确认任务状态，请稍后重新查看。';
+    view.technical.textContent = '任务状态：' + (statusLabels[job.status] || job.status || '未知') +
       ' · 每次尝试最多 ' + (Number(job.timeout_seconds) || 300) + ' 秒' +
       (job.attempt ? ' · 第 ' + job.attempt + ' 次尝试' : '') +
       (job.response_status ? ' · HTTP ' + job.response_status : '') +
@@ -44,6 +53,12 @@
       (job.status === 'queued' && job.retry_at_ms ? ' · 等待自动重试（约 ' + Math.max(0, Math.ceil((job.retry_at_ms - Date.now()) / 1000)) + ' 秒）' : '');
     view.failure.textContent = job.error || (job.error_category === 'timeout' ? '任务已超时。已记录的对话和日志保留在下面。' : '');
     view.failure.hidden = !view.failure.textContent;
+  }
+  function resetDisclosure(view) {
+    view.diagnostics.open = false;
+    view.revealed = false;
+    view.reveal.textContent = '确认显示模型对话'; view.reveal.disabled = false;
+    view.timeline.querySelectorAll('.learn-job-model-message').forEach(function (node) { node.hidden = true; });
   }
   function cancelRead(view) {
     clearTimeout(view.timer); view.timer = null;
@@ -54,6 +69,7 @@
     view.open = false;
     view.button.setAttribute('aria-expanded', 'false');
     cancelRead(view);
+    resetDisclosure(view);
     window.LearnUI.dialog.close(view.panel);
     if (activeView === view) activeView = null;
     if (focus) {
@@ -99,8 +115,9 @@
       if (event.call_id) row.appendChild(element('p', 'learn-job-event-label', '模型调用：' + event.call_id));
       var body = eventBody(event);
       if (body) {
-        var text = element('pre', 'learn-job-conversation', body);
-        text.hidden = (event.kind === 'model_request' || event.kind === 'model_response') && !view.revealed;
+        var modelMessage = event.kind === 'model_request' || event.kind === 'model_response';
+        var text = element('pre', 'learn-job-conversation' + (modelMessage ? ' learn-job-model-message' : ''), body);
+        text.hidden = modelMessage && !view.revealed;
         row.appendChild(text);
       }
       if (event.frames != null) row.appendChild(element('pre', 'learn-job-error-frames',
@@ -118,7 +135,7 @@
     var controller = new AbortController();
     view.controller = controller; view.loading = true;
     var timeout = setTimeout(function () { controller.abort(); }, 20000);
-    view.retry.hidden = true;
+    view.retry.disabled = true;
     try {
       var data = await get('/jobs/' + encodeURIComponent(view.job.id) + '/details', controller.signal);
       if (!view.open || epoch !== view.epoch) return;
@@ -126,14 +143,19 @@
       receipts.set(view.job.id, view.job);
       updateHeading(view);
       renderEvents(view, data.details || {available: false, events: []});
+      view.readError.hidden = true;
+      if (document.activeElement === view.retry) view.closeButton.focus({preventScroll: true});
+      view.retry.hidden = true;
     } catch (error) {
       if (!view.open || epoch !== view.epoch) return;
       view.note.textContent = '无法读取任务详情：' + (error.name === 'AbortError' ? '请求超时' : error.message) + '。已显示的记录仍保留。';
+      view.readError.textContent = '暂时无法读取最新进度。已显示的记录仍保留，请重试。'; view.readError.hidden = false;
       view.retry.hidden = false;
     } finally {
       clearTimeout(timeout);
       if (epoch === view.epoch) {
         view.loading = false; view.controller = null;
+        view.retry.disabled = false;
         if (view.open && view.panel.isConnected && active(view.job)) view.timer = setTimeout(function () { read(view); }, 2500);
       }
     }
@@ -142,8 +164,10 @@
     var changed = view.job && view.job.id !== job.id;
     if (changed) {
       cancelRead(view); view.timeline.replaceChildren(); view.rows.clear(); view.revealed = false;
+      resetDisclosure(view);
       view.reveal.textContent = '确认显示模型对话'; view.reveal.disabled = false;
       view.note.textContent = '正在读取任务记录…';
+      view.readError.hidden = true; view.retry.hidden = true;
     }
     view.job = job; view.button.hidden = Boolean(view.standalone);
     view.button.dataset.jobId = job.id;
@@ -172,16 +196,18 @@
       view = {options: options, panel: panel, button: trigger, rows: new Map(), epoch: 0, open: false, revealed: false};
       var header = element('div', 'learn-job-detail-header');
       view.header = header;
-      var title = element('h2', 'learn-task-dialog-title', '后台任务详情');
+      var title = element('h2', 'learn-task-dialog-title', '任务进度');
       title.id = panel.id + '-title'; panel.setAttribute('aria-labelledby', title.id);
       header.appendChild(title);
       view.closeButton = button('关闭', function () { close(view, true); }, 'btn');
       header.appendChild(view.closeButton);
       view.taskName = element('p', 'learn-job-task-name');
       view.summary = element('p', 'learn-job-detail-summary');
+      view.technical = element('p', 'learn-job-detail-technical');
       view.failure = element('p', 'learn-job-detail-error');
       view.note = element('p', 'learn-job-detail-note', '正在读取任务记录…');
-      view.retry = button('重新读取详情', function () { read(view); }); view.retry.hidden = true;
+      view.readError = element('p', 'learn-job-detail-error'); view.readError.hidden = true; view.readError.setAttribute('role', 'status');
+      view.retry = button('重新读取进度', function () { read(view); }); view.retry.hidden = true;
       view.disclosure = element('div', 'learn-job-disclosure'); view.disclosure.hidden = true;
       view.disclosure.appendChild(element('p', '', '模型对话可能包含参考答案和评分标准。确认后显示。'));
       view.reveal = button('确认显示模型对话', function () {
@@ -190,8 +216,10 @@
       });
       view.disclosure.appendChild(view.reveal);
       view.timeline = element('ol', 'learn-job-timeline');
+      view.diagnostics = element('details', 'learn-job-diagnostics');
+      view.diagnostics.append(element('summary', '', '排查问题：查看技术详情'), view.technical, view.failure, view.note, view.disclosure, view.timeline);
       var body = element('div', 'learn-task-dialog-body');
-      body.append(view.taskName, view.summary, view.failure, view.note, view.retry, view.disclosure, view.timeline);
+      body.append(view.taskName, view.summary, view.readError, view.retry, view.diagnostics);
       panel.append(header, body);
       panel.addEventListener('click', function (event) { event.stopPropagation(); });
       panel.addEventListener('keydown', function (event) { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); close(view, true); } });
