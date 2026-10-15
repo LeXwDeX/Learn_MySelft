@@ -210,8 +210,9 @@ define('home.library', ["home.platform"], function (deps) {
   var platform = deps['home.platform'];
   var context = platform.context, ui = platform.ui;
   var $ = ui.dom.byId, esc = ui.dom.escapeHTML, error = ui.dom.showError;
-  var loadVersion = 0;
+  var loadVersion = 0, hasSnapshot = false;
   function renderLibrary(entries) {
+    hasSnapshot = true;
     var maps = [],
       quizzes = [],
       prefix = context.userId + "/";
@@ -258,6 +259,26 @@ define('home.library', ["home.platform"], function (deps) {
         });
       }
     });
+    var last = entries[prefix + 'learn-path-v1-last'];
+    var previous = typeof last === 'string' && maps.find(function (item) { return item.slug === last; });
+    $('new-learning').hidden = context.readOnly;
+    var link = $('continue-link');
+    link.hidden = false;
+    if (previous) {
+      $('continue-title').textContent = '继续学习';
+      $('continue-description').textContent = previous.title + ' · ' + previous.meta;
+      link.href = context.link('learning-path.html') + '?t=' + encodeURIComponent(previous.slug);
+      link.textContent = '继续上次打开的学习';
+    } else if (maps.length || quizzes.length) {
+      $('continue-title').textContent = '从已有资料继续';
+      $('continue-description').textContent = maps.length ? '在资料库中选择要继续的学习。' : '你已有测验资料，可以继续作答或回看结果。';
+      link.href = maps.length ? '#map-list' : '#quiz-list';
+      link.textContent = maps.length ? '选择学习资料' : '查看测验资料';
+    } else {
+      $('continue-title').textContent = context.readOnly ? '还没有学习资料' : '开始你的第一次学习';
+      $('continue-description').textContent = context.readOnly ? '该用户还没有保存学习或测验资料。' : '说说想学什么，学习助手会和你一起确定目标、准备资料与学习路径。';
+      link.hidden = true;
+    }
     function rows(items, page) {
       return (
         items
@@ -270,13 +291,13 @@ define('home.library', ["home.platform"], function (deps) {
               '"><span class="row-info"><span class="row-title">' +
               esc(item.title) +
               "</span><small>" +
-              esc(item.meta) +
+              esc(item.meta + (page === 'learning-path.html' && previous && previous.slug === item.slug ? ' · 上次打开' : '')) +
               '</small></span><span class="go">打开 →</span></a>'
             );
           })
           .join("") || '<p class="empty">' + (context.readOnly ? '该用户还没有这类资料。' :
-            page === 'learning-path.html' ? '还没有学习地图。从上方「从一个目标开始」创建第一份。' :
-              '还没有测验地图。可从学习地图生成，或打开上方测验地图入口。') + '</p>'
+            page === 'learning-path.html' ? '还没有学习资料。从上方「开始新学习」创建第一份。' :
+              '还没有测验资料。可从学习路径生成，或选择「开始综合测验」。') + '</p>'
       );
     }
     function updateList(id, markup) {
@@ -294,9 +315,11 @@ define('home.library', ["home.platform"], function (deps) {
   }
 
   function loadLibrary() {
-    var version = ++loadVersion, button = $('refresh-library');
+    var version = ++loadVersion, button = $('refresh-library'), restoreFocus = false;
     $('library-panel').setAttribute('aria-busy', 'true');
     $('library-status').textContent = '正在读取学习资料…';
+    $('continue-panel').setAttribute('aria-busy', 'true');
+    if (!hasSnapshot) $('continue-link').hidden = true;
     $('library-status').hidden = false;
     button.disabled = true;
     return context.request('/state/all').then(function (result) {
@@ -306,12 +329,19 @@ define('home.library', ["home.platform"], function (deps) {
       error('library-error', '');
     }).catch(function (cause) {
       if (version !== loadVersion) return;
+      var continueLink = $('continue-link');
+      restoreFocus = document.activeElement === continueLink;
+      continueLink.hidden = true;
+      $('continue-title').textContent = '资料暂时无法读取';
+      $('continue-description').textContent = '已有资料未被清空。请刷新资料后再选择继续学习。';
       error('library-error', '暂时无法读取学习资料。请点击「刷新资料」重试。' + (cause.message || ''));
     }).finally(function () {
       if (version !== loadVersion) return;
       $('library-panel').setAttribute('aria-busy', 'false');
+      $('continue-panel').setAttribute('aria-busy', 'false');
       $('library-status').hidden = true;
       button.disabled = false;
+      if (restoreFocus) button.focus({preventScroll: true});
     });
   }
   $('refresh-library').onclick = loadLibrary;
@@ -381,21 +411,30 @@ define('home.tasks', ["home.platform", "home.library"], function (deps) {
   }
 
   function renderTasks(jobs) {
-    var list = $('task-list'), focused = list.contains(document.activeElement) ? document.activeElement : null;
-    var current = new Set(jobs.map(function (job) { return job.id; }));
+    var list = $('task-list'), history = $('task-history-list');
+    var focused = list.contains(document.activeElement) || history.contains(document.activeElement) ? document.activeElement : null;
+    var current = new Set(jobs.map(function (job) { return job.id; })), needs = [], past = [];
     rows.forEach(function (view, id) { if (!current.has(id)) { view.row.remove(); rows.delete(id); } });
-    jobs.forEach(function (job, index) {
+    jobs.forEach(function (job) {
       jobDetails.observe(job);
       var view = rows.get(job.id);
       if (!view) { view = createRow(job); rows.set(job.id, view); }
       updateRow(view, job);
-      if (list.children[index] !== view.row) list.insertBefore(view.row, list.children[index] || null);
+      (['queued', 'running', 'failed', 'interrupted'].includes(job.status) ? needs : past).push(view);
     });
-    $('tasks-panel').hidden = !jobs.length;
+    [[list, needs], [history, past]].forEach(function (group) {
+      group[1].forEach(function (view, index) {
+        if (group[0].children[index] !== view.row) group[0].insertBefore(view.row, group[0].children[index] || null);
+      });
+    });
+    $('tasks-panel').hidden = false;
+    $('tasks-count').textContent = needs.length ? needs.length + ' 项' : '';
+    $('tasks-empty').hidden = !!needs.length;
+    $('history-empty').hidden = !!past.length;
     if (focused) {
-      if (focused.isConnected && !focused.hidden && !focused.disabled) focused.focus({preventScroll: true});
-      else if (jobs.length) $('refresh-tasks').focus({preventScroll: true});
-      else $('refresh-library').focus({preventScroll: true});
+      var inClosedHistory = history.contains(focused) && !$('task-history').open;
+      if (focused.isConnected && !focused.hidden && !focused.disabled && !inClosedHistory) focused.focus({preventScroll: true});
+      else $('refresh-tasks').focus({preventScroll: true});
     }
   }
 
@@ -403,10 +442,10 @@ define('home.tasks', ["home.platform", "home.library"], function (deps) {
     if (taskTimer) clearTimeout(taskTimer);
     var version = ++loadVersion;
     var library = deps['home.library'].load();
-    var tasks = context.request('/jobs?view=recent').then(function (result) {
+    var tasks = context.request('/jobs').then(function (result) {
       if (version !== loadVersion) return;
       if (!Array.isArray(result.jobs)) throw new Error('任务响应不完整，请重新读取。');
-      var jobs = result.jobs.slice(0, 8);
+      var jobs = result.jobs.filter(function (job) { return typeof job.key === 'string' && job.key.startsWith(context.userId + '/'); });
       renderTasks(jobs);
       if (hasError) { ui.clear('tasks'); hasError = false; }
       if (jobs.some(function (job) { return ['queued', 'running'].includes(job.status); })) taskTimer = setTimeout(loadTasks, 5000);
@@ -521,11 +560,12 @@ define('home.entry', ["home.platform", "home.admin", "home.tasks", "home.account
         : "你的学习地图、讨论、测验和进度都保存在这个独立空间。";
     if (managing) {
       $("admin-panel").hidden = false;
-      $("tools-title").textContent = "我的学习入口";
+      $("tools-title").textContent = "更多学习方式";
       deps['home.admin'].load();
     }
     $("workspace").hidden = false;
     $("tools-section").hidden = context.readOnly;
+    $("new-learning").hidden = context.readOnly;
     deps['home.tasks'].load();
     document.querySelectorAll("[data-page]").forEach(function (link) {
       link.href = context.link(link.dataset.page);

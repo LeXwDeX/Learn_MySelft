@@ -6,7 +6,8 @@
     var uploading = false, locked = false;
     root.classList.add('materials');
     root.innerHTML = '<label class="materials-label">上传参考资料（可选）<input type="file" multiple accept="' + ACCEPT + '"></label>' +
-      '<p class="hint">支持 PDF、TXT、Word、Excel、PowerPoint、图片、ZIP 和 7Z。每次单文件 ≤10 MB，每份地图最多 100 份、合计 20 万字；PDF ≤200 页，其中扫描页 ≤40 页。图片识别文字。压缩包自动跳过办公临时文件和系统附属文件，不接受程序、脚本、宏、加密文件或嵌套压缩包。</p>' +
+      '<p class="hint">可补充文档、图片或压缩包，单文件不超过 10 MB。</p>' +
+      '<details class="materials-help"><summary>支持格式与上传限制</summary><p class="hint">支持 PDF、TXT、Word、Excel、PowerPoint、图片、ZIP 和 7Z。每份地图最多 100 份、合计 20 万字；PDF 最多 200 页，其中扫描页最多 40 页。图片识别文字。压缩包会跳过办公临时文件和系统附属文件，不接受程序、脚本、宏、加密文件或嵌套压缩包。</p></details>' +
       '<p class="materials-status" role="status" aria-live="polite"></p><ul class="materials-list"></ul>';
     var input = root.querySelector('input'), status = root.querySelector('.materials-status'), list = root.querySelector('ul');
     function render() {

@@ -25,7 +25,7 @@
 </head>
 <body>
 <main class="wrap">
-  <p class="eyebrow">ZiXueShe · 自学社</p>
+
   <h1 id="page-title">你的学习，从这里开始</h1>
   <p class="lead muted" id="page-subtitle">登录后进入自己的学习空间，资料、对话、测验和学习进度独立保存。</p>
   <section class="card login" id="login-panel" hidden>
@@ -44,16 +44,9 @@
     <div class="user-grid" id="user-list"></div>
   </section>
   <div id="workspace" hidden>
-    <section id="tasks-panel" class="section card" hidden>
-      <div class="section-head"><h2>近期任务</h2><button id="refresh-tasks" class="btn end">刷新状态</button></div>
-      <p class="muted">生成和评分会在后台继续，返回对应学习资料即可接着完成。</p>
-      <div id="task-list" class="learn-task-list"></div>
-    </section>
-    <section class="section" id="tools-section"><div class="section-head"><h2 id="tools-title">学习入口</h2></div>
-      <div class="tool-grid">
-        <a class="card tool" data-page="learning-path.html?new=1" href="#"><span class="icon">01 · 学习地图</span><h3>从一个目标开始</h3><p>确认学习范围，生成路线，逐个单元学习、讨论与自测。</p><span class="go">打开学习地图 →</span></a>
-        <a class="card tool" data-page="quiz-map.html" href="#"><span class="icon">02 · 测验地图</span><h3>看看掌握得怎样</h3><p>根据学习情况生成综合测验，回看作答，针对薄弱点继续学习。</p><span class="go">打开测验地图 →</span></a>
-      </div>
+    <section class="section continue-panel" id="continue-panel" aria-labelledby="continue-title" aria-busy="true">
+      <div class="continue-copy"><h2 id="continue-title">正在读取你的学习资料</h2><p id="continue-description" class="muted">读取后可继续上次打开的学习，或从资料库选择。</p></div>
+      <div class="continue-actions"><a id="continue-link" class="btn primary" href="#library-panel" hidden>继续学习</a><a id="new-learning" class="btn" data-page="learning-path.html?new=1" href="#" hidden>开始新学习</a></div>
     </section>
     <section class="section card" id="library-panel" aria-labelledby="library-title">
       <div class="section-head"><h2 id="library-title">学习资料库</h2><span class="muted" id="library-count"></span><button id="refresh-library" class="btn end" type="button">刷新资料</button></div>
@@ -61,6 +54,13 @@
       <p id="library-error" class="error" role="alert" hidden></p>
       <div class="library"><div><h3>学习地图</h3><div id="map-list"></div></div><div><h3>测验地图</h3><div id="quiz-list"></div></div></div>
     </section>
+    <section class="section task-section" id="tasks-panel" hidden aria-labelledby="tasks-title">
+      <div class="section-head"><h2 id="tasks-title">需要处理 <span id="tasks-count" class="badge"></span></h2><button id="refresh-tasks" class="btn end" type="button">刷新状态</button></div>
+      <p class="muted">生成和评分会在后台继续。回到对应资料，接着学习。</p>
+      <p id="tasks-empty" class="empty" hidden>目前没有需要处理的任务。</p><div id="task-list" class="learn-task-list"></div>
+      <details id="task-history" class="task-history"><summary>最近任务记录</summary><p class="muted">来自本次读取中保留的最多 100 条任务。已完成、已取消的记录按现有规则保留，不代表全部历史。</p><p id="history-empty" class="empty" hidden>当前没有已完成或已取消的任务记录。</p><div id="task-history-list" class="learn-task-list"></div></details>
+    </section>
+    <section class="section more-learning" id="tools-section"><h2 id="tools-title">更多学习方式</h2><p class="muted">想单独检验掌握情况？<a data-page="quiz-map.html" href="#">开始综合测验</a>，也可以从学习路径生成测验。</p></section>
   </div>
   <footer>固定入口 · <a href="/learn/">自学社首页</a> · 学习资料保存在服务器，换设备登录后可继续。</footer>
 </main>

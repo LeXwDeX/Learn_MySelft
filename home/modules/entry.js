@@ -20,11 +20,12 @@ define('home.entry', ["home.platform", "home.admin", "home.tasks", "home.account
         : "你的学习地图、讨论、测验和进度都保存在这个独立空间。";
     if (managing) {
       $("admin-panel").hidden = false;
-      $("tools-title").textContent = "我的学习入口";
+      $("tools-title").textContent = "更多学习方式";
       deps['home.admin'].load();
     }
     $("workspace").hidden = false;
     $("tools-section").hidden = context.readOnly;
+    $("new-learning").hidden = context.readOnly;
     deps['home.tasks'].load();
     document.querySelectorAll("[data-page]").forEach(function (link) {
       link.href = context.link(link.dataset.page);

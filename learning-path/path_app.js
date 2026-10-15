@@ -735,6 +735,8 @@ function viewStage(s) {
     format.$('stage-research').hidden = s !== 'research';
     format.$('stage-learning').hidden = s !== 'learning';
     if (returningToReading && Number.isFinite(model.session.readingScrollY)) requestAnimationFrame(function () { window.scrollTo(0, model.session.readingScrollY); });
+    var progress = format.$('learning-progress');
+    if (progress) progress.hidden = s !== 'learning' || !((model.state.plan || {}).nodes || []).length;
     if (returningToReading && model.session.readingAccessPending && model.session.selectedId) hooks.selectNode(model.session.selectedId);
     var qb = format.$('quizmap-btn');
     if (qb) qb.hidden = !(s === 'learning' && model.state.plan);
@@ -764,7 +766,9 @@ function bindStageNav() {
 function renderProgress() {
     var nodes = (model.state.plan && model.state.plan.nodes) || [];
     var done = nodes.filter(function (n) { return domain.isDone(n.id); }).length;
-    format.$('progress-text').textContent = '已完成 ' + done + '/' + nodes.length;
+    var progress = format.$('learning-progress');
+    if (progress) progress.hidden = !nodes.length || format.$('stage-learning').hidden;
+    format.$('progress-text').textContent = nodes.length ? '已完成 ' + done + '/' + nodes.length + ' 单元' : '';
     format.$('progress-fill').style.width = nodes.length ? (done / nodes.length * 100) + '%' : '0%';
     updateReviewFilterBtn();
   }
@@ -915,7 +919,7 @@ function callIntake(newMessage) {
       .catch(function (e) {
         thinking.remove();
         model.session.busy = false; setChatDisabled(false);
-        shell.showError('采集失败：' + e.message, callIntake);
+        shell.showError('暂时无法继续确认目标：' + e.message, callIntake);
       });
   }
 
@@ -925,7 +929,7 @@ function renderSpecCard() {
     function row(k, v) {
       return '<tr><th scope="row">' + format.esc(k) + '</th><td>' + format.esc(v || '—') + '</td></tr>';
     }
-    card.innerHTML = '<h3 id="spec-heading">需求单（Spec）</h3><table class="spec-table" aria-labelledby="spec-heading"><tbody>' +
+    card.innerHTML = '<h3 id="spec-heading">学习目标</h3><table class="spec-table" aria-labelledby="spec-heading"><tbody>' +
       row('主题', sp.topic) + row('目标', sp.goal) + row('现有基础', sp.level) +
       row('期望深度', sp.depth) +
       row('偏好形式', (sp.preferences || []).join('、')) +
@@ -976,7 +980,7 @@ function isBusyError(e) {
 function showResumeBar(msg) {
     var b = format.$('resume-bar');
     if (!b) return;
-    b.innerHTML = '<span class="spinner"></span>' + format.esc(msg || '上次的生成已在服务端继续，正在取回结果…');
+    b.innerHTML = '<span class="spinner"></span>' + format.esc(msg || '正在确认上次任务的状态，取回已有结果…');
     b.hidden = false;
   }
 
@@ -1018,7 +1022,7 @@ function resumeIfPending() {
         return id && (!detail || detail.manim_review && /^(pending|failed)$/.test(detail.manim_review.status));
       });
       if (!rem.length) { model.state.pending = null; persistence.save(); hideResumeBar(); return false; }
-      showResumeBar('上次批量生成未完成，继续生成剩余 ' + rem.length + ' 个节点…');
+      showResumeBar('上次的内容准备尚未完成，正在继续剩余 ' + rem.length + ' 个单元…');
       hooks.genAllStart(rem, {recovering: true});
       return true;
     }
@@ -1040,7 +1044,7 @@ function startResearch() {
     setPending('research');
     format.$('research-card').hidden = true;
     format.$('research-status').hidden = false;
-    format.$('research-status').innerHTML = '<span class="spinner"></span>正在生成检索式并查询资料…';
+    format.$('research-status').innerHTML = '<span class="spinner"></span>正在查找与你的目标相关的资料…';
     shell.hideError();
     return persistence.post('/path/research', { spec: model.state.spec, key: format.storeKey() })
       .then(function (r) {
@@ -1067,7 +1071,7 @@ function startResearch() {
 function continuePlan() {
     setPending('plan');
     format.$('research-status').hidden = false;
-    format.$('research-status').innerHTML = '<span class="spinner"></span>研究完成，正在生成学习路径…';
+    format.$('research-status').innerHTML = '<span class="spinner"></span>资料已整理，正在安排学习单元…';
     return persistence.post('/path/plan', { spec: model.state.spec, brief: model.state.brief, key: format.storeKey() })
       .then(function (plan) {
         if (!plan || !plan.nodes || plan.nodes.length < 6) throw new Error('路径节点不足 6 个，请重试');
