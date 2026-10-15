@@ -24,22 +24,29 @@ async function verifyEmergencyCompletionRecovery(serverCompleted) {
  const key='u/learn-path-v1-recovery',remote={topic:'recovery',stage:'learning',plan:{nodes:[{id:'n1',title:'Recovery',deps:[]}]},nodeDetail:{n1:{study_notes:'server body'}},nodeState:{n1:{completed:serverCompleted}}};
  const cache=JSON.parse(JSON.stringify(remote));cache.nodeState.n1.completed=true;
  const storage=new Map([['learn-unsaved-v1/u',JSON.stringify({[key]:JSON.stringify(cache)})]]);let reloaded=0,writes=0,release;
- const model={state:{nodeState:{},nodeDetail:{}},session:{API:'',TIMEOUT:1000,STORE_PREFIX:'learn-path-v1-',USER_PATH:'u/',LAST_KEY:'u/learn-path-v1-last'}};
- const context={console,Response,AbortController,Blob,Promise,setTimeout,clearTimeout,URLSearchParams,location:{search:'?t=recovery',reload(){reloaded++;}},document:{addEventListener(){}},addEventListener(){},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},LearnUI:{set(){},clear(){}},LearnTitles:{document:data=>data.topic}};
  const dispatch=async(url,options={})=>{
    if(url.endsWith('/state/put')){writes++;await new Promise(resolve=>{release=resolve;});const entries=JSON.parse(options.body).entries;if(entries[key])remote.nodeState=JSON.parse(entries[key]).nodeState;return Response.json({ok:true});}
    return Response.json({ok:true,entries:{[key]:JSON.stringify(remote),'u/learn-path-v1-last':'recovery'}});
  };
- context.LearnUser={userId:'u',user:{id:'u'},apiBase:'',readOnly:false,ready:Promise.resolve(),attachPersistence(){},fetch:(url,options={})=>options.method==='POST'&&url.endsWith('/state/put')&&context.LearnSaves?context.LearnSaves.send(options,()=>dispatch(url,options)):dispatch(url,options)};context.window=context;vm.createContext(context);
- vm.runInContext(fs.readFileSync('shared/saves.js','utf8'),context);await context.LearnUser.ready;
- let domain,persistence;context.define=(name,names,factory)=>{domain=factory({'path.model':model});};vm.runInContext(fs.readFileSync('learning-path/modules/path-domain.js','utf8'),context);
- const format={entryVal:(entries,business)=>entries['u/'+business],storeKey:()=>key,slug:()=> 'recovery'};context.define=(name,names,factory)=>{persistence=factory({'path.model':model,'path.domain':domain,'path.format':format,'path.hooks':{renderDocumentTitle(){},renderPlan(){}}});};vm.runInContext(fs.readFileSync('learning-path/modules/path-persistence.js','utf8'),context);
+ async function page() {
+   const context={console,Response,AbortController,Blob,Promise,setTimeout,clearTimeout,URLSearchParams,location:{search:'?t=recovery',reload(){reloaded++;}},document:{addEventListener(){}},addEventListener(){},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},LearnUI:{set(){},clear(){}},LearnTitles:{document:data=>data.topic}};
+   context.LearnUser={userId:'u',user:{id:'u'},apiBase:'',readOnly:false,ready:Promise.resolve(),attachPersistence(){},fetch:(url,options={})=>options.method==='POST'&&url.endsWith('/state/put')&&context.LearnSaves?context.LearnSaves.send(options,()=>dispatch(url,options)):dispatch(url,options)};context.window=context;vm.createContext(context);
+   vm.runInContext(fs.readFileSync('shared/saves.js','utf8'),context);await context.LearnUser.ready;
+   let model,domain,persistence;
+   context.define=(name,names,factory)=>{model=factory({});};vm.runInContext(fs.readFileSync('learning-path/modules/path-model.js','utf8'),context);
+   context.define=(name,names,factory)=>{domain=factory({'path.model':model});};vm.runInContext(fs.readFileSync('learning-path/modules/path-domain.js','utf8'),context);
+   const format={entryVal:(entries,business)=>entries['u/'+business],storeKey:()=>key,slug:()=> 'recovery'};context.define=(name,names,factory)=>{persistence=factory({'path.model':model,'path.domain':domain,'path.format':format,'path.hooks':{renderDocumentTitle(){},renderPlan(){}}});};vm.runInContext(fs.readFileSync('learning-path/modules/path-persistence.js','utf8'),context);
+   return {context,domain,persistence};
+ }
+ const {context,domain,persistence}=await page();
  assert.equal(await persistence.serverLoad(),true);
  if(serverCompleted){assert.equal(domain.isDone('n1'),true,'lost original ACK restarts from authoritative true');assert.equal(context.LearnSaves.pending(),false,'startup server read reconciles the already-committed completion');return;}
  assert.equal(domain.isDone('n1'),false,'emergency local true never enters the loaded model');assert.equal(context.LearnSaves.pending(),true);
  const first=context.LearnSaves.retry();await tick();assert.equal(writes,1);assert.equal(domain.isDone('n1'),false);assert.equal(context.LearnSaves.pending(),true,'retry without ACK keeps emergency recovery');
  const second=context.LearnSaves.retry();await tick();assert.equal(domain.isDone('n1'),false,'repeated retry cannot publish a local true');release();await first;await tick();if(writes===2)release();await second;assert(reloaded>0);assert.equal(domain.isDone('n1'),false,'even an ACK does not inject emergency data into the old model');
- await persistence.serverLoad();assert.equal(domain.isDone('n1'),true,'only reloaded server true restores completed learning');
+ assert.throws(()=>context.LearnSaves.assertReady(),/恢复/,'the old hydrated page stays recovery-locked after ACK');
+ const reloadedPage=await page();await reloadedPage.persistence.serverLoad();assert.equal(reloadedPage.domain.isDone('n1'),true,'only reloaded server true restores completed learning');
+ assert.equal(domain.isDone('n1'),false,'a fresh page does not mutate the old page model');assert.doesNotThrow(()=>reloadedPage.context.LearnSaves.assertReady());
 }
 (async()=>{
  const h=harness(),gate=deferred();h.setFlush(()=>gate.promise);const work=h.api.completeNode('n1');await Promise.resolve();await Promise.resolve();assert.equal(h.selected.length,0,'completion cannot navigate before server save confirmation');gate.resolve();await work;assert.deepEqual(h.selected,['n3'],'continue skips locked nodes after confirmed completion');
