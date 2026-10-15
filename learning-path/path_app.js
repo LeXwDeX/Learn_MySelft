@@ -2536,7 +2536,7 @@ function renderNodeDetail(id) {
     if (!shown && persisted && persisted.round_id === (d.quiz || {}).round_id) shown = persisted;
     var hasSeenResult = Object.prototype.hasOwnProperty.call(session.quizResultSeen, resultKey);
     var newResult = hasSeenResult && session.quizResultSeen[resultKey] !== shown;
-    if (shown && (ownerChanged || newResult)) session.matTab = 'quiz';
+    if (shown && !ownerChanged && newResult) session.matTab = 'quiz';
     session.quizResultSeen[resultKey] = shown || null;
     var qs = ((d.quiz && d.quiz.questions) || []);
     var prev = model.state.nodeState[id] || {};

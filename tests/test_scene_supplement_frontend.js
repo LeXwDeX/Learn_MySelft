@@ -138,7 +138,9 @@ function assertMaterialSelected(h, message) {
   {
     const h = harness();
     h.api.renderNodeDetail('n1');
-    assert.equal(h.tabs[1].on, true, 'a scored node opens on its existing quiz result');
+    assertMaterialSelected(h, 'a scored node initially opens its reading material');
+    h.clickTab('quiz');
+    assert.equal(h.tabs[1].on, true, 'the learner can explicitly select the existing quiz result');
     h.clickTab('material');
     const pending = deferred();
     h.setPost(() => pending.promise);
@@ -199,7 +201,7 @@ function assertMaterialSelected(h, message) {
     h.expand('n2');
     assert.equal(h.tabs[0].on, true, 'switching to another node resets to study material');
     h.expand('n1');
-    assert.equal(h.tabs[1].on, true, 'returning to a node with a result shows its quiz');
+    assertMaterialSelected(h, 'returning from another node opens material despite its persisted result');
   }
 
   {
