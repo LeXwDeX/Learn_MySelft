@@ -2,8 +2,8 @@
 
 import json
 
-from background_jobs import JobError
-from job_execution import JobDeadlineExceeded
+from background_jobs import JobError, NODE_EXECUTION_SECONDS
+from job_execution import JobDeadlineExceeded, execution_budget
 from generation_contracts import _json_block
 from prompts import SCENE_SUPPLEMENT
 from scene_contracts import MAX_NOTES, MAX_SOURCE, SceneContractError, scenes_in, validate_scene
@@ -90,8 +90,9 @@ class SceneService:
             candidate["study_notes"] = source
             if source:
                 try:
-                    spec = self.manim.generate(key, node.get("id"), source, node,
-                                               requested=False, actor=actor, cancelled=cancelled)
+                    with execution_budget(NODE_EXECUTION_SECONDS):
+                        spec = self.manim.generate(key, node.get("id"), source, node,
+                                                   requested=False, actor=actor, cancelled=cancelled)
                 except ManimGenerationError as error:
                     if cancelled():
                         raise JobError(409, '动画请求已取消，结果未保存') from error

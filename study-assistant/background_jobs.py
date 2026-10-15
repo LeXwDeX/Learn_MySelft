@@ -14,7 +14,7 @@ from job_details import append_event, locations, sanitize
 from quiz_harness import QuizContractError
 from research_sources import SourceSelectionError
 from material_titles import document_title
-from service_limits import QUIZMAP_EXECUTION_SECONDS
+from service_limits import MANIM_EXECUTION_SECONDS, QUIZMAP_EXECUTION_SECONDS
 
 OPERATIONS = frozenset({'/path/intake', '/path/research', '/path/plan', '/path/node', '/path/node/scene',
                         '/path/requiz', '/path/quizmap', '/path/refine', '/path/gaps', '/path/quiz'})
@@ -127,7 +127,8 @@ def _summary_title(connection, user_id, key, cache):
 class JobQueue:
     def __init__(self, store, execute, workers=2, limit=64, *,
                  node_timeout=NODE_EXECUTION_SECONDS, retry_delay=NODE_RETRY_SECONDS,
-                 job_timeout=JOB_EXECUTION_SECONDS, quizmap_timeout=QUIZMAP_EXECUTION_SECONDS):
+                 job_timeout=JOB_EXECUTION_SECONDS, quizmap_timeout=QUIZMAP_EXECUTION_SECONDS,
+                 scene_timeout=MANIM_EXECUTION_SECONDS):
         self.store = store
         self.execute = execute
         self.workers = workers
@@ -135,6 +136,7 @@ class JobQueue:
         self.node_timeout = node_timeout
         self.job_timeout = job_timeout
         self.quizmap_timeout = quizmap_timeout
+        self.scene_timeout = scene_timeout
         self.retry_delay = retry_delay
         self.stopping = threading.Event()
         self.wake = threading.Event()
@@ -164,7 +166,9 @@ class JobQueue:
                                (now - 30 * 86400 * 1000,))
 
     def timeout_for(self, operation):
-        if operation in LEARNING_OPERATIONS:
+        if operation == '/path/node/scene':
+            return self.scene_timeout
+        if operation == '/path/node':
             return self.node_timeout
         return self.quizmap_timeout if operation == '/path/quizmap' else self.job_timeout
 
