@@ -31,3 +31,6 @@ STATE_MAX_VALUE = 2_000_000
 GEN_CACHE_TTL = 1800
 
 GEN_WAIT_MAX = 150
+
+# Shared by comprehensive generation and its single-flight followers.
+QUIZMAP_EXECUTION_SECONDS = 600

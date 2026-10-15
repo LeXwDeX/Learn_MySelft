@@ -14,6 +14,7 @@ from job_details import append_event, locations, sanitize
 from quiz_harness import QuizContractError
 from research_sources import SourceSelectionError
 from material_titles import document_title
+from service_limits import QUIZMAP_EXECUTION_SECONDS
 
 OPERATIONS = frozenset({'/path/intake', '/path/research', '/path/plan', '/path/node', '/path/node/scene',
                         '/path/requiz', '/path/quizmap', '/path/refine', '/path/gaps', '/path/quiz'})
@@ -23,7 +24,6 @@ LOGGER = logging.getLogger(__name__)
 NODE_MAX_ATTEMPTS = 2
 LEARNING_OPERATIONS = frozenset({'/path/node', '/path/node/scene'})
 JOB_EXECUTION_SECONDS = 300
-QUIZMAP_EXECUTION_SECONDS = 600
 NODE_EXECUTION_SECONDS = JOB_EXECUTION_SECONDS
 NODE_RETRY_SECONDS = 5
 TRANSIENT_HTTP = frozenset({408, 429, 500, 502, 503, 504})
@@ -103,6 +103,25 @@ def public_job(row, include_result=True):
     if 'result' in row.keys() and row['status'] == 'failed' and row['result']:
         result['error_category'] = json.loads(row['result']).get('error_category', 'unknown')
     return result
+
+
+def _summary_title(connection, user_id, key, cache):
+    """Read only the current user's document title, caching within one summary query."""
+    if not isinstance(key, str):
+        return document_title(None)
+    if key not in cache:
+        if not isinstance(user_id, str) or not key.startswith(user_id + '/'):
+            cache[key] = document_title(None)
+        else:
+            record = connection.execute(
+                'SELECT value FROM documents WHERE key=?', (key,)
+            ).fetchone()
+            try:
+                material = json.loads(record['value']) if record and record['value'] else None
+            except (ValueError, TypeError):
+                material = None
+            cache[key] = document_title(material)
+    return cache[key]
 
 
 class JobQueue:
@@ -238,13 +257,20 @@ class JobQueue:
         return result
 
     def list(self, user_id, key=None):
+        result, titles = [], {}
         with self.store.connection() as connection:
             rows = connection.execute('''SELECT id,user_id,operation,status,created_ms,updated_ms,error,response_status,body
                 FROM jobs WHERE user_id=? AND (? IS NULL OR json_extract(body,'$.key')=?)
                 ORDER BY (status IN ('queued','running')) DESC,created_ms DESC LIMIT 100''',
                                       (user_id, key, key)).fetchall()
-            return [self._public(connection, row, include_result=False) for row in rows
-                    if key is None or json.loads(row['body']).get('key') == key]
+            for row in rows:
+                job_key = json.loads(row['body']).get('key')
+                if key is not None and job_key != key:
+                    continue
+                job = self._public(connection, row, include_result=False)
+                job['title'] = _summary_title(connection, user_id, job_key, titles)
+                result.append(job)
+        return result
 
     def recent(self, user_id, limit=8):
         """One row per conversation; prefer active work, otherwise the newest call.
@@ -252,7 +278,7 @@ class JobQueue:
         Raw receipts remain available to polling and retry clients. Group before
         applying the display limit, so a long conversation cannot hide others.
         """
-        result, seen = [], set()
+        result, seen, titles = [], set(), {}
         with self.store.connection() as connection:
             rows = connection.execute('''SELECT id,user_id,operation,status,created_ms,
                 updated_ms,error,response_status,body FROM jobs WHERE user_id=?
@@ -260,16 +286,13 @@ class JobQueue:
             for row in rows:
                 body = json.loads(row['body'])
                 key = body.get('key') or row['id']
+                if not isinstance(key, str):
+                    key = row['id']
                 if key in seen:
                     continue
                 seen.add(key)
                 job = self._public(connection, row, include_result=False)
-                record = connection.execute('SELECT value FROM documents WHERE key=?', (key,)).fetchone() if key.startswith(user_id + '/') else None
-                try:
-                    material = json.loads(record['value']) if record and record['value'] else None
-                except (ValueError, TypeError):
-                    material = None
-                job['title'] = document_title(material)
+                job['title'] = _summary_title(connection, user_id, body.get('key'), titles)
                 result.append(job)
                 if len(result) >= limit:
                     break
