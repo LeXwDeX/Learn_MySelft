@@ -852,22 +852,51 @@ class VisualReviewRecoveryTests(unittest.TestCase):
         self.assertEqual(reviews[0][1], reviews[1][1])
         self.assertEqual(reviews[0][1], dict(temperature=0,max_tokens=8192,reasoning_effort='low',response_format='json_object'))
 
-    def test_nonnegative_invalid_shapes_stop_without_repair_or_publication(self):
+    def assert_terminal_review(self, reply, prefix):
+        self.setUp()
         self.repo.doc['nodeDetail']={'n1':{'study_notes':'原正文','quiz':{'questions':[{'id':'old'}]}}}
         self.repo.doc['nodeState']={'n1':{'completed':True,'score':83}}
         original=json.dumps(self.repo.doc,sort_keys=True)
-        invalid=['', '{"ok":false,"issues":[', 'prefix {"ok":true,"issues":[]}',
-                 '{"ok":true,"issues":[]} trailing', '{"ok":true}', '{"ok":1,"issues":[]}',
-                 '{"ok":"invalid","issues":[]}']
+        with self.assertRaises(ManimGenerationError) as raised:
+            self.run_reviews(prefix+[reply,'{"ok":true,"issues":[]}'])
+        self.assertEqual(raised.exception.failure_code,'visual_invalid')
+        self.assertEqual(self.generated,1)
+        self.assertEqual(self.render.call_count,1)
+        self.assertEqual(len(self.reviews()),len(prefix)+1)
+        self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
+        self.assertFalse(self.service.root.exists())
+
+    def test_wrapped_negative_reports_never_reask_with_queued_pass(self):
+        negative='{"ok":false,"issues":["quality problem"]}'
+        for reply in ('```json\n'+negative+'\n```','review: '+negative,negative+' trailing'):
+            for prefix in ([],['']):
+                with self.subTest(reply=reply,prefix=bool(prefix)):
+                    self.assert_terminal_review(reply,prefix)
+
+    def test_all_nonempty_invalid_reports_and_nonstrings_are_terminal(self):
+        invalid=['```json\n{"ok":true,"issues":[]}\n```','prefix {"ok":true,"issues":[]}',
+                 '{"ok":true,"issues":[]} trailing','{"ok":false,"issues":[',
+                 'not a report','""','true','null','0','[]','[{}]',
+                 '{}','{"ok":true}','{"issues":[]}',
+                 '{"ok":1,"issues":[]}','{"ok":"invalid","issues":[]}',
+                 '{"ok":true,"issues":null}','{"ok":true,"issues":"problem"}',
+                 '{"ok":true,"issues":[null]}','{"ok":true,"issues":[""]}',
+                 '{"ok":false,"issues":["quality"," "]}',
+                 None,b'{"ok":true,"issues":[]}',b'',{},[],0,False]
         for reply in invalid:
-            with self.subTest(reply=reply), self.assertRaises(ManimGenerationError) as raised:
-                self.run_reviews([reply,reply])
-            self.assertEqual(raised.exception.failure_code,'visual_invalid')
-            self.assertEqual(self.generated,1)
-            self.assertEqual(self.render.call_count,1)
-            self.assertEqual(len(self.reviews()),2)
-            self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
-            self.assertFalse(self.service.root.exists())
+            for prefix in ([],['']):
+                with self.subTest(reply=repr(reply),prefix=bool(prefix)):
+                    self.assert_terminal_review(reply,prefix)
+
+    def test_only_whitespace_strings_can_reask_and_two_blanks_stop(self):
+        for blank in ('',' \n\t','\u3000'):
+            with self.subTest(blank=repr(blank)):
+                self.run_reviews([blank,'{"ok":true,"issues":[]}'])
+                self.assertEqual(self.generated,1)
+                self.assertEqual(self.render.call_count,1)
+                self.assertEqual(len(self.reviews()),2)
+                self.assertIs(self.reviews()[0][0],self.reviews()[1][0])
+        self.assert_terminal_review(' \n\t',[''])
 
     def test_empty_then_quality_rejection_repairs_new_candidate_and_all_gates(self):
         self.run_reviews(['','{"ok":false,"issues":["PRIVATE_actual_feedback"]}','{"ok":true,"issues":[]}'])
@@ -936,7 +965,7 @@ class VisualReviewRecoveryTests(unittest.TestCase):
         from unittest.mock import patch
         self.repo.job_event=lambda *args,**kwargs: (_ for _ in ()).throw(RuntimeError('PRIVATE_observer'))
         with self.assertLogs('manim_service',level='INFO') as logs:
-            self.run_reviews(['PRIVATE_empty','{"ok":true,"issues":[]}'])
+            self.run_reviews([' \n\t','{"ok":true,"issues":[]}'])
         rows=[json.loads(r.getMessage().split(' ',1)[1]) for r in logs.records]
         reviews=[r for r in rows if r['stage']=='visual_review']
         self.assertEqual([r['review_attempt'] for r in reviews],[1,2])
@@ -1026,3 +1055,23 @@ class VisualReviewRecoveryTests(unittest.TestCase):
                 self.assertEqual(len(self.reviews()),len(prefix)+1)
                 self.assertFalse(self.service.root.exists())
                 self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
+
+    def test_duplicate_verdict_keys_in_both_orders_are_terminal(self):
+        invalid=['{"ok":false,"ok":true,"issues":[]}',
+                 '{"ok":true,"ok":false,"issues":[]}',
+                 '{"ok":true,"issues":["quality"],"issues":[]}',
+                 '{"ok":true,"issues":[],"issues":["quality"]}',
+                 '{"ok":true,"issues":[],"extra":{"value":1,"value":2}}']
+        for reply in invalid:
+            for prefix in ([],['']):
+                with self.subTest(reply=reply,prefix=bool(prefix)):
+                    self.assert_terminal_review(reply,prefix)
+
+    def test_nonstandard_json_constants_in_any_field_are_terminal(self):
+        for constant in ('NaN','Infinity','-Infinity'):
+            for reply in ('{"ok":'+constant+',"issues":[]}',
+                          '{"ok":true,"issues":[],"extra":'+constant+'}',
+                          '{"ok":true,"issues":[],"extra":{"values":['+constant+']}}'):
+                for prefix in ([],['']):
+                    with self.subTest(reply=reply,prefix=bool(prefix)):
+                        self.assert_terminal_review(reply,prefix)

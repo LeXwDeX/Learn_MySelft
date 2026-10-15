@@ -30,6 +30,19 @@ DIAGNOSTIC_STAGES = frozenset({'model_generation','envelope_validation','source_
                                'runtime_configuration','rendering','media_validation','visual_review','publish'})
 
 
+def _unique_review_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate visual review key')
+        result[key] = value
+    return result
+
+
+def _reject_review_constant(value):
+    raise ValueError('nonstandard visual review constant')
+
+
 class ManimGenerationError(JobError):
     """Only an animation-generation failure; never authorization or stale data."""
     def __init__(self, status, failure_code):
@@ -366,26 +379,27 @@ class ManimService:
                         max_tokens=min(self.generation_token_limit,8192), reasoning_effort='low',
                         response_format='json_object')
                     check_cancelled()
-                    try:
-                        # Never repair truncated JSON into a verdict or discard a parsed rejection.
-                        review = json.loads(reply)
-                    except (ValueError,TypeError):
-                        review = None
-                    negative = isinstance(review,dict) and (
-                        review.get('ok') is False
-                        or (isinstance(review.get('issues'),list) and bool(review['issues'])))
+                    blank = isinstance(reply,str) and not reply.strip()
+                    review = None
+                    if isinstance(reply,str) and not blank:
+                        try:
+                            # Nonempty reports must be complete; never extract or repair a verdict.
+                            review = json.loads(reply, object_pairs_hook=_unique_review_object,
+                                                parse_constant=_reject_review_constant)
+                        except ValueError:
+                            pass
                     valid = (isinstance(review,dict) and type(review.get('ok')) is bool
                              and isinstance(review.get('issues'),list)
                              and all(isinstance(v,str) and v.strip() for v in review['issues']))
                     if not valid:
                         self._diagnostic(attempt+1,stage,'visual_invalid',started,
                                          review_attempt=review_attempt,remaining_budget_ms=review_remaining)
-                        if negative or review_attempt == 2:
-                            # A malformed rejection is terminal; it cannot earn a same-candidate pass.
-                            rendered = None
-                            raise ManimGenerationError(502,'visual_invalid')
-                        continue
-                    if negative:
+                        if blank and review_attempt == 1:
+                            continue
+                        # Only a first whitespace-only string can earn a same-candidate recheck.
+                        rendered = None
+                        raise ManimGenerationError(502,'visual_invalid')
+                    if not review['ok'] or review['issues']:
                         failure_code = 'visual_rejected'
                         raise ManimContractError('；'.join(review['issues'])[:800] or '独立复核未通过')
                     self._diagnostic(attempt+1,stage,'passed',started,
