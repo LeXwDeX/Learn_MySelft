@@ -34,3 +34,6 @@ GEN_WAIT_MAX = 150
 
 # Shared by comprehensive generation and its single-flight followers.
 QUIZMAP_EXECUTION_SECONDS = 600
+
+# Shared by standalone animation generation and its background receipt.
+MANIM_EXECUTION_SECONDS = 600

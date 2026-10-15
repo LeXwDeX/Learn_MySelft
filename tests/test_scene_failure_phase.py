@@ -37,6 +37,40 @@ class SceneFailurePhaseTests(unittest.TestCase):
     def supplement(self):
         return self.app.scenes.supplement('/path/node/scene', self.body, self.actor)
 
+    def test_sync_enrichment_has_300_budget_and_respects_shorter_outer(self):
+        from job_execution import budget_active,remaining_timeout
+        limits=[]
+        def generate(*args,**kwargs):
+            self.assertTrue(budget_active())
+            limits.append(remaining_timeout(1000))
+            return None
+        candidate={'study_notes':'合成正文','quiz':{'round_id':'old'}}
+        with patch.object(self.app.manim,'generate',side_effect=generate):
+            self.app.scenes.enrich_candidate(dict(candidate),self.node,key=self.key,actor=self.actor)
+            with execution_budget(11):
+                self.app.scenes.enrich_candidate(dict(candidate),self.node,key=self.key,actor=self.actor)
+        self.assertTrue(299<limits[0]<=300)
+        self.assertTrue(10<limits[1]<=11)
+        self.assertFalse(budget_active())
+
+    def test_sync_enrichment_expiry_propagates_without_widening_budget(self):
+        from contextlib import nullcontext
+        for outer,advance in ((None,301),(10,11)):
+            clock=[0.0]
+            fake=SimpleNamespace(monotonic=lambda:clock[0])
+            def generate(*args,**kwargs):
+                clock[0]+=advance
+                check_deadline()
+                return None
+            candidate={'study_notes':'合成正文','quiz':{'round_id':'old'}}
+            before=json.dumps(candidate,sort_keys=True)
+            with self.subTest(outer=outer),patch('job_execution.time',fake), \
+                 patch.object(self.app.manim,'generate',side_effect=generate):
+                with execution_budget(outer) if outer else nullcontext():
+                    with self.assertRaises(JobDeadlineExceeded):
+                        self.app.scenes.enrich_candidate(candidate,self.node,key=self.key,actor=self.actor)
+            self.assertEqual(json.dumps(candidate,sort_keys=True),before)
+
     def test_real_receipt_and_error_event_retain_generation_phase(self):
         error = ManimGenerationError(503, 'model_unavailable')
         def generation(*args, **kwargs):

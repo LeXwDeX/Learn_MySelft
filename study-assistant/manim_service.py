@@ -18,6 +18,7 @@ from generation_contracts import _json_block
 from manim_contracts import ManimContractError, valid_asset_id, validate_source, validate_teaching_plan
 from manim_renderer import ManimUnavailable, review_png
 from prompts import MATH_VISUAL_TEACHING
+from service_limits import MANIM_EXECUTION_SECONDS
 from text_utils import clip
 from job_execution import JobDeadlineExceeded, check_deadline, execution_budget, remaining_timeout
 
@@ -249,7 +250,7 @@ class ManimService:
         return node, notes
 
     def generate(self, key, node_id, source, node, requested=True, actor=None, cancelled=lambda: False, question=''):
-        with execution_budget(300):
+        with execution_budget(MANIM_EXECUTION_SECONDS):
             return self._generate(key, node_id, source, node, requested, actor, cancelled, question)
 
     def _generate(self, key, node_id, source, node, requested=True, actor=None, cancelled=lambda: False, question=''):
@@ -374,7 +375,7 @@ class ManimService:
                     {'role':'user','content':review_content}]
                 for review_attempt in (1,2):
                     check_cancelled()
-                    review_remaining = max(0,int(remaining_timeout(300)*1000))
+                    review_remaining = max(0,int(remaining_timeout(MANIM_EXECUTION_SECONDS)*1000))
                     reply = self.model.json(review_messages, temperature=0,
                         max_tokens=min(self.generation_token_limit,8192), reasoning_effort='low',
                         response_format='json_object')

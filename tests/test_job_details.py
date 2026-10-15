@@ -40,13 +40,13 @@ class JobDetailsTests(unittest.TestCase):
             time.sleep(.005)
         self.fail(str(job))
 
-    def test_operation_budgets_keep_quizmap_at_ten_minutes(self):
+    def test_operation_budgets_keep_quizmap_and_scene_at_ten_minutes(self):
         queue = JobQueue(self.store, lambda *args: (200, {}), limit=64)
         for index, operation in enumerate(sorted(OPERATIONS)):
             # Spread owners to respect the existing per-user queue bound.
             receipt = queue.submit('u%d' % index, 'request-budget-%d' % index,
                                    operation, {'key': 'u%d/example' % index})
-            self.assertEqual(receipt['timeout_seconds'], 600 if operation == '/path/quizmap' else 300)
+            self.assertEqual(receipt['timeout_seconds'], 600 if operation in ('/path/quizmap','/path/node/scene') else 300)
             learning = operation in ('/path/node', '/path/node/scene')
             self.assertEqual(receipt['auto_retry'], learning)
             self.assertEqual(receipt['max_attempts'], 2 if learning else 1)
@@ -64,7 +64,7 @@ class JobDetailsTests(unittest.TestCase):
             return 200, {'saved': True}
 
         queue = JobQueue(self.store, execute, workers=1, job_timeout=300,
-                         node_timeout=300, quizmap_timeout=300, retry_delay=.005)
+                         node_timeout=300, quizmap_timeout=300, scene_timeout=300, retry_delay=.005)
         # Replace only job_execution's clock. Queue waits and this test's wait
         # helper continue to use the real wall clock.
         with patch('job_execution.time', clock):

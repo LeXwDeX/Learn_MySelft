@@ -32,6 +32,52 @@ class QueueTests(unittest.TestCase):
                 self.assertGreater(observed[operation], expected - 1)
                 self.assertLessEqual(observed[operation], expected)
 
+    def test_scene_default_and_custom_budget_match_receipt_and_worker(self):
+        for custom in (None,13):
+            observed={}
+            def execute(user_id,operation,body):
+                observed[operation]=remaining_timeout(1000)
+                return 200, {'ok':True}
+            options={} if custom is None else {'scene_timeout':custom}
+            queue=JobQueue(self.store,execute,workers=1,**options)
+            self.addCleanup(queue.stop)
+            self.assertEqual(queue.retry_delay,5)
+            queue.start()
+            for index,(operation,seconds) in enumerate((('/path/node/scene',custom or 600),('/path/node',300),('/path/quizmap',600),('/path/requiz',300))):
+                with self.subTest(custom=custom,operation=operation):
+                    request_id='scene-budget-%s-%d'%(custom,index)
+                    body={'key':'u0/budget','node':{'id':'n1'}}
+                    receipt=queue.submit('u0',request_id,operation,body)
+                    self.assertEqual(receipt['timeout_seconds'],seconds)
+                    self.assertEqual(queue.submit('u0',request_id,operation,body)['id'],receipt['id'])
+                    result=self.wait_status(queue,receipt['id'])
+                    self.assertGreater(observed[operation],seconds-1)
+                    self.assertLessEqual(observed[operation],seconds)
+                    self.assertEqual(result['timeout_seconds'],seconds)
+                    if operation in ('/path/node','/path/node/scene'):
+                        self.assertTrue(result['auto_retry'])
+                        self.assertEqual(result['max_attempts'],2)
+            queue.stop()
+
+    def test_scene_timeout_auto_retry_retains_identity_and_two_attempt_limit(self):
+        from job_execution import JobDeadlineExceeded
+        calls=[]
+        def execute(*args):
+            calls.append(remaining_timeout(1000))
+            raise JobDeadlineExceeded()
+        queue=JobQueue(self.store,execute,workers=1,scene_timeout=17,retry_delay=0)
+        self.addCleanup(queue.stop)
+        receipt=queue.submit('u0','scene-budget-retry','/path/node/scene',{'key':'u0/budget'})
+        with self.assertLogs('background_jobs',level='ERROR'):
+            queue.start()
+            failed=self.wait_status(queue,receipt['id'],'failed')
+        self.assertEqual(failed['id'],receipt['id'])
+        self.assertEqual(failed['attempt'],2)
+        self.assertEqual(failed['timeout_seconds'],17)
+        self.assertIn('总时限：17 秒',failed['error'])
+        self.assertEqual(len(calls),2)
+        self.assertTrue(all(16<value<=17 for value in calls))
+
     def test_deadline_receipt_reports_the_actual_operation_budget(self):
         def execute(*args):
             from job_execution import JobDeadlineExceeded

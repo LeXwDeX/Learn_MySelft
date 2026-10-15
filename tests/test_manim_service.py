@@ -617,7 +617,7 @@ class RelationPlannerTests(unittest.TestCase):
         with patch.object(self.service,'_generate',side_effect=inspect):
             self.generate()
             with execution_budget(.1):self.generate()
-        self.assertTrue(299<limits[0]<=300)
+        self.assertTrue(599<limits[0]<=600)
         self.assertTrue(0<limits[1]<=.1)
         self.assertFalse(budget_active())
 
@@ -970,7 +970,7 @@ class VisualReviewRecoveryTests(unittest.TestCase):
         reviews=[r for r in rows if r['stage']=='visual_review']
         self.assertEqual([r['review_attempt'] for r in reviews],[1,2])
         self.assertEqual([r['failure_code'] for r in reviews],['visual_invalid','passed'])
-        self.assertTrue(all(0<r['remaining_budget_ms']<=300000 for r in reviews))
+        self.assertTrue(all(0<r['remaining_budget_ms']<=600000 for r in reviews))
         self.assertNotIn('PRIVATE_','\n'.join(logs.output))
         self.assertNotIn('候选新正文','\n'.join(logs.output))
         self.assertIn('开始帧',PROMPT)
@@ -1075,3 +1075,53 @@ class VisualReviewRecoveryTests(unittest.TestCase):
                 for prefix in ([],['']):
                     with self.subTest(reply=reply,prefix=bool(prefix)):
                         self.assert_terminal_review(reply,prefix)
+
+    def run_timed_quality_repair(self, final_review_seconds):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        import time
+        clock=[0.0]
+        fake=SimpleNamespace(monotonic=lambda:clock[0],time=time.time)
+        model=self.service.model.json
+        planner=self.service.planner_model.json
+        renderer=self.renderer.render
+        durations=iter((16,113,10,final_review_seconds))
+        render_times=iter((15,19))
+        self.timed_reviews=[]
+        def plan(*args,**kwargs):clock[0]+=25;return planner(*args,**kwargs)
+        def respond(messages,**kwargs):
+            from job_execution import remaining_timeout
+            review=isinstance(messages[1]['content'],list)
+            if review:self.timed_reviews.append(remaining_timeout(1000))
+            clock[0]+=next(durations)
+            if review:return '{"ok":false,"issues":["quality"]}' if len(self.timed_reviews)==1 else '{"ok":true,"issues":[]}'
+            return model(messages,**kwargs)
+        def render(*args,**kwargs):clock[0]+=next(render_times);return renderer(*args,**kwargs)
+        with patch('job_execution.time',fake),patch('manim_service.time',fake), \
+             patch.object(self.service.planner_model,'json',side_effect=plan), \
+             patch.object(self.service.model,'json',side_effect=respond) as generation, \
+             patch.object(self.renderer,'render',side_effect=render) as rendering:
+            self.timed_generation=generation
+            self.timed_rendering=rendering
+            return self.generate(),clock[0]
+
+    def test_standalone_quality_repair_can_finish_after_300_before_600(self):
+        result,elapsed=self.run_timed_quality_repair(115)
+        self.assertEqual(elapsed,313)
+        self.assertTrue(result['asset_id'])
+        self.assertEqual(self.timed_generation.call_count,4)
+        self.assertEqual(self.timed_rendering.call_count,2)
+        self.assertEqual(self.timed_reviews,[544,402])
+        self.assertTrue((self.service.root/'u1'/result['asset_id']/'video.mp4').exists())
+
+    def test_600_deadline_and_late_positive_never_publish(self):
+        from job_execution import JobDeadlineExceeded
+        for duration in (402,410):
+            self.setUp()
+            original=json.dumps(self.repo.doc,sort_keys=True)
+            with self.subTest(duration=duration),self.assertRaises(JobDeadlineExceeded):
+                self.run_timed_quality_repair(duration)
+            self.assertEqual(self.timed_generation.call_count,4)
+            self.assertEqual(self.timed_rendering.call_count,2)
+            self.assertFalse(self.service.root.exists())
+            self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
