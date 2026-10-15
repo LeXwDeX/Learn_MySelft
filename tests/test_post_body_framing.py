@@ -158,3 +158,53 @@ class PostBodyFramingTests(unittest.TestCase):
                 self.assertEqual(response.count(b'HTTP/1.1 '), 1)
                 self.assertNotIn('dummy-body-marker', '\n'.join(logs))
                 self.assertEqual(len(logs), 1)
+
+    def test_ambiguous_empty_or_invalid_framing_closes_without_logging_body(self):
+        body = b'{"password":"dummy-body-marker"}'
+        cases = [([], 411), ([('Content-Length', '0')], 400),
+                 ([('Content-Length', '+%d' % len(body))], 400),
+                 ([('Content-Length', '-1')], 400),
+                 ([('Content-Length', '2, 2')], 400),
+                 ([('Content-Length', str(len(body)))] * 2, 400),
+                 ([('Content-Length', str(len(body))), ('Content-Length', '0')], 400),
+                 ([('Transfer-Encoding', '')], 400),
+                 ([('Transfer-Encoding', 'chunked')], 400)]
+        for framing, status in cases:
+            with self.subTest(framing=framing):
+                headers = [('Host', '127.0.0.1'), *self.headers.items(), *framing]
+                request = ('POST /state/node-access HTTP/1.1\r\n' + ''.join(
+                    '%s: %s\r\n' % item for item in headers) + '\r\n').encode()
+                logs = []
+                with patch.object(Handler, 'log_message', lambda handler, fmt, *args: logs.append(fmt % args)):
+                    with socket.create_connection(('127.0.0.1', self.server.server_port), timeout=3) as client:
+                        with client.makefile('rb') as stream:
+                            client.sendall(request + body + b'\r\nGET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n')
+                            response_status, response_headers, _ = self.read_wire_response(stream)
+                            self.assertEqual(response_status, status)
+                            self.assertEqual(response_headers.get('connection'), 'close')
+                            try:
+                                self.assertEqual(stream.read(1), b'')
+                            except ConnectionResetError:
+                                pass
+                self.assertEqual(len(logs), 1)
+                self.assertNotIn('dummy-body-marker', '\n'.join(logs))
+
+    def test_short_or_malformed_json_body_closes_without_logging_contents(self):
+        body = b'{"password":"dummy-body-marker"}'
+        for content, length in [(body, len(body) + 10), (body[:-1], len(body) - 1), (b'', 2)]:
+            with self.subTest(length=length, sent=len(content)):
+                headers = {**self.headers, 'Host': '127.0.0.1', 'Content-Length': str(length)}
+                request = ('POST /state/node-access HTTP/1.1\r\n' + ''.join(
+                    '%s: %s\r\n' % item for item in headers.items()) + '\r\n').encode()
+                logs = []
+                with patch.object(Handler, 'log_message', lambda handler, fmt, *args: logs.append(fmt % args)):
+                    with socket.create_connection(('127.0.0.1', self.server.server_port), timeout=3) as client:
+                        client.sendall(request + content)
+                        client.shutdown(socket.SHUT_WR)
+                        with client.makefile('rb') as stream:
+                            status, response_headers, _ = self.read_wire_response(stream)
+                            self.assertEqual(status, 400)
+                            self.assertEqual(response_headers.get('connection'), 'close')
+                            self.assertEqual(stream.read(1), b'')
+                self.assertEqual(len(logs), 1)
+                self.assertNotIn('dummy-body-marker', '\n'.join(logs))

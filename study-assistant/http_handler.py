@@ -141,6 +141,7 @@ class Handler(BaseHTTPRequestHandler):
                             "/path/gaps",
                             "/path/refine",
                             "/state/all",
+                            "/state/access",
                             "/state/put",
                             "/state/node-access",
                             "/state/del",
@@ -172,7 +173,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/manim/assets/"):
                 self.app.routes["manim"].get(self, path)
                 return
-            if path == "/state/all":
+            if path == "/state/access":
+                self.app.routes["state"].get(self, path)
+            elif path == "/state/all":
                 target = self._target_user()
                 entries = self._state_all(target["id"])
                 revisions = {

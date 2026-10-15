@@ -30,11 +30,13 @@ function all(node) { return [node,...node.children.flatMap(all)]; }
 const flush=async()=>{for(let i=0;i<24;i++)await Promise.resolve();};
 function deferred(){let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});return {promise,resolve,reject};}
 function detail(id,status='pending'){return {study_notes:id+' 正文',quiz:{round_id:'quiz-'+id,questions:[{answer:'saved'}]},unknown:'preserved',manim_review:{status,retryable:true}};}
-function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=false,nodeCount=3,server=null}={}) {
+function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=false,prerequisiteLocked=false,nodeCount=3,server=null}={}) {
   const backend=server||{jobs:new Map(),receipts:new Map(),serial:0,dropNextAck:0};
   const doc={createElement(tag){return new Element(tag,doc);},addEventListener(){},getElementById(id){return all(doc.body).find(n=>n.id===id)||null;},querySelector(selector){return doc.body.querySelector(selector);},querySelectorAll(selector){return doc.body.querySelectorAll(selector);}};
   doc.body=doc.createElement('body');const anchor=doc.createElement('div');anchor.id='resume-bar';doc.body.appendChild(anchor);const gen=doc.createElement('button');gen.id='gen-all-btn';doc.body.appendChild(gen);
   const model={state:{stage:'learning',plan:{nodes:Array.from({length:nodeCount},(_,i)=>'n'+(i+1)).map(id=>({id,title:id+' 课程',objectives:[]}))},spec:{},nodeDetail:{},pending:null},session:{nodeMaterialStatus:{},expandedId:'n1'}};
+  model.state.nodeState={}; model.state.nodeAccess={};
+  if(prerequisiteLocked)model.state.plan.nodes.forEach((node,index)=>{node.deps=index?['n'+index]:[];});
   const calls=[],jobs=backend.jobs,storage=new Map(),observed=[],opened=[],renders=[];let clock=Date.now(),timer=0,currentKey='u0/material';
   const env={document:doc,console,Response,AbortController,Uint8Array,crypto:webcrypto,location:{reload(){}},
     Date:class extends Date {static now(){return clock;}},setTimeout(fn,ms){const id=++timer;if(ms===1500||ms===3500){if(env.expireWatch)clock+=3600001;queueMicrotask(fn);}return id;},clearTimeout(){},
@@ -44,8 +46,9 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
   env.window=env;vm.createContext(env);
   env.LearnUser.fetch=async(url,opts={})=>{
     calls.push({url,method:opts.method||'GET',body:opts.body&&JSON.parse(opts.body)});
-    if(url.endsWith('/state/all')) {
-      const saved={plan:model.state.plan,nodeState:{},nodeDetail:Object.fromEntries(Object.entries(model.state.nodeDetail).map(([id,d])=>[id,{...d,manim_review:failScenes.includes(id)?{status:'failed',retryable:true,failure_code:'render_unavailable'}:d.manim_review}]))};
+    if(url.endsWith('/state/all')||url.includes('/state/access?')) {
+      const saved={plan:model.state.plan,nodeState:model.state.nodeState,nodeAccess:model.state.nodeAccess,nodeDetail:Object.fromEntries(Object.entries(model.state.nodeDetail).map(([id,d])=>[id,{...d,manim_review:failScenes.includes(id)?{status:'failed',retryable:true,failure_code:'render_unavailable'}:d.manim_review}]))};
+      if(url.includes('/state/access?'))return Response.json({ok:true,key:currentKey,revision:1,plan:{nodes:saved.plan.nodes.map(n=>({id:n.id}))},nodeState:saved.nodeState,nodeAccess:saved.nodeAccess});
       return Response.json({ok:true,entries:{[currentKey]:JSON.stringify(saved)}});
     }
     if(url.includes('/jobs?'))return Response.json({jobs:[...jobs.values()].map(j=>{const thin={...j,status:j.finalStatus};delete thin.result;return thin;})});
@@ -71,9 +74,10 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
     return Response.json({job:{...job,status:env.keepRunning?'running':job.finalStatus}});
   };
   for(const file of ['shared/ui.js','shared/jobs.js'])vm.runInContext(fs.readFileSync(file,'utf8'),env);
-  let persistence={ensureAccess:()=>Promise.resolve(true),save(){env.saves=(env.saves||0)+1;},post(path,body,options){return env.LearnJobs.run(path,body,options);}};
+  let persistence={ensureAccess:()=>Promise.resolve(true),ensureNodeExists:()=>Promise.resolve(true),save(){env.saves=(env.saves||0)+1;},post(path,body,options){return env.LearnJobs.run(path,body,options);}};
   const format={$:id=>doc.getElementById(id),storeKey:()=>currentKey};
-  const domain={canAccess:()=>true,nodeById:id=>model.state.plan.nodes.find(n=>n.id===id),depTitles:()=>[]};
+  let domain={canAccess:()=>true,nodeById:id=>model.state.plan.nodes.find(n=>n.id===id),depTitles:()=>[]};
+  if(prerequisiteLocked){env.define=(name,names,factory)=>{domain=factory({'path.model':model});};vm.runInContext(fs.readFileSync('learning-path/modules/path-domain.js','utf8'),env);}
   const hooks={renderPlan(){},syncAiMaterial(){},renderNodeDetail(id){renders.push({id,detail:model.state.nodeDetail[id]});}};
   if(realPersistence) {
     env.addEventListener=()=>{};env.Blob=Blob;model.session.API='http://api';
@@ -85,10 +89,71 @@ function harness({failNodes=[],failScenes=[],readOnly=false,realPersistence=fals
   env.define=(name,names,factory)=>{env.generation=factory(deps);};
   vm.runInContext(fs.readFileSync('learning-path/modules/path-generation.js','utf8'),env);
   const notices=()=>all(doc.body).filter(n=>n.className==='learn-status');
-  return {env,model,doc,calls,jobs,opened,observed,renders,generation:env.generation,notices,setKey(key){currentKey=key;}};
+  return {env,model,domain,doc,calls,jobs,opened,observed,renders,generation:env.generation,notices,setKey(key){currentKey=key;}};
 }
 
 (async()=>{
+  {
+    const h=harness({realPersistence:true,prerequisiteLocked:true});
+    h.model.state.nodeAccess.n3='locked';
+    assert.equal(h.domain.canAccess('n2'),false);
+    await h.generation.genAllStart(['n1','n2','n3']);
+    assert.equal(Object.keys(h.model.state.nodeDetail).length,3,'batch prepares downstream and manually locked content without requiring prerequisite completion');
+    assert.equal(h.model.state.pending,null);
+    assert.equal(h.domain.canAccess('n2'),false,'preparing content does not unlock prerequisites');
+    assert.equal(h.domain.canAccess('n3'),false,'preparing content preserves explicit lock');
+    assert.deepEqual(Object.keys(h.model.state.nodeState),[],'preparing content never grants completion');
+    await assert.rejects(h.generation.requestNodeDetail('n2',true),/锁定/,'interactive generation still requires reading access');
+  }
+  {
+    const h=harness({realPersistence:true,prerequisiteLocked:true});
+    const saved=detail('n2');
+    h.model.state.nodeDetail.n2=saved;
+    h.model.state.pending={kind:'nodes',requestId:'locked-batch-recovery',remaining:['n2']};
+    h.jobs.set('locked-scene',{id:'locked-scene',key:'u0/material',operation:'/path/node/scene',node_id:'n2',status:'succeeded',finalStatus:'succeeded',created_ms:1,result:{node_id:'n2',study_notes:saved.study_notes,needed:false,manim_review:{status:'not_needed'}}});
+    await h.generation.genAllStart(['n2'],{recovering:true});
+    assert.equal(h.model.state.nodeDetail.n2.manim_review.status,'not_needed','recovery may read an existing batch receipt behind a prerequisite lock');
+    assert.equal(h.model.state.nodeDetail.n2.quiz.round_id,saved.quiz.round_id);
+    assert.equal(h.model.state.pending,null);
+    assert.equal(h.calls.some(c=>c.method==='POST'),false,'restoring a locked batch never submits duplicate work');
+    assert.equal(h.domain.canAccess('n2'),false);
+  }
+  {
+    const h=harness({realPersistence:true,prerequisiteLocked:true}),gate=deferred();
+    h.env.blockRead=gate;
+    const batch=h.generation.genAllStart(['n1','n2','n3']);
+    await flush();
+    await h.generation.genAllStart(['n1','n2','n3']);
+    h.generation.onGenAllClick();
+    gate.resolve();await batch;
+    assert.equal(h.calls.filter(c=>c.method==='POST'&&c.body.operation==='/path/node').length,1,'double click does not create another batch; pause waits only for the active node');
+    assert.equal(h.generation.isRunning(),false);
+    await h.generation.genAllStart(['n2','n3']);
+    assert.equal(Object.keys(h.model.state.nodeDetail).length,3,'resuming a paused batch prepares prerequisite-locked remainder');
+    assert.equal(h.domain.canAccess('n2'),false);
+  }
+  {
+    const h=harness({realPersistence:true,prerequisiteLocked:true,failScenes:['n2']});
+    await h.generation.genAllStart(['n2']);
+    const originalJobs=[...h.jobs.keys()],quiz=h.model.state.nodeDetail.n2.quiz;
+    const before=h.calls.length;
+    await h.generation.genAllStart(['n2'],{recovering:true});
+    assert.equal(h.calls.slice(before).some(c=>c.method==='POST'),false,'locked failed batch recovery only reads its original receipt');
+    await h.generation.genAllStart(['n2'],{manualRetry:true});
+    assert.deepEqual([...h.jobs.keys()],originalJobs,'explicit retry keeps the failed task identity behind a prerequisite lock');
+    assert.equal(h.calls.filter(c=>c.url.endsWith('/retry')).length,1);
+    assert.strictEqual(h.model.state.nodeDetail.n2.quiz,quiz);
+    assert.equal(h.model.state.nodeDetail.n2.manim_review.status,'not_needed');
+    assert.equal(h.domain.canAccess('n2'),false);
+  }
+  {
+    const h=harness({realPersistence:true,prerequisiteLocked:true});
+    const fetch=h.env.LearnUser.fetch;
+    h.env.LearnUser.fetch=(url,options)=>url.includes('/state/access?')?Promise.resolve(Response.json({ok:false},{status:404})):fetch(url,options);
+    await h.generation.genAllStart(['n2']);
+    assert.equal(h.calls.some(c=>c.method==='POST'),false,'deleted document cannot submit batch work');
+    assert.equal(h.model.state.nodeDetail.n2,undefined);
+  }
   {
     const h=harness({failNodes:['n1','n2']});await h.generation.genAllStart(['n1','n2','n3']);
     assert.equal(h.notices().length,1,'multiple terminal failures produce one top summary');assert.match(h.notices()[0].children[0].textContent,/已完成 1\/3，失败 2/);

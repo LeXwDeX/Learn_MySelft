@@ -52,7 +52,9 @@ class ConfigSchemaTests(unittest.TestCase):
     def test_request_body_limits_are_checked_before_read(self):
         headers = Message()
         stream = io.BytesIO(b"{}")
-        for value, status in [("-1", 413), ("999999999", 413), ("invalid", 400)]:
+        for value, status in [("-1", 400), ("999999999", 413), ("invalid", 400),
+                              ("+2", 400), ("２", 400), ("0", 400), ("2, 2", 400),
+                              ("9" * 5000, 413)]:
             headers.replace_header(
                 "Content-Length", value
             ) if "Content-Length" in headers else headers.add_header(

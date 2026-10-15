@@ -12,6 +12,7 @@ define("path.cards", ["path.model", "path.format", "path.shell", "path.domain", 
 
 // One reading surface; the path is a directory opened only on request.
 var accessPending = false, accessNode = null, accessTarget = null, bound = false;
+var readingSelection = null;
 function anchorKey() { return 'learn-workspace-v1:' + format.storeKey(); }
 function rememberNode(id) {
     if (!document.body.classList.contains('workspace-reading')) return;
@@ -49,13 +50,14 @@ function renderPlan() {
     format.$('plan-summary').textContent = plan.summary || '';
     format.$('workspace-goal').hidden = !model.state.spec && !(model.state.history || []).length;
     format.$('workspace-research').hidden = !model.state.spec;
-    var key = format.storeKey(), savedPosition = null;
+    var key = format.storeKey(), savedPosition = null, changedWorkspace = model.session.workspaceKey !== key;
     if (model.session.workspaceKey !== key) {
       model.session.workspaceKey = key; model.session.selectedId = null; model.session.readingScrollY = null;
       try { savedPosition = JSON.parse(sessionStorage.getItem(anchorKey()) || 'null'); } catch (error) {}
     }
     var id = domain.nodeById(model.session.selectedId) ? model.session.selectedId : restoredNode();
     model.session.selectedId = id; model.session.expandedId = id;
+    if (changedWorkspace && id) { selectNode(id, {focus: false, restoreScroll: savedPosition && savedPosition.node === id ? savedPosition.scroll : null}); return; }
     refreshDirectory();
     var layer = format.$('graph-layer'); layer.innerHTML = '';
     if (id) { layer.appendChild(nodeCard(domain.nodeById(id))); renderCardContent(id); rememberNode(id); }
@@ -88,7 +90,7 @@ function nodeCard(n) {
     el.innerHTML = '<header class="workspace-unit-header"><h2 class="workspace-title" tabindex="-1">' + format.esc(n.title) + '</h2>' +
       '<div class="workspace-actions" role="group" aria-label="单元标记与辅助"><div class="marks" role="group" aria-label="学习标记">' + shell.markButtonsHtml(n.id, '') + '</div>' +
       '<span class="workspace-divider" aria-hidden="true">|</span><button class="btn workspace-ai" type="button"' + (!domain.canAccess(n.id) ? ' disabled' : '') + '>AI 辅助</button>' +
-      '<button class="btn workspace-access" type="button"' + (window.LearnUser.readOnly ? ' disabled' : '') + '>' + (domain.canAccess(n.id) ? '锁定此单元' : '解锁此单元') + '</button></div>' +
+      '<button class="btn workspace-access" type="button"' + (window.LearnUser.readOnly || model.session.readingAccessPending ? ' disabled' : '') + '>' + (domain.canAccess(n.id) ? '锁定此单元' : '解锁此单元') + '</button></div>' +
       (domain.isDone(n.id) ? '<p class="workspace-completed">本单元已完成' + (typeof (model.state.nodeState[n.id] || {}).score === 'number' ? ' · 最近自测 ' + format.esc(model.state.nodeState[n.id].score) + ' 分' : '') + '</p>' : '') +
       '</header><div class="node-content"></div>';
     shell.bindMarkButtons(el, n.id);
@@ -97,26 +99,54 @@ function nodeCard(n) {
     return el;
   }
 function selectUnit(id) { if (!domain.nodeById(id)) return; model.session.selectedId = id; model.session.expandedId = id; rememberNode(id); }
-function selectNode(id) {
-    var recovering = !!model.session.recoveringGeneration;
+function selectionCurrent(selection) {
+    return readingSelection === selection && selection.key === format.storeKey() && model.session.selectedId === selection.id &&
+      selection.viewSerial === (model.session.readingViewSerial || 0) && document.body.classList.contains('workspace-reading');
+  }
+function selectNode(id, options) {
     if (!domain.nodeById(id)) return Promise.resolve();
+    var key = format.storeKey(), viewSerial = model.session.readingViewSerial || 0;
+    if (model.session.workspaceKey !== key) { model.session.workspaceKey = key; model.session.readingScrollY = null; }
+    if (readingSelection && !readingSelection.settled && model.session.readingAccessPending === readingSelection && readingSelection.key === key && readingSelection.id === id && readingSelection.viewSerial === viewSerial) {
+      readingSelection.recovering = readingSelection.recovering || !!model.session.recoveringGeneration;
+      return readingSelection.promise;
+    }
+    var selection = {id: id, key: key, viewSerial: viewSerial, recovering: !!model.session.recoveringGeneration, focus: !options || options.focus !== false, restoreScroll: options && options.restoreScroll};
+    readingSelection = selection; model.session.readingAccessPending = selection;
     selectUnit(id); renderPlan();
-    return persistence.refreshAccess().then(function () {
-      if (model.session.selectedId !== id) return;
-      renderCardContent(id, recovering ? {generate: true, recovering: true} : null);
-      var title = format.$('node-' + id).querySelector('.workspace-title'); title.focus({preventScroll: true}); title.scrollIntoView({block: 'start'});
-    }).catch(function (error) { shell.showError(error.message); });
+    selection.promise = persistence.ensureNodeExists(id).then(function () {
+      if (!selectionCurrent(selection)) return;
+      model.session.readingAccessPending = null;
+      renderPlan();
+      if (selection.recovering && !model.state.nodeDetail[id]) renderCardContent(id, {generate: true, recovering: true});
+      var card = format.$('node-' + id), title = card && card.querySelector('.workspace-title');
+      if (title && selection.focus) { title.focus({preventScroll: true}); title.scrollIntoView({block: 'start'}); }
+      if (Number.isFinite(selection.restoreScroll)) requestAnimationFrame(function () { if (selectionCurrent(selection)) window.scrollTo(0, selection.restoreScroll); });
+    }).catch(function (error) {
+      if (!selectionCurrent(selection)) return;
+      if (error.staleAccess) { readingSelection = null; return selectNode(id, options); }
+      model.session.readingAccessPending = null;
+      model.session.accessUnavailable = true;
+      selection.error = error.message; renderPlan();
+    }).finally(function () { selection.settled = true; });
+    return selection.promise;
+  }
+function currentAction(id) {
+    var key = format.storeKey(), viewSerial = model.session.readingViewSerial || 0, selection = readingSelection;
+    return function () { return key === format.storeKey() && model.session.selectedId === id && selection === readingSelection &&
+      viewSerial === (model.session.readingViewSerial || 0) && document.body.classList.contains('workspace-reading'); };
   }
 function openAiView(id) {
+    var current = currentAction(id);
     return persistence.ensureAccess(id).then(function () {
-      if (model.session.selectedId !== id) { selectUnit(id); renderPlan(); }
-      hooks.showAgent(true);
-    }).catch(function (error) { shell.showError(error.message); });
+      if (current() && domain.canAccess(id)) hooks.showAgent(true);
+    }).catch(function (error) { if (current()) shell.showError(error.message); });
   }
 function cardContentEl(id) { var card = format.$('node-' + id); return card ? card.querySelector('.node-content') : null; }
 function generateUnit(id) {
     if (window.LearnUser.readOnly) return Promise.resolve();
-    return persistence.ensureAccess(id).then(function () { if (model.session.selectedId === id) renderCardContent(id, {generate: true, manualRetry: true}); }).catch(function (error) { shell.showError(error.message); });
+    var current = currentAction(id);
+    return persistence.ensureAccess(id).then(function () { if (current()) renderCardContent(id, {generate: true, manualRetry: true}); }).catch(function (error) { if (current()) shell.showError(error.message); });
   }
 function openAccess(id) {
     if (window.LearnUser.readOnly || accessPending || !domain.nodeById(id)) return;
@@ -159,7 +189,11 @@ function bindWorkspace() {
     dialog.addEventListener('keydown', function (event) { if (event.key === 'Escape' && accessPending) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
     dialog.addEventListener('cancel', function (event) { if (accessPending) event.preventDefault(); });
     format.$('access-form').addEventListener('submit', submitAccess);
-    window.addEventListener('focus', function () { if (model.state.plan) persistence.refreshAccess().catch(function (error) { shell.showError(error.message); }); });
+    window.addEventListener('focus', function () {
+      if (!model.state.plan) return;
+      var key = format.storeKey(), selection = readingSelection;
+      persistence.refreshAccess().catch(function (error) { if (key === format.storeKey() && selection === readingSelection && !error.staleAccess) shell.showError(error.message); });
+    });
     window.addEventListener('pagehide', captureReadingPosition);
   }
 
@@ -167,11 +201,17 @@ function renderCardContent(id, options) {
     var scope = cardContentEl(id);
     if (!scope) return;
     model.session.activeScope = scope;
+    if (model.session.readingAccessPending && model.session.readingAccessPending.id === id) {
+      scope.innerHTML = '<p class="tip" role="status" aria-live="polite"><span class="spinner"></span>正在确认单元访问状态…</p>';
+      return;
+    }
     if (!domain.canAccess(id)) {
       var manual = (model.state.nodeAccess || {})[id] === 'locked';
+      var readError = readingSelection && readingSelection.key === format.storeKey() && readingSelection.id === id ? readingSelection.error : '';
       var missing = domain.depsOf(id).filter(function (dependency) { return !domain.isDone(dependency); });
       scope.innerHTML = '<section class="workspace-empty"><h3>' + (model.session.accessUnavailable ? '暂时无法确认单元访问状态' : manual ? '此单元已手动锁定' : '先完成前置单元') + '</h3><p class="tip">' +
         (model.session.accessUnavailable ? '请连接网络并重新确认。已有正文、成绩和草稿已保留。' : manual ? '正文、AI 辅助和自测暂时不可用。已有内容、成绩和草稿会保留。验证当前登录密码可重新解锁。' : '请先通过前置单元自测，再确认完成。手动标记不影响解锁；也可以验证密码，只解锁当前单元。') + '</p>' +
+        (readError ? '<p class="tip access-read-error" role="alert">' + format.esc(readError) + '</p>' : '') +
         (!manual && !model.session.accessUnavailable ? missing.map(function (dependency) {
           var parent = domain.nodeById(dependency);
           return '<button class="btn prerequisite" type="button" data-node="' + format.esc(dependency) + '">前往 ' + format.esc(parent ? parent.title : '前置单元') + '</button>';
@@ -179,7 +219,7 @@ function renderCardContent(id, options) {
         (model.session.accessUnavailable ? '<button class="btn refresh-access" type="button">重新确认访问状态</button>' : '<button class="btn access-inline" type="button"' + (window.LearnUser.readOnly ? ' disabled' : '') + '>密码解锁</button>') + '</section>';
       scope.querySelectorAll('.prerequisite').forEach(function (button) { button.onclick = function () { selectNode(button.dataset.node); }; });
       var access = scope.querySelector('.access-inline'); if (access) access.onclick = function () { openAccess(id); };
-      var refresh = scope.querySelector('.refresh-access'); if (refresh) refresh.onclick = function () { persistence.refreshAccess().then(function () { renderPlan(); }).catch(function (e) { shell.showError(e.message); }); };
+      var refresh = scope.querySelector('.refresh-access'); if (refresh) refresh.onclick = function () { selectNode(id); };
       return;
     }
     if (model.state.nodeDetail[id]) { hooks.renderNodeDetail(id); return; }

@@ -26,12 +26,14 @@ function setStage(s) {
 // 阶段导航：只切视图，不改 state.stage（数据齐的阶段可随时回看）
 
 function viewStage(s) {
+    if ((s === 'learning') !== document.body.classList.contains('workspace-reading')) model.session.readingViewSerial = (model.session.readingViewSerial || 0) + 1;
     var returningToReading = s === 'learning' && !document.body.classList.contains('workspace-reading');
     document.body.classList.toggle('workspace-reading', s === 'learning');
     format.$('stage-intake').hidden = s !== 'intake';
     format.$('stage-research').hidden = s !== 'research';
     format.$('stage-learning').hidden = s !== 'learning';
     if (returningToReading && Number.isFinite(model.session.readingScrollY)) requestAnimationFrame(function () { window.scrollTo(0, model.session.readingScrollY); });
+    if (returningToReading && model.session.readingAccessPending && model.session.selectedId) hooks.selectNode(model.session.selectedId);
     var qb = format.$('quizmap-btn');
     if (qb) qb.hidden = !(s === 'learning' && model.state.plan);
     var ga = format.$('gen-all-btn');
