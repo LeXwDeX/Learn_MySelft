@@ -179,11 +179,12 @@ function submitAccess(event) {
       format.$('access-form').removeAttribute('aria-busy');
     });
   }
+function openDirectory() { window.LearnUI.dialog.open(format.$('path-dialog'), format.$('path-close')); }
 function bindWorkspace() {
     if (bound) return; bound = true;
     var path = format.$('path-dialog'), dialog = format.$('access-dialog');
     window.LearnUI.dialog.bind(path, format.$('path-close'));
-    format.$('path-open').onclick = function () { window.LearnUI.dialog.open(path, format.$('path-close')); };
+    format.$('path-open').onclick = openDirectory;
     window.LearnUI.dialog.bind(dialog, null, function () { accessNode = null; accessTarget = null; window.LearnUI.dom.showError('access-error', '', 'access-password'); });
     format.$('access-cancel').onclick = function () { if (!accessPending) window.LearnUI.dialog.close(dialog); };
     dialog.addEventListener('keydown', function (event) { if (event.key === 'Escape' && accessPending) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
@@ -275,5 +276,5 @@ function renderCardContent(id, options) {
     });
   }
 
-  return Object.freeze({bindWorkspace: bindWorkspace, captureReadingPosition: captureReadingPosition, renderDocumentTitle: renderDocumentTitle, renderPlan: renderPlan, refreshDirectory: refreshDirectory, nodeCard: nodeCard, selectNode: selectNode, openAiView: openAiView, cardContentEl: cardContentEl, renderCardContent: renderCardContent});
+  return Object.freeze({bindWorkspace: bindWorkspace, openDirectory: openDirectory, captureReadingPosition: captureReadingPosition, renderDocumentTitle: renderDocumentTitle, renderPlan: renderPlan, refreshDirectory: refreshDirectory, nodeCard: nodeCard, selectNode: selectNode, openAiView: openAiView, cardContentEl: cardContentEl, renderCardContent: renderCardContent});
 });

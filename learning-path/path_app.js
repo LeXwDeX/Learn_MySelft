@@ -327,7 +327,12 @@ function depsOf(id) {
     return (n && n.deps) || [];
   }
 
-function isDone(id) { return !!(model.state.nodeState[id] && model.state.nodeState[id].completed); }
+function isDone(id) {
+    var state = model.state.nodeState[id], pending = (model.session.pendingCompletions || {})[id];
+    // The submitted true intent stays available to concurrent saves. It becomes
+    // a completed learning fact only after this exact state object is confirmed.
+    return !!(state && state.completed && !(pending && pending.state === state));
+  }
 
 function isUnlocked(id) {
     var node = nodeById(id);
@@ -1784,11 +1789,12 @@ function submitAccess(event) {
       format.$('access-form').removeAttribute('aria-busy');
     });
   }
+function openDirectory() { window.LearnUI.dialog.open(format.$('path-dialog'), format.$('path-close')); }
 function bindWorkspace() {
     if (bound) return; bound = true;
     var path = format.$('path-dialog'), dialog = format.$('access-dialog');
     window.LearnUI.dialog.bind(path, format.$('path-close'));
-    format.$('path-open').onclick = function () { window.LearnUI.dialog.open(path, format.$('path-close')); };
+    format.$('path-open').onclick = openDirectory;
     window.LearnUI.dialog.bind(dialog, null, function () { accessNode = null; accessTarget = null; window.LearnUI.dom.showError('access-error', '', 'access-password'); });
     format.$('access-cancel').onclick = function () { if (!accessPending) window.LearnUI.dialog.close(dialog); };
     dialog.addEventListener('keydown', function (event) { if (event.key === 'Escape' && accessPending) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
@@ -1880,7 +1886,7 @@ function renderCardContent(id, options) {
     });
   }
 
-  return Object.freeze({bindWorkspace: bindWorkspace, captureReadingPosition: captureReadingPosition, renderDocumentTitle: renderDocumentTitle, renderPlan: renderPlan, refreshDirectory: refreshDirectory, nodeCard: nodeCard, selectNode: selectNode, openAiView: openAiView, cardContentEl: cardContentEl, renderCardContent: renderCardContent});
+  return Object.freeze({bindWorkspace: bindWorkspace, openDirectory: openDirectory, captureReadingPosition: captureReadingPosition, renderDocumentTitle: renderDocumentTitle, renderPlan: renderPlan, refreshDirectory: refreshDirectory, nodeCard: nodeCard, selectNode: selectNode, openAiView: openAiView, cardContentEl: cardContentEl, renderCardContent: renderCardContent});
 });
 
 /* 单元 AI 对话、流式输出和手机辅导窗口。 */
@@ -2356,7 +2362,7 @@ function aiFinish(id, body, acc, view) {
   return Object.freeze({panelHead: panelHead, setFoot: setFoot, renderAgentPanel: renderAgentPanel, bindAgentLayout: bindAgentLayout, showAgent: showAgent, aiClip: aiClip, aiHistTail: aiHistTail, aiHistTrim: aiHistTrim, aiUnit: aiUnit, aiMaterialStatus: aiMaterialStatus, syncAiMaterial: syncAiMaterial, aiScroll: aiScroll, syncAiBusy: syncAiBusy, aiRenderInto: aiRenderInto, aiBubble: aiBubble, renderAiPanel: renderAiPanel, sendAi: sendAi, aiFinish: aiFinish});
 });
 
-/* 单元测验、换题、完成确认和补习。 */
+/* 单元自测、换题、完成确认和补习。 */
 define("path.assessment", ["path.format", "path.model", "path.domain", "path.cards", "path.assistant", "path.persistence", "path.shell"], function (deps) {
   'use strict';
   var format = deps["path.format"];
@@ -2464,25 +2470,78 @@ session.quizResultSeen = Object.create(null);
 // {id, res} 最近一次提交结果（展示在「测验」tab 内）
   // 卡内渲染：所有查询都从卡片内容元素向下查（作用域隔离，避免串卡）
 
+session.completionWork = Object.create(null);
+session.completionErrors = Object.create(null);
+function pendingCompletion(id) {
+    var pending = (model.session.pendingCompletions || {})[id];
+    return pending && pending.state === model.state.nodeState[id] ? pending : null;
+  }
+function clearPendingCompletion(id, pending) {
+    if ((model.session.pendingCompletions || {})[id] === pending) delete model.session.pendingCompletions[id];
+  }
+function currentUnitResult(id, quiz) {
+    var round = (quiz.rounds || []).find(function (item) { return item.id === quiz.round_id; });
+    var attempts = round && round.attempts || [];
+    var attempt = attempts.find(function (item) { return item.id === quiz.lastAttemptId; }) || attempts[attempts.length - 1];
+    if (attempt && attempt.result) return Object.assign({}, attempt.result, {round_id: quiz.round_id});
+    var result = (model.state.nodeState[id] || {}).lastResult;
+    return result && result.round_id === quiz.round_id ? result : null;
+  }
+function unitHasDraft(id, quiz) {
+    var round = (quiz.rounds || []).find(function (item) { return item.id === quiz.round_id; });
+    var answers = round && round.draft && round.draft.answers || [];
+    try {
+      var local = JSON.parse(localStorage.getItem('quiz-draft-v1:' + JSON.stringify([format.storeKey(), id, quiz.round_id])) || 'null');
+      if (local && Array.isArray(local.answers)) answers = local.answers;
+    } catch (error) { /* Server drafts remain usable when local storage is unavailable. */ }
+    return answers.some(function (answer) { return Array.isArray(answer) ? answer.some(Boolean) : answer != null && String(answer).trim() !== ''; });
+  }
+function unitReturnFocus(id) {
+    if (model.session.selectedId && model.session.selectedId !== id) return null;
+    var scope = cards.cardContentEl(id);
+    return scope && (scope.querySelector('#unit-primary-action') || scope.querySelector('#open-quiz-workspace'));
+  }
+function showUnitView(id, tab) {
+    var key = format.storeKey(), detail = model.state.nodeDetail[id];
+    if (!domain.nodeById(id) || !domain.canAccess(id)) return Promise.resolve();
+    function show() {
+      if (format.storeKey() !== key || model.state.nodeDetail[id] !== detail || !domain.canAccess(id)) return;
+      session.matTabOwner = id; session.matTab = tab; renderNodeDetail(id);
+      var scope = cards.cardContentEl(id), target = tab === 'material' ? scope && scope.querySelector('.notes') : unitReturnFocus(id);
+      if (target) { target.tabIndex = -1; target.focus({preventScroll: true}); if (target.scrollIntoView) target.scrollIntoView({block: 'start'}); }
+    }
+    if (model.session.selectedId && model.session.selectedId !== id) return cards.selectNode(id).then(show);
+    show(); return Promise.resolve();
+  }
+function unitFeedback(result) {
+    if (!result || result.pass) return '';
+    var missed = (result.per_question || []).map(function (row, index) {
+      if (!row || !(row.ok === false || typeof row.earned === 'number' && typeof row.max_points === 'number' && row.earned < row.max_points)) return '';
+      return '<li>第 ' + (index + 1) + ' 题' + (typeof row.earned === 'number' ? ' · ' + format.esc(row.earned) + '/' + format.esc(row.max_points) + ' 分' : '') + (row.comment ? '：' + format.esc(row.comment) : '') + '</li>';
+    }).filter(Boolean).join('');
+    return '<div class="unit-feedback"><h5>这次需要复习的内容</h5><p>' + format.esc(result.feedback || '请结合自测中的失分项回看正文。') + '</p>' + (missed ? '<ul>' + missed + '</ul>' : '') + '</div>';
+  }
+
 function renderNodeDetail(id) {
     var n = domain.nodeById(id), d = model.state.nodeDetail[id];
     var scope = cards.cardContentEl(id);
     if (!n || !d || !scope || !domain.canAccess(id)) return;
     model.session.activeScope = scope;
-    var ownerChanged = session.matTabOwner !== id;
-    if (ownerChanged) { session.matTab = 'material'; session.lastQuizShown = null; session.matTabOwner = id; }
+    var materialKey = format.storeKey(), resultKey = sceneWorkKey(materialKey, id);
+    var ownerChanged = session.matTabOwner !== id || session.matTabMaterial !== materialKey;
+    if (ownerChanged) { session.matTab = 'material'; session.lastQuizShown = null; session.matTabOwner = id; session.matTabMaterial = materialKey; }
     var shown = (session.lastQuizShown && session.lastQuizShown.id === id) ? session.lastQuizShown.res : null;
     var persisted = (model.state.nodeState[id] || {}).lastResult;
+    if (shown && shown.round_id !== (d.quiz || {}).round_id) shown = null;
     if (!shown && persisted && persisted.round_id === (d.quiz || {}).round_id) shown = persisted;
-    var hasSeenResult = Object.prototype.hasOwnProperty.call(session.quizResultSeen, id);
-    var newResult = hasSeenResult && session.quizResultSeen[id] !== shown;
+    var hasSeenResult = Object.prototype.hasOwnProperty.call(session.quizResultSeen, resultKey);
+    var newResult = hasSeenResult && session.quizResultSeen[resultKey] !== shown;
     if (shown && (ownerChanged || newResult)) session.matTab = 'quiz';
-    session.quizResultSeen[id] = shown || null;
+    session.quizResultSeen[resultKey] = shown || null;
     var qs = ((d.quiz && d.quiz.questions) || []);
     var prev = model.state.nodeState[id] || {};
-    // 自测未过（<60）：按薄弱点细化学习地图
-    var lowScore = (typeof prev.score === 'number' && prev.score < 60) ||
-      !!(prev.lastResult && typeof prev.lastResult.score === 'number' && prev.lastResult.score < 60);
+    var currentResult = currentUnitResult(id, d.quiz || {});
+    var lowScore = !!(currentResult && !currentResult.pass);
     var matPane =
       '<div class="panel-sec workspace-prose"><div class="notes">' + renderNotes(d.study_notes) + '</div></div>' +
       sceneSupplementSection(id, d) +
@@ -2492,26 +2551,32 @@ function renderNodeDetail(id) {
     var quizPane;
     if (qs.length) {
       var rounds = (d.quiz || {}).rounds || [];
-      var latest = (model.state.nodeState[id] || {}).lastResult;
-      if (latest && latest.round_id && latest.round_id !== d.quiz.round_id) latest = null;
-      quizPane = '<div class="panel-sec"><h4>单元测验</h4>' +
-        '<p class="tip">' + qs.length + '题 · 满分100分 · ' + (rounds.length || 1) + '套题已保存。完整题目、作答与批改在测验窗口查看。</p>' +
-        (latest ? '<p>最近成绩：<b>' + format.esc(latest.score) + '/100</b></p>' : '') +
-        '<div class="quiz-actions"><select id="quiz-round-select" aria-label="选择题集">' +
-          (rounds.length ? rounds.map(function (r, index) {
-            return '<option value="' + format.esc(r.id) + '"' + (r.id === d.quiz.round_id ? ' selected' : '') + '>第' + (index + 1) + '套' + (r.id === d.quiz.round_id ? ' · 最新' : '') + '</option>';
-          }).join('') : '<option value="">第1套</option>') + '</select>' +
-        '<button class="btn primary" id="open-quiz-workspace">打开测验</button>' +
-        '<button class="btn" id="redo-quiz">出一套新题</button>' +
-        (latest && latest.pass && !domain.isDone(id) ? '<button class="btn" id="complete-node">完成本节点并解锁下一节点</button>' : '') +
-        (lowScore ? (domain.canRefine(id) ? '<button class="btn" id="refine-node">按薄弱点细化</button>' : '<span class="tip">已达四层细化上限，可继续学习或重新测验。</span>') : '') + '</div></div>';
+      var latest = currentResult, done = domain.isDone(id), draft = unitHasDraft(id, d.quiz), completionKey = sceneWorkKey(format.storeKey(), id);
+      var confirmation = pendingCompletion(id);
+      var action = confirmation ? confirmation.checkedIncomplete && confirmation.roundId === d.quiz.round_id ? 'complete' : 'confirm' : done ? 'continue' : latest && latest.pass ? 'complete' : latest ? 'review' : 'quiz';
+      var label = action === 'confirm' ? '重新确认完成状态' : confirmation ? '重试完成单元' : done ? '继续可学习单元' : action === 'complete' ? '完成单元并继续' : action === 'review' ? '回到正文复习' : draft ? '继续单元自测' : '开始单元自测';
+      if (window.LearnUser.readOnly && action === 'quiz') label = '查看单元自测';
+      var busy = !!session.completionWork[completionKey];
+      quizPane = '<section class="panel-sec unit-quiz-panel"><h4>单元自测</h4>' +
+        '<p class="tip">' + qs.length + ' 题 · 满分 100 分 · 60 分通过。完成当前轮次后，再明确确认完成单元。</p>' +
+        (latest ? '<p class="unit-result-summary">本轮成绩：<strong>' + format.esc(latest.score) + '/100</strong> · ' + (latest.pass ? '已通过' : '未通过') + '</p>' : '<p class="unit-result-summary">' + (draft ? '已有作答草稿，可以继续。' : '当前轮次尚未提交。') + '</p>') +
+        unitFeedback(latest) +
+        (session.completionErrors[completionKey] ? '<p class="unit-completion-error" role="alert">' + format.esc(session.completionErrors[completionKey]) + '</p>' : '') +
+        (window.LearnUser.readOnly ? '<p class="tip">当前资料为只读视图。可以查看题集和历史，不能完成单元、换题或生成补习。</p>' : '') +
+        '<div class="unit-primary"><button class="btn primary" id="unit-primary-action" type="button" data-unit-action="' + action + '"' + (busy || window.LearnUser.readOnly && (action === 'complete' || action === 'confirm') ? ' disabled' : '') + '>' + (busy ? '正在确认完成状态…' : label) + '</button>' +
+        (action !== 'quiz' ? '<button class="btn" id="open-quiz-workspace" type="button">查看当前自测与作答</button>' : '') + '</div>' +
+        '<details class="unit-secondary"><summary>题集与其他操作</summary><div class="quiz-actions"><select id="quiz-round-select" aria-label="选择题集">' +
+          (rounds.length ? rounds.map(function (r, index) { return '<option value="' + format.esc(r.id) + '"' + (r.id === d.quiz.round_id ? ' selected' : '') + '>第 ' + (index + 1) + ' 套' + (r.id === d.quiz.round_id ? ' · 当前' : ' · 历史') + '</option>'; }).join('') : '<option value="">第 1 套</option>') + '</select>' +
+        '<button class="btn" id="open-selected-quiz" type="button">查看所选题集</button>' +
+        '<button class="btn" id="redo-quiz" type="button"' + (window.LearnUser.readOnly || confirmation ? ' disabled' : '') + '>出一套新题</button>' +
+        (lowScore ? (domain.canRefine(id) ? '<button class="btn" id="refine-node" type="button"' + (window.LearnUser.readOnly ? ' disabled' : '') + '>按薄弱点细化</button>' : '<span class="tip">已达四层细化上限，可继续复习。</span>') : '') + '</div></details></section>';
     } else {
       quizPane = '<p class="tip">本单元暂无自测题。</p>';
     }
     scope.innerHTML =
       '<div class="mat-tabs-head">' +
         '<button class="mat-tab' + (session.matTab === 'material' ? ' on' : '') + '" type="button" data-mat="material">学习资料</button>' +
-        '<button class="mat-tab' + (session.matTab === 'quiz' ? ' on' : '') + '" type="button" data-mat="quiz">测验</button>' +
+        '<button class="mat-tab' + (session.matTab === 'quiz' ? ' on' : '') + '" type="button" data-mat="quiz">单元自测</button>' +
       '</div>' +
       '<div class="mat-pane mat-pane-material"' + (session.matTab === 'material' ? '' : ' hidden') + '>' + matPane + '</div>' +
       '<div class="mat-pane mat-pane-quiz"' + (session.matTab === 'quiz' ? '' : ' hidden') + '>' + quizPane + '</div>';
@@ -2546,10 +2611,20 @@ function renderNodeDetail(id) {
     var sceneButton = scope.querySelector('.scene-supplement-btn');
     if (sceneButton) sceneButton.addEventListener('click', function () { supplementScene(id); });
     var openQuiz = scope.querySelector('#open-quiz-workspace');
-    if (openQuiz) openQuiz.addEventListener('click', function () { openQuizModal(id, scope.querySelector('#quiz-round-select').value); });
+    if (openQuiz) openQuiz.addEventListener('click', function () { openQuizModal(id, (d.quiz || {}).round_id); });
+    var selectedQuiz = scope.querySelector('#open-selected-quiz');
+    if (selectedQuiz) selectedQuiz.addEventListener('click', function () { openQuizModal(id, scope.querySelector('#quiz-round-select').value); });
+    var primary = scope.querySelector('#unit-primary-action');
+    if (primary) primary.addEventListener('click', function () {
+      var action = this.getAttribute('data-unit-action');
+      if (action === 'complete' || action === 'confirm') completeNode(id);
+      else if (action === 'continue') continueLearning(id);
+      else if (action === 'review') showUnitView(id, 'material');
+      else openQuizModal(id, (d.quiz || {}).round_id);
+    });
     var bRedo = scope.querySelector('#redo-quiz');
     if (bRedo) {
-      bRedo.disabled = !!session.requizWork[id];
+      bRedo.disabled = window.LearnUser.readOnly || !!pendingCompletion(id) || !!session.requizWork[id];
       if (session.requizWork[id]) bRedo.textContent = '正在出新题…';
       bRedo.addEventListener('click', function () { redoQuiz(id); });
     }
@@ -2744,28 +2819,33 @@ function restoreSceneSupplement() {
 // 所有题目、作答和历史批改均由共享弹窗呈现。
 
 function openQuizModal(id, roundId) {
-    return persistence.ensureAccess(id).then(function () { return openQuizModalConfirmed(id, roundId); }).catch(function (error) { shell.showError(error.message); });
+    var key = format.storeKey(), detail = model.state.nodeDetail[id], expected = detail && detail.quiz && detail.quiz.round_id;
+    return persistence.ensureAccess(id).then(function () {
+      if (format.storeKey() === key && (!model.session.selectedId || model.session.selectedId === id) && model.state.nodeDetail[id] === detail && detail && (detail.quiz || {}).round_id === expected) return openQuizModalConfirmed(id, roundId);
+    }).catch(function (error) { if (format.storeKey() === key) shell.showError(error.message); });
   }
-
 function openQuizModalConfirmed(id, roundId) {
-    var n = domain.nodeById(id), d = model.state.nodeDetail[id];
-    if (!n || !d) return;
+    var n = domain.nodeById(id), d = model.state.nodeDetail[id]; if (!n || !d) return;
+    var key = format.storeKey(), expectedRound = (d.quiz || {}).round_id;
+    function sameHost() { return format.storeKey() === key && domain.nodeById(id) === n && model.state.nodeDetail[id] === d; }
+    function current() { return sameHost() && (d.quiz || {}).round_id === expectedRound; }
     return window.QuizDialog.open({
-      readOnly: window.LearnUser.readOnly, api: model.session.API, key: format.storeKey(), nodeId: id, roundId: roundId, title: n.title + ' · 单元测验',
+      readOnly: window.LearnUser.readOnly, api: model.session.API, key: key, nodeId: id, roundId: roundId, title: n.title + ' · 单元自测',
       render: format.mdRender, decorate: function (el) { format.renderMathIn(el); format.highlightIn(el); },
-      beforeSubmit: function () { return persistence.ensureAccess(id); },
-      onLoad: function (quiz) { d.quiz = quiz; },
-      onResult: function (res) {
+      restoreFocus: function () { return sameHost() ? unitReturnFocus(id) : null; },
+      resultReturn: {label: '返回单元自测', onReturn: function (context) {
+        if (context.key === key && context.nodeId === id && sameHost()) return showUnitView(id, 'quiz');
+      }},
+      beforeSubmit: function () { if (pendingCompletion(id)) return Promise.reject(new Error('完成状态尚未确认，请先确认或重试完成，再进行新的作答')); if (!current()) return Promise.reject(new Error('当前资料或题集已变化，请重新打开自测')); return persistence.ensureAccess(id); },
+      onLoad: function (quiz) { if (current() && quiz && quiz.round_id) { d.quiz = quiz; expectedRound = quiz.round_id; } },
+      onResult: function (res, responseKey) {
+        if (responseKey && responseKey !== key) return;
+        if (!current() || !res || !res.quiz || res.round_id !== expectedRound || res.quiz.round_id !== expectedRound || window.LearnUser.readOnly) return;
         d.quiz = res.quiz;
-        if (res.round_id === d.quiz.round_id) {
-          var st = model.state.nodeState[id] || {};
-          st.score = res.score;
-          st.lastResult = {score: res.score, pass: res.pass, feedback: res.feedback,
-                           per_question: res.per_question, round_id: res.round_id};
-          model.state.nodeState[id] = st;
-          session.lastQuizShown = {id: id, res: st.lastResult};
-        }
-        persistence.save(); cards.renderPlan();
+        var st = model.state.nodeState[id] || {};
+        st.score = res.score; st.lastResult = {score: res.score, pass: res.pass, feedback: res.feedback, per_question: res.per_question, round_id: res.round_id, attempt_id: res.attempt_id};
+        model.state.nodeState[id] = st; session.lastQuizShown = {id: id, res: st.lastResult};
+        persistence.save(); if (model.session.selectedId === id || !model.session.selectedId) cards.renderPlan();
       }
     });
   }
@@ -2827,11 +2907,13 @@ function restoreRequiz() {
   }
 
 function redoQuiz(id) {
+    if (pendingCompletion(id)) { shell.showError('完成状态尚未确认，请先确认或重试完成，再生成新题'); return Promise.resolve(); }
     if (window.LearnUser.readOnly) return Promise.resolve();
     return persistence.ensureAccess(id).then(function () { return redoQuizConfirmed(id); }).catch(function (error) { shell.showError(error.message); });
   }
 
 function redoQuizConfirmed(id) {
+    if (pendingCompletion(id)) { shell.showError('完成状态尚未确认，请先确认或重试完成，再生成新题'); return Promise.resolve(); }
     var n = domain.nodeById(id), d = model.state.nodeDetail[id];
     if (!n || !d || window.LearnUser.readOnly) return;
     var quiz = d.quiz || {}, st = model.state.nodeState[id] || {};
@@ -2845,18 +2927,83 @@ function redoQuizConfirmed(id) {
     });
   }
 
+function continueLearning(id) {
+    var key = format.storeKey();
+    return persistence.refreshAccess().then(function () {
+      if (format.storeKey() !== key) return;
+      var ordered = domain.planHierarchy(model.state.plan.nodes).map(function (entry) { return entry.node; });
+      var position = ordered.findIndex(function (node) { return node.id === id; });
+      var candidates = ordered.slice(position + 1).concat(ordered.slice(0, position));
+      var next = candidates.find(function (node) { return !domain.isDone(node.id) && domain.canAccess(node.id); });
+      if (next) return cards.selectNode(next.id);
+      cards.openDirectory();
+    }).catch(function (error) { if (format.storeKey() === key) shell.showError('无法确认下一单元：' + error.message); });
+  }
 function completeNode(id) {
     if (window.LearnUser.readOnly) return Promise.resolve();
-    return persistence.ensureAccess(id).then(function () { return completeNodeConfirmed(id); }).catch(function (error) { shell.showError(error.message); });
-  }
-
-function completeNodeConfirmed(id) {
-    var st = model.state.nodeState[id] || {};
-    if (!st.lastResult || !st.lastResult.pass || typeof st.score !== 'number' || st.score < 60) return;
-    st.completed = true;
-    model.state.nodeState[id] = st;
-    persistence.save();
-    cards.renderPlan();   // 重建后会自动恢复展开并重渲染卡内内容（状态→已完成）
+    var key = format.storeKey(), detail = model.state.nodeDetail[id], roundId = detail && detail.quiz && detail.quiz.round_id, node = domain.nodeById(id), state = model.state.nodeState[id] || null, workKey = sceneWorkKey(key, id);
+    if (!roundId || !node || !detail) return Promise.resolve();
+    if (session.completionWork[workKey]) return session.completionWork[workKey];
+    if (session.requizWork[id]) { shell.showError('新题正在准备，请等待题集确认后再完成单元'); return Promise.resolve(); }
+    var pending = pendingCompletion(id), confirmOnly = !!(pending && (!pending.checkedIncomplete || pending.roundId !== roundId));
+    function current() { return format.storeKey() === key && domain.nodeById(id) === node && model.state.nodeDetail[id] === detail && (model.state.nodeState[id] || null) === state && (detail.quiz || {}).round_id === roundId; }
+    function canWrite() { if (!current() || window.LearnUser.readOnly || session.requizWork[id]) throw new Error('资料、题集或只读状态已变化，请重新查看单元自测'); }
+    delete session.completionErrors[workKey];
+    var work;
+    if (confirmOnly) {
+      work = persistence.waitForWrites().then(function () {
+        if (!current()) return null;
+        return persistence.refreshAccess();
+      }).then(function (saved) {
+        if (!current() || !saved) return;
+        if (saved.nodeState && saved.nodeState[id] && saved.nodeState[id].completed === true) {
+          state.completed = true; clearPendingCompletion(id, pending); cards.refreshDirectory(); shell.renderProgress();
+          if (pending.roundId === roundId && model.session.selectedId === id) return continueLearning(id);
+        } else {
+          pending.checkedIncomplete = true;
+          session.completionErrors[workKey] = '服务器尚未确认完成，待同步内容已保留。可以重试完成单元。';
+        }
+      }).catch(function (error) { if (current()) session.completionErrors[workKey] = '仍无法确认完成状态，请连接网络后重新确认：' + error.message; });
+    } else {
+      work = persistence.flushSave().then(function () { return persistence.waitForWrites(); }).then(function () {
+        canWrite(); return persistence.ensureAccess(id);
+      }).then(function () {
+        canWrite(); return persistence.post('/path/quiz/state', {key: key, node: {id: id}});
+      }).then(function (quiz) {
+        canWrite();
+        if (!quiz || quiz.round_id !== roundId) throw new Error('当前题集已变化，历史通过不能完成本轮单元');
+        var issued = (quiz.rounds || []).find(function (round) { return round.id === roundId; });
+        var attempts = issued && issued.attempts || [], attempt = attempts.find(function (item) { return item.id === quiz.lastAttemptId; }) || attempts[attempts.length - 1];
+        var result = attempt && attempt.result;
+        if (!result || result.pass !== true || !Number.isFinite(result.score) || result.score < 60 || result.round_id && result.round_id !== roundId) throw new Error('当前轮次尚未通过，请先完成本轮单元自测');
+        detail.quiz = quiz;
+        if (!state) { state = {}; model.state.nodeState[id] = state; }
+        pending = {state: state, detail: detail, key: key, roundId: roundId, checkedIncomplete: false};
+        if (!model.session.pendingCompletions) model.session.pendingCompletions = Object.create(null);
+        model.session.pendingCompletions[id] = pending;
+        state.completed = true;
+        persistence.save();
+        // Capture all old false snapshots started while access/quiz was read.
+        // New concurrent saves now serialize true; drain the old retries before
+        // taking this completion's own final save acknowledgement.
+        return persistence.waitForWrites().then(function () {
+          canWrite(); persistence.save(); return persistence.flushSave();
+        }).then(function () {
+          clearPendingCompletion(id, pending);
+          if (format.storeKey() === key && model.state.nodeState[id] === state) { cards.refreshDirectory(); shell.renderProgress(); }
+          if (current() && model.session.selectedId === id) return continueLearning(id);
+        });
+      }).catch(function (error) {
+        if (!current()) return;
+        session.completionErrors[workKey] = pending && pending.state === state ? '完成状态未确认，已留在本单元。待同步内容已保留，请重新确认完成状态：' + error.message : error.message;
+        shell.showError(session.completionErrors[workKey]);
+      });
+    }
+    var settled = work.finally(function () {
+      if (session.completionWork[workKey] === settled) delete session.completionWork[workKey];
+      if (current() && model.session.selectedId === id) { renderNodeDetail(id); var focus = unitReturnFocus(id), directory = format.$('path-dialog'); if (focus && !(directory && directory.open)) focus.focus({preventScroll:true}); }
+    });
+    session.completionWork[workKey] = settled; if (model.session.selectedId === id) renderNodeDetail(id); return settled;
   }
 
 // 卡内「按薄弱点细化」：把本节点自测的薄弱点提交给 /path/refine（key 必须为学习地图键）
@@ -2880,7 +3027,7 @@ function refineNodeConfirmed(id) {
     if (!domain.canRefine(id)) { alert('已达四层细化上限，可继续学习或重新测验。'); return; }
     var n = domain.nodeById(id);
     var st = model.state.nodeState[id] || {};
-    var lr = st.lastResult || {};
+    var lr = currentUnitResult(id, (model.state.nodeDetail[id] || {}).quiz || {}) || {};
     var scope = cards.cardContentEl(id);
     var btn = scope ? scope.querySelector('#refine-node') : null;
     var reason = ((lr.feedback || '') + perQuestionSummary(lr.per_question)).slice(0, 500);
@@ -2924,12 +3071,12 @@ function submitQuizMap() {
     persistence.post('/path/quizmap', { key: format.storeKey() }, {newOperation: true}).then(function (r) {
       location.href = 'quiz-map.html?t=' + encodeURIComponent(r.slug);
     }).catch(function (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '生成测验'; }
-      shell.showError('生成测验失败：' + e.message, genQuizMap);
+      if (btn) { btn.disabled = false; btn.textContent = '生成综合测验'; }
+      shell.showError('生成综合测验失败：' + e.message, genQuizMap);
     });
   }
 
-  return Object.freeze({renderNotes: renderNotes, listSection: listSection, renderNodeDetail: renderNodeDetail, openQuizModal: openQuizModal, trackRequiz: trackRequiz, restoreRequiz: restoreRequiz, restoreSceneSupplement: restoreSceneSupplement, supplementScene: supplementScene, redoQuiz: redoQuiz, completeNode: completeNode, perQuestionSummary: perQuestionSummary, refineNode: refineNode, genQuizMap: genQuizMap, submitQuizMap: submitQuizMap});
+  return Object.freeze({renderNotes: renderNotes, listSection: listSection, renderNodeDetail: renderNodeDetail, showUnitView: showUnitView, continueLearning: continueLearning, openQuizModal: openQuizModal, trackRequiz: trackRequiz, restoreRequiz: restoreRequiz, restoreSceneSupplement: restoreSceneSupplement, supplementScene: supplementScene, redoQuiz: redoQuiz, completeNode: completeNode, perQuestionSummary: perQuestionSummary, refineNode: refineNode, genQuizMap: genQuizMap, submitQuizMap: submitQuizMap});
 });
 
 /* 资料库、新建学习和删除窗口。 */
@@ -3031,9 +3178,9 @@ function libRender() {
       var cnt = format.$('lib-count');
       if (cnt) cnt.textContent = ' (' + (items.length + quizzes.length) + ')';
       var h = '<p class="lib-h"><span>学习资料库</span><i>服务端动态扫描</i></p>';
-      h += '<p class="lib-sub">学习地图 · ' + items.length + '</p>';
+      h += '<p class="lib-sub">学习路径 · ' + items.length + '</p>';
       if (!items.length) {
-        h += '<p class="lib-empty">暂无生成的学习地图——去生成一个吧。</p>';
+        h += '<p class="lib-empty">还没有学习路径。可以开始新学习。</p>';
       } else {
         for (var i = 0; i < items.length; i++) {
           var it = items[i], meta = model.session.STAGE_LABEL[it.stage] || it.stage || '';
@@ -3045,9 +3192,9 @@ function libRender() {
                '</div>';
         }
       }
-      h += '<p class="lib-sub">测验地图 · ' + quizzes.length + '</p>';
+      h += '<p class="lib-sub">综合测验 · ' + quizzes.length + '</p>';
       if (!quizzes.length) {
-        h += '<p class="lib-empty">暂无测验地图——在学习地图里点「生成测验」。</p>';
+        h += '<p class="lib-empty">还没有综合测验。可从学习路径生成。</p>';
       } else {
         for (var j = 0; j < quizzes.length; j++) {
           var q = quizzes[j];
@@ -3060,7 +3207,7 @@ function libRender() {
         }
       }
       if (!window.LearnUser.readOnly) h += '<div class="lib-foot">' +
-           '<a href="learning-path.html?new=1">＋ 生成新的学习地图</a>' +
+           '<a href="learning-path.html?new=1">＋ 开始新学习</a>' +
            '</div>';
       pop.innerHTML = h;
     }).catch(function () {

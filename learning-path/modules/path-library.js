@@ -97,9 +97,9 @@ function libRender() {
       var cnt = format.$('lib-count');
       if (cnt) cnt.textContent = ' (' + (items.length + quizzes.length) + ')';
       var h = '<p class="lib-h"><span>学习资料库</span><i>服务端动态扫描</i></p>';
-      h += '<p class="lib-sub">学习地图 · ' + items.length + '</p>';
+      h += '<p class="lib-sub">学习路径 · ' + items.length + '</p>';
       if (!items.length) {
-        h += '<p class="lib-empty">暂无生成的学习地图——去生成一个吧。</p>';
+        h += '<p class="lib-empty">还没有学习路径。可以开始新学习。</p>';
       } else {
         for (var i = 0; i < items.length; i++) {
           var it = items[i], meta = model.session.STAGE_LABEL[it.stage] || it.stage || '';
@@ -111,9 +111,9 @@ function libRender() {
                '</div>';
         }
       }
-      h += '<p class="lib-sub">测验地图 · ' + quizzes.length + '</p>';
+      h += '<p class="lib-sub">综合测验 · ' + quizzes.length + '</p>';
       if (!quizzes.length) {
-        h += '<p class="lib-empty">暂无测验地图——在学习地图里点「生成测验」。</p>';
+        h += '<p class="lib-empty">还没有综合测验。可从学习路径生成。</p>';
       } else {
         for (var j = 0; j < quizzes.length; j++) {
           var q = quizzes[j];
@@ -126,7 +126,7 @@ function libRender() {
         }
       }
       if (!window.LearnUser.readOnly) h += '<div class="lib-foot">' +
-           '<a href="learning-path.html?new=1">＋ 生成新的学习地图</a>' +
+           '<a href="learning-path.html?new=1">＋ 开始新学习</a>' +
            '</div>';
       pop.innerHTML = h;
     }).catch(function () {

@@ -62,7 +62,12 @@ function depsOf(id) {
     return (n && n.deps) || [];
   }
 
-function isDone(id) { return !!(model.state.nodeState[id] && model.state.nodeState[id].completed); }
+function isDone(id) {
+    var state = model.state.nodeState[id], pending = (model.session.pendingCompletions || {})[id];
+    // The submitted true intent stays available to concurrent saves. It becomes
+    // a completed learning fact only after this exact state object is confirmed.
+    return !!(state && state.completed && !(pending && pending.state === state));
+  }
 
 function isUnlocked(id) {
     var node = nodeById(id);

@@ -40,7 +40,7 @@ pre.md-code code.hljs{background:transparent;padding:0}
 .lrow .m{font-family:var(--mono);font-size:11px;color:var(--soft)}
 .lrow .go{font-family:var(--mono);font-size:12px;color:var(--accent);flex:none}
 .lempty{color:var(--soft);font-size:13.5px;margin:2px 0}
-.lerr{background:#fff4ef;border:1px solid rgba(235,108,54,.4);border-left:3px solid var(--accent);border-radius:6px;padding:12px 16px;font-size:13.5px;color:#8a4b2a}
+.lerr{background:#fff4ef;border:1px solid rgba(235,108,54,.4);border-radius:6px;padding:12px 16px;font-size:13.5px;color:#8a4b2a}
 .qcount{font-family:var(--mono);font-size:11px;color:var(--soft)}
 .brand,.card,.lrow .lt{min-width:0;overflow-wrap:anywhere}
 .lrow .lt{flex:1}
@@ -60,3 +60,14 @@ pre.md-code code.hljs{background:transparent;padding:0}
 .gaps-heading{margin:0 0 8px}
 .gaps-summary{font-size:13.5px;white-space:pre-wrap}
 .gaps-points{margin:4px 0 0;padding-left:18px;font-size:13.5px}
+
+.quiz-result-return{margin-top:var(--learn-space-6)}
+.quiz-review-units{padding-left:var(--learn-space-6);line-height:1.8;overflow-wrap:anywhere}
+.quiz-review-units a{display:inline-flex;align-items:center;min-height:44px;color:var(--learn-accent);text-underline-offset:3px}
+.quiz-secondary{margin-top:var(--learn-space-6);border-top:1px solid var(--learn-border)}
+.quiz-secondary summary{min-height:44px;display:list-item;padding:var(--learn-space-3) 0;box-sizing:border-box;cursor:pointer;color:var(--learn-muted)}
+.quiz-result-panel .result{border-left:0;padding-left:0;font-size:15px}
+.quiz-result-panel .score{font-variant-numeric:tabular-nums}
+.quiz-secondary .foot{margin:var(--learn-space-2) 0}
+.wrap .btn,.toolbar .btn{min-height:44px}
+@media(max-width:640px){.quiz-result-return>.btn{width:100%}.quiz-secondary .foot{align-items:stretch;flex-direction:column}}

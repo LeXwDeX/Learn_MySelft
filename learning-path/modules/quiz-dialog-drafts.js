@@ -109,7 +109,10 @@ function chooseDraft() {
       try { stored = JSON.parse(localStorage.getItem(question.localKey(model.roundConfig(), issued.id)) || 'null'); } catch (error) {}
     }
     var attempts = issued.attempts || [];
-    var draft = stored || issued.draft;
+    var memory = session.records[question.localKey(model.roundConfig(), issued.id)];
+    var memoryRecovery = memory && !memory.saved && (!stored || memory.version >= stored.version);
+    if (memoryRecovery) stored = null;
+    var draft = memoryRecovery ? {answers: memory.answers} : stored || issued.draft;
     model.session.view.attempt = draft ? null : (attempts.length ? attempts[attempts.length - 1] : null);
     model.session.view.readOnly = model.session.view.config.readOnly || !!model.session.view.attempt;
     model.session.view.answers = ((draft || model.session.view.attempt || {}).answers || []).slice();

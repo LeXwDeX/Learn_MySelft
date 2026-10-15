@@ -83,7 +83,7 @@
   function quiz(key, generate) {
     if (document.querySelector('.materials-dialog')) return;
     var dialog = document.createElement('dialog'); dialog.className = 'materials-dialog';
-    dialog.innerHTML = '<h2>生成测验地图</h2><p>沿用学习地图中的资料，也可以补充本次测验的参考资料。</p><div class="quiz-materials"></div>' +
+    dialog.innerHTML = '<h2>生成综合测验</h2><p>沿用学习路径中的资料，也可以补充本次测验的参考资料。</p><div class="quiz-materials"></div>' +
       '<p class="materials-error" role="alert"></p><div class="materials-actions"><button type="button" class="btn cancel">取消</button><button type="button" class="btn primary generate" disabled>生成测验</button></div>';
     document.body.appendChild(dialog); dialog.showModal();
     var button = dialog.querySelector('.generate'), cancel = dialog.querySelector('.cancel'), panel, additions = [], source;

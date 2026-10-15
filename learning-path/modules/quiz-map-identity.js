@@ -37,5 +37,31 @@ function collectGapItems() {
     return out;
   }
 
-  return Object.freeze({attemptIdentity: attemptIdentity, sameIdentity: sameIdentity, currentDiagnosis: currentDiagnosis, collectGapItems: collectGapItems});
+function reviewTargets(document, entries, result, questions) {
+    document = document || model.session.currentD || {};
+    entries = entries || model.session.currentEntries || {};
+    result = result || model.session.currentRes || document.lastResult || {};
+    questions = questions || document.questions || [];
+    var sourceKey = document.sourceKey || (document.sourceSlug && model.session.USER_PATH + model.session.MAP_PREFIX + document.sourceSlug);
+    var prefix = model.session.USER_PATH + model.session.MAP_PREFIX;
+    if (typeof sourceKey !== 'string' || sourceKey.indexOf(prefix) !== 0) return {sourceHref: '', units: [], hasUnmapped: true};
+    var source;
+    try { source = JSON.parse(entries[sourceKey]); } catch (error) { return {sourceHref: '', units: [], hasUnmapped: true}; }
+    if (!source || !source.plan || !Array.isArray(source.plan.nodes)) return {sourceHref: '', units: [], hasUnmapped: true};
+    var sourceHref = 'learning-path.html?t=' + encodeURIComponent(sourceKey.slice(prefix.length));
+    var units = [], seen = Object.create(null), unmapped = false;
+    questions.forEach(function (q, i) {
+      var grade = (result.per_question || [])[i] || {};
+      var lost = grade.earned != null && grade.max_points != null ? grade.earned < grade.max_points : grade.ok === false;
+      if (!lost) return;
+      var node = q.node_id && source.plan.nodes.find(function (item) { return item && item.id === q.node_id; });
+      if (!node) { unmapped = true; return; }
+      if (seen[node.id]) return;
+      seen[node.id] = true;
+      units.push({id: node.id, title: node.title || node.id, href: sourceHref + '&node=' + encodeURIComponent(node.id)});
+    });
+    return {sourceHref: sourceHref, units: units, hasUnmapped: unmapped};
+  }
+
+  return Object.freeze({reviewTargets: reviewTargets, attemptIdentity: attemptIdentity, sameIdentity: sameIdentity, currentDiagnosis: currentDiagnosis, collectGapItems: collectGapItems});
 });
