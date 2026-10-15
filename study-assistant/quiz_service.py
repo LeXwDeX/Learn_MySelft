@@ -7,7 +7,7 @@ import flywheel
 import quiz_harness as harness
 from material_titles import document_title
 from service_limits import GEN_WAIT_MAX
-from job_execution import remaining_timeout, check_deadline
+from job_execution import JobDeadlineExceeded, remaining_timeout, check_deadline
 from text_utils import clip
 from prompts import _path_system
 from generation_contracts import (
@@ -298,20 +298,52 @@ class QuizService:
             ]
 
         qm, last_error = (None, "")
+        stage = "generation_parse"
+        generation_attempt = 1
+
+        def phase(name, step, label):
+            nonlocal stage
+            stage = name
+            self.repository.store.job_progress(step, label, generation_attempt, total=5)
+            self.repository.store.job_event(
+                "phase", label, stage_id=stage, generation_attempt=generation_attempt
+            )
+
+        def failure(error):
+            # Fixed categories only: never collect exception text or model output.
+            category = "deadline" if isinstance(error, JobDeadlineExceeded) else {
+                "generation_parse": "generation_failed",
+                "static_contract": "contract_rejected",
+                "independent_verification": "verification_rejected",
+                "render_review": "render_rejected",
+                "save": "save_failed",
+            }[stage]
+            self.repository.store.job_event(
+                "error", "综合测验处理未通过", failure_stage=stage,
+                error_category=category, generation_attempt=generation_attempt
+            )
         try:
             for attempt in range(3):
+                generation_attempt = attempt + 1
                 try:
+                    phase("generation_parse", 1, "生成并解析综合测验")
                     candidate = _norm_quizmap(
                         _json_block(
                             self.model.nonempty(
                                 _mk_quizmap(" 校验反馈：" + last_error),
-                                max_tokens=self.model.settings.max_output_tokens,
+                                tries=1,
+                                max_tokens=min(self.model.settings.max_output_tokens, 16384),
+                                reasoning_effort="medium",
+                                response_format="json_object",
                                 temperature=0.5,
                             )
                         ),
                         map_title,
                     )
-                    if not candidate or len(candidate["questions"]) < 8:
+                    if not candidate:
+                        raise harness.QuizContractError("综合测验解析失败")
+                    phase("static_contract", 2, "检查题数、单元映射与评分合同")
+                    if len(candidate["questions"]) < 8:
                         raise harness.QuizContractError("综合测验至少8题")
                     for question in candidate["questions"]:
                         question["node_id"] = flywheel.node_id(
@@ -321,23 +353,35 @@ class QuizService:
                             raise harness.QuizContractError(
                                 "每道综合题必须关联现有单元，point使用L编号与标题"
                             )
+                    harness.validate_questions(candidate["questions"], previous)
+                    phase("independent_verification", 3, "独立核验综合测验")
                     self.verification.checked_questions(
                         candidate["questions"], previous
                     )
+                    phase("render_review", 4, "复核综合测验页面显示")
                     candidate["render_review"] = self.verification.review_rendered(
                         candidate
                     )
+                    review = candidate["render_review"]
+                    if not isinstance(review, dict) or review.get("status") not in (
+                        "passed", "not_needed"
+                    ):
+                        raise harness.QuizContractError("综合测验渲染复核未通过或不可用")
                     candidate["title"] = _quizmap_title(m)
                     qm = candidate
                     break
                 except harness.QuizContractError as error:
+                    failure(error)
                     last_error = str(error)
             if qm is None:
                 raise harness.QuizContractError("综合测验验证失败：" + last_error)
-        except Exception:
+        except Exception as error:
+            if not isinstance(error, harness.QuizContractError):
+                failure(error)
             self.cache.finish(gate_key, _gate, err="quizmap verification failed")
             raise
         try:
+            phase("save", 5, "保存已核验综合测验")
             with self.repository.lock, self.repository.store.transaction():
                 if self.repository.material(key) is None:
                     raise ValueError("源学习地图已删除，未创建测验")
@@ -374,7 +418,8 @@ class QuizService:
                         "count": len(qm["questions"]),
                     }
                 )
-        except Exception:
+        except Exception as error:
+            failure(error)
             self.cache.finish(gate_key, _gate, err="quizmap save failed")
             raise
         out = {

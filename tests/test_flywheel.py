@@ -83,9 +83,17 @@ class FlywheelTests(unittest.TestCase):
         self.assertEqual(result["added"], 1)
         before = self.case.material()["nodeState"]
         captured = []
+        prompts = [
+            "晨间测量室温时应观察哪项刻度？", "将一张纸平均分成两份应如何折叠？",
+            "比较两杯水的体积适合使用什么器具？", "记录幼苗每天的生长需要保持哪个条件？",
+            "查找图书目录时应先阅读哪个部分？", "判断地图上方向时需要参照什么标记？",
+            "给实验器材分类可以选择什么依据？", "整理本周学习记录可以使用哪种方法？",
+        ]
         generated = [
-            dict(self.quiz["questions"][i % 6], q="fresh %d" % i, point="L3 补习基础")
-            for i in range(8)
+            {"q": text, "type": "choice", "options": ["方法甲", "方法乙", "方法丙", "方法丁"],
+             "answer": "A", "explain": "校验此方法", "points": 12 if i < 4 else 13,
+             "point": "L3 补习基础", "scoring": {"mode": "single_choice"}}
+            for i, text in enumerate(prompts)
         ]
 
         def generate(messages, **kwargs):
