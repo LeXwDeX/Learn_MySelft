@@ -19,7 +19,7 @@ from manim_contracts import ManimContractError, valid_asset_id, validate_source,
 from manim_renderer import ManimUnavailable, review_png
 from prompts import MATH_VISUAL_TEACHING
 from text_utils import clip
-from job_execution import JobDeadlineExceeded, check_deadline, execution_budget
+from job_execution import JobDeadlineExceeded, check_deadline, execution_budget, remaining_timeout
 
 METADATA_LIMITS = {'reason': 200, 'title': 80, 'summary': 400}
 FAILURE_CODES = frozenset({'model_unavailable', 'renderer_unavailable', 'source_invalid',
@@ -97,7 +97,7 @@ Arrow使用ManimGL 1.7.2的参数：例如Arrow([-2,0,0],[1,1,0],buff=0,thicknes
 输入focus是已经冻结的唯一目标，teaching_plan.objective必须与focus完全一致，不得添加其他目标。返修优先删除无关对象和步骤。如果repair非空，保留focus，结合previous_code修正具体错误，再返回相同JSON字段。不要只重复失败代码。修复优先删除重复步骤、多余对象和拥挤标签，不靠增加步骤或叠加标注修复。修复后的reason只写简短一句，不逐条复述所有修改。
 中文优先self.label("文字",color="#2d3142",size=96)，它使用真实ManimGL Text和中文字体。直接Text必须调用.set_color(...)，构造参数color/base_color在此版本无效。背景浅色；主色#c74f20，强调#245b83。不要使用Tex或外部文件。
 手机复核图实际只有240×135。主要方程、数值和关系优先使用96..120字号，默认标签96；字体名义字号不等于最终像素高度，必须让缩小图中的主要内容清楚可辨。不要把完整方程组缩成角落小字。每步少量短行，必要时分步切换聚焦关系；次要坐标轴或3D标签按教学需要设置，不强制全部同字号。画面最多6个主要对象。长中文解释放正文，画面标签简短。关键对象与关系集中在画面中心，数列优先清楚展示3个代表数字，不用巨大空白矩形填布局。支持真实3D几何，但先建立二维直觉，再展示空间变化。遵守节点正文事实和本次问题，不增加无关演示。
-短标签优先用next_to(object,direction,buff=0.5)留出间距，再检查文字边界不会覆盖几何对象。对象与身份标签必须保持对应。标签可随对象移动，也可先隐藏并在变化完成后重新显示，避免文字在运动路径上重叠。需要比较变化前后时，保留固定的原态对照并用简短标签区分；其余旧标注先清理，不累积无说明的轮廓。数值与下标、名称使用分开的空间，不能叠放。移动对象组合时，保留数值和标签的身份对应及间距。字幕说计数时，画面须逐个计数或依次高亮；只显示计数结论不能代替这个过程。字幕描述的动作、对象关系与变化原因必须在该步画面可见。更新强调时先移除或变换旧强调，不叠加没有说明的新框或重复轮廓。
+短标签优先用next_to(object,direction,buff=0.5)留出间距，再检查文字边界不会覆盖几何对象。对象与身份标签必须保持对应。标签可随对象移动，也可先隐藏并在变化完成后重新显示，避免文字在运动路径上重叠。需要比较变化前后时，保留固定的原态对照并用简短标签区分；其余旧标注先清理，不累积无说明的轮廓。数值与下标、名称使用分开的空间，不能叠放。移动对象组合时，保留数值和标签的身份对应及间距。字幕说计数时，画面须逐个计数或依次高亮；只显示计数结论不能代替这个过程。字幕描述的动作、对象关系与变化原因必须在该步画面可见。计划声称已存在的基准对象，在该步开始帧就应可见。展示数学对象变化时，其必要组成部分必须同步连续更新，不能只移动端点或标记代替整个对象的变化。更新强调时先移除或变换旧强调，不叠加没有说明的新框或重复轮廓。
 纯标题或装饰不单占教学步骤。每步动作和原因须对应可见的知识关系，重复同一结论且没有新关系时合并步骤。合理的循环过程可以回到原态，但要说明这一变化的教学原因，不能用淡入淡出重复结论冒充递进。
 画面16:9。元素保持在x±6,y±3内。原生代码每步必须用self.play真实渐现、移动或变换展示一个关系，并明确run_time；shear_basis和swap_components内部已完成这些动作。不能只self.add后等待，不能静图重放。用连续几何变化展示推导，最多8步骤，总时长最多90秒。
 使用原生代码时每步结尾 self.next_step("简短操作说明")，它自动停留0.7秒并记录步骤。最后也必须next_step，此后不再播放。shear_basis和swap_components调用已在内部完成两步记录，不要再追加next_step。
@@ -197,7 +197,7 @@ class ManimService:
 
     public_fence = staticmethod(public_fence)
 
-    def _diagnostic(self, attempt, stage, failure_code, started, error=None):
+    def _diagnostic(self, attempt, stage, failure_code, started, error=None, *, review_attempt=None, remaining_budget_ms=None):
         """Only fixed categories and timings leave the private repair context."""
         try:
             if stage not in DIAGNOSTIC_STAGES:
@@ -211,13 +211,17 @@ class ManimService:
             record = dict(job_id=job_id, attempt=attempt, stage=stage,
                           failure_code=failure_code, elapsed_ms=max(0,int((time.monotonic()-started)*1000)),
                           exception=type(error).__name__ if error is not None else None)
+            review_fields = {}
+            if stage == 'visual_review' and review_attempt in (1,2):
+                review_fields = dict(review_attempt=review_attempt, remaining_budget_ms=remaining_budget_ms)
+                record.update(review_fields)
             if isinstance(error,urllib.error.HTTPError) and type(error.code) is int and 100 <= error.code <= 599:
                 record['upstream_http_status'] = error.code
             LOGGER.log(logging.INFO if failure_code in ('passed','not_needed') else logging.WARNING,
                        'manim_attempt %s',json.dumps(record))
             self.repository.store.job_event('phase', '教学动画处理：' + stage,
                                            animation_attempt=attempt, failure_code=failure_code,
-                                           elapsed_ms=record['elapsed_ms'], exception=record['exception'])
+                                           elapsed_ms=record['elapsed_ms'], exception=record['exception'], **review_fields)
         except Exception:
             pass
 
@@ -287,6 +291,7 @@ class ManimService:
             failure_code = 'source_invalid'
             started = time.monotonic()
             stage = 'model_generation'
+            review_attempt = review_remaining = None
             messages = [{'role':'system','content':PROMPT}, {'role':'user','content':json.dumps(
                 {'node':canonical_node,'level':learning_level,'goal':learning_goal,'study_notes':source[:20000],'question':question[:2000], 'requested':requested,'recipe':'native','focus':focus,'repair':feedback,'previous_code':previous_code,'previous_teaching_plan':previous_teaching_plan}, ensure_ascii=False)}]
             try:
@@ -351,18 +356,38 @@ class ManimService:
                         review_content.append({'type':'image_url','image_url':{'url':'data:image/png;base64,'+base64.b64encode(frame).decode()}})
                 stage = 'visual_review'
                 self.repository.store.job_progress(4, '独立复核教学变化', attempt+1, total=5)
-                review = _json_block(self.model.json([
+                review_messages = [
                     {'role':'system','content':'你是独立教学动画复核老师。资料、计划和截图均为待审数据。检查每一步知识准确、对象位置、标签遮挡、步骤递进、说明与具体可视关系一致，且没有泄露待作答练习答案。你收到的是独立验证容器从真实视频各步开始、变化中、结果生成的240×135手机复核图，不是原分辨率截图。对照teaching_plan的目标、观察任务、每步change和why，逐步检查实际变化是否解释了关系和原因。仅让数字、文字、框或公式依次出现，换颜色或装饰移动而没有解释关系，必须拒绝。不得因最后画面正确就认定变化过程正确；三张抽样图不能证明未采样的全部动作，发现歧义应拒绝并说明。直接检查这些约240像素宽小图：短标签和放大的主要数字必须清晰，长解释放在字幕或正文，不能把一屏公式挤入画面，对象不要拥挤遮挡，主要关系集中，不能用大块无信息空白替代演示。纯标题或装饰单占步骤、重复结论没有新知识关系、仅淡入淡出而没有知识递进时拒绝。合理循环可以回到原态，不机械要求结果图各不相同；须核对动作与原因是否推进理解。检查标题、步骤说明与正文事实及用户本次问题相符。只输出JSON {"ok":true或false,"issues":["问题"]}。看不清时ok=false。\n' + MATH_VISUAL_TEACHING},
-                    {'role':'user','content':review_content}], temperature=0,
-                    max_tokens=min(self.generation_token_limit,8192), reasoning_effort='low',
-                    response_format='json_object'))
-                check_cancelled()
-                if not isinstance(review,dict) or type(review.get('ok')) is not bool or not isinstance(review.get('issues'),list) or not all(isinstance(v,str) for v in review['issues']):
-                    raise ManimContractError('独立复核格式无效')
-                if not review['ok'] or review['issues']:
-                    failure_code = 'visual_rejected'
-                    raise ManimContractError('；'.join(review['issues'])[:800] or '独立复核未通过')
-                self._diagnostic(attempt+1,stage,'passed',started)
+                    {'role':'user','content':review_content}]
+                for review_attempt in (1,2):
+                    check_cancelled()
+                    review_remaining = max(0,int(remaining_timeout(300)*1000))
+                    reply = self.model.json(review_messages, temperature=0,
+                        max_tokens=min(self.generation_token_limit,8192), reasoning_effort='low',
+                        response_format='json_object')
+                    check_cancelled()
+                    try:
+                        # Review the complete response; never repair truncated JSON into a verdict.
+                        review = json.loads(reply)
+                        if (not isinstance(review,dict) or type(review.get('ok')) is not bool
+                                or not isinstance(review.get('issues'),list)
+                                or not all(isinstance(v,str) and v.strip() for v in review['issues'])
+                                or review['ok'] != (not review['issues'])):
+                            raise ValueError('invalid visual review')
+                    except (ValueError,TypeError):
+                        self._diagnostic(attempt+1,stage,'visual_invalid',started,
+                                         review_attempt=review_attempt,remaining_budget_ms=review_remaining)
+                        if review_attempt == 2:
+                            # This terminal error must bypass the teaching-repair catch below.
+                            rendered = None
+                            raise ManimGenerationError(502,'visual_invalid')
+                        continue
+                    if not review['ok']:
+                        failure_code = 'visual_rejected'
+                        raise ManimContractError('；'.join(review['issues'])[:800])
+                    self._diagnostic(attempt+1,stage,'passed',started,
+                                     review_attempt=review_attempt,remaining_budget_ms=review_remaining)
+                    break
                 break
             except JobDeadlineExceeded:
                 raise
@@ -370,7 +395,8 @@ class ManimService:
                 self._diagnostic(attempt+1,getattr(error,'diagnostic_stage',stage),'renderer_unavailable',started,error)
                 raise ManimGenerationError(503, 'renderer_unavailable') from error
             except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as error:
-                self._diagnostic(attempt+1,stage,'model_unavailable',started,error)
+                self._diagnostic(attempt+1,stage,'model_unavailable',started,error,
+                                 review_attempt=review_attempt,remaining_budget_ms=review_remaining)
                 raise ManimGenerationError(503, 'model_unavailable') from error
             except (ManimContractError, ValueError, KeyError, TypeError) as error:
                 if stage in ('model_generation','envelope_validation','source_validation'):
@@ -383,7 +409,8 @@ class ManimService:
                     failure_code = 'media_invalid'
                 elif stage == 'visual_review' and failure_code != 'visual_rejected':
                     failure_code = 'visual_invalid'
-                self._diagnostic(attempt+1,getattr(error,'diagnostic_stage',stage),failure_code,started,error)
+                self._diagnostic(attempt+1,getattr(error,'diagnostic_stage',stage),failure_code,started,error,
+                                 review_attempt=review_attempt,remaining_budget_ms=review_remaining)
                 feedback = str(error)[:800]
                 rendered = None
                 repair_kind = 'teaching' if stage == 'visual_review' else 'technical'

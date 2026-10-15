@@ -155,32 +155,6 @@ class ManimServiceTests(unittest.TestCase):
         self.assertEqual(model.call_count, 4)
         self.assertFalse(self.service.root.exists())
 
-    def test_empty_and_incomplete_visual_reviews_fail_closed_after_two_reviews(self):
-        from unittest.mock import patch
-        good = self.service.model.json([{}, {'content': 'generation'}])
-        self.repo.doc['nodeDetail'] = {'n1': {'study_notes': '原有正文', 'quiz': {'questions': [{'id': 'q1'}]}}}
-        self.repo.doc['nodeState'] = {'n1': {'completed': False, 'score': 37}}
-        original = json.dumps(self.repo.doc, sort_keys=True)
-        # The shared parser can recover missing closing delimiters. A recovered
-        # negative review must still reject; incomplete content stays invalid.
-        cases = (('', 'visual_invalid'),
-                 ('{"ok":false,"issues":[', 'visual_rejected'),
-                 ('{"ok":false,"issues":["unfinished', 'visual_invalid'))
-        for reply, failure_code in cases:
-            with self.subTest(reply=reply), \
-                 patch.object(self.service.model, 'json', side_effect=[good, reply, good, reply]) as model, \
-                 patch.object(self.renderer, 'render', wraps=self.renderer.render) as render:
-                with self.assertRaises(ManimGenerationError) as raised:
-                    self.generate()
-            self.assertEqual(raised.exception.failure_code, failure_code)
-            reviews = [call for call in model.call_args_list
-                       if isinstance(call.args[0][1]['content'], list)]
-            self.assertEqual(len(reviews), 2)
-            self.assertEqual(model.call_count, 4)
-            self.assertEqual(render.call_count, 2)
-            self.assertFalse(self.service.root.exists())
-            self.assertEqual(json.dumps(self.repo.doc, sort_keys=True), original)
-
     def test_generation_repair_and_review_use_separate_request_budgets(self):
         from unittest.mock import patch
         good = self.service.model.json([{}, {'content': 'generation'}])
@@ -464,7 +438,7 @@ class ManimServiceTests(unittest.TestCase):
         self.assertTrue(all(row['job_id']=='a'*32 and type(row['elapsed_ms']) is int for row in rows))
         self.assertNotIn('PRIVATE_FEEDBACK_TOKEN_URL','\n'.join(captured.output))
         self.assertNotIn('候选新正文','\n'.join(captured.output))
-        for row in rows:self.assertEqual(set(row),{'job_id','attempt','stage','failure_code','elapsed_ms','exception'})
+        for row in rows:self.assertEqual(set(row),{'job_id','attempt','stage','failure_code','elapsed_ms','exception','review_attempt','remaining_budget_ms'})
 
     def test_distinct_failure_types_allow_third_draft_with_at_most_two_reviews(self):
         from unittest.mock import patch
@@ -475,8 +449,7 @@ class ManimServiceTests(unittest.TestCase):
         rejected = '{"ok":false,"issues":["原位置对照缺失"]}'
         passed = '{"ok":true,"issues":[]}'
         sequences = [(invalid, good, rejected, good, passed),
-                     (good, rejected, invalid, good, passed),
-                     (invalid, good, '{"ok":"invalid","issues":[]}', good, passed)]
+                     (good, rejected, invalid, good, passed)]
         for sequence in sequences:
             with self.subTest(sequence=sequence[0] == invalid), \
                  patch.object(self.service.model, 'json', side_effect=sequence) as model, \
@@ -840,3 +813,185 @@ class RelationPlannerTests(unittest.TestCase):
         with patch.object(self.service.planner_model,'json',side_effect=cancel),patch.object(self.service.model,'json') as model:
             with self.assertRaises(JobError) as raised:self.service.generate('u1/learn-path-v1-a','n1','正文',{},actor='u1',cancelled=lambda:cancelled[0])
             self.assertEqual(raised.exception.status,409);model.assert_not_called()
+
+
+class VisualReviewRecoveryTests(unittest.TestCase):
+    setUp = ManimServiceTests.setUp
+    generate = ManimServiceTests.generate
+
+    def run_reviews(self, replies, *, renders=None, cancelled=lambda: False):
+        from unittest.mock import patch
+        self.calls = []
+        self.generated = 0
+        base_model = self.service.model.json
+        iterator = iter(replies)
+        def respond(messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            if isinstance(messages[1]['content'], list):
+                value = next(iterator)
+                if isinstance(value, BaseException): raise value
+                return value() if callable(value) else value
+            self.generated += 1
+            return base_model(messages, **kwargs)
+        with patch.object(self.service.model, 'json', side_effect=respond), \
+             patch.object(self.renderer, 'render', side_effect=renders or self.renderer.render) as render:
+            self.render = render
+            return self.service.generate('u1/learn-path-v1-a','n1','候选新正文',{'id':'n1'},actor='u1',cancelled=cancelled)
+
+    def reviews(self):
+        return [call for call in self.calls if isinstance(call[0][1]['content'], list)]
+
+    def test_empty_then_pass_reuses_exact_request_and_render(self):
+        result = self.run_reviews(['', '{"ok":true,"issues":[]}'])
+        self.assertTrue(result['asset_id'])
+        self.assertEqual(self.generated, 1)
+        self.assertEqual(self.render.call_count, 1)
+        reviews = self.reviews()
+        self.assertEqual(len(reviews), 2)
+        self.assertIs(reviews[0][0], reviews[1][0])
+        self.assertEqual(reviews[0][1], reviews[1][1])
+        self.assertEqual(reviews[0][1], dict(temperature=0,max_tokens=8192,reasoning_effort='low',response_format='json_object'))
+
+    def test_all_invalid_shapes_stop_without_repair_or_publication(self):
+        self.repo.doc['nodeDetail']={'n1':{'study_notes':'原正文','quiz':{'questions':[{'id':'old'}]}}}
+        self.repo.doc['nodeState']={'n1':{'completed':True,'score':83}}
+        original=json.dumps(self.repo.doc,sort_keys=True)
+        invalid=['', '{"ok":false,"issues":[', 'prefix {"ok":true,"issues":[]}',
+                 '{"ok":true,"issues":[]} trailing', '{"ok":true}', '{"ok":1,"issues":[]}',
+                 '{"ok":false,"issues":[]}', '{"ok":true,"issues":["problem"]}',
+                 '{"ok":false,"issues":["problem",null]}', '{"ok":false,"issues":[" "]}',
+                 '{"ok":false,"issues":["problem",""]}']
+        for reply in invalid:
+            with self.subTest(reply=reply), self.assertRaises(ManimGenerationError) as raised:
+                self.run_reviews([reply,reply])
+            self.assertEqual(raised.exception.failure_code,'visual_invalid')
+            self.assertEqual(self.generated,1)
+            self.assertEqual(self.render.call_count,1)
+            self.assertEqual(len(self.reviews()),2)
+            self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
+            self.assertFalse(self.service.root.exists())
+
+    def test_empty_then_quality_rejection_repairs_new_candidate_and_all_gates(self):
+        self.run_reviews(['','{"ok":false,"issues":["PRIVATE_actual_feedback"]}','{"ok":true,"issues":[]}'])
+        self.assertEqual(self.generated,2)
+        self.assertEqual(self.render.call_count,2)
+        self.assertEqual(len(self.reviews()),3)
+        payload=json.loads([c[0][1]['content'] for c in self.calls if isinstance(c[0][1]['content'],str)][1])
+        self.assertIn('PRIVATE_actual_feedback',payload['repair'])
+        self.assertTrue(payload['previous_code'])
+        self.assertTrue(payload['previous_teaching_plan'])
+        self.assertIsNot(self.reviews()[1][0],self.reviews()[2][0])
+
+    def test_technical_failure_then_invalid_stops_without_third_candidate(self):
+        rendered=self.renderer.render('ignored')
+        with self.assertRaises(ManimGenerationError) as raised:
+            self.run_reviews(['',''],renders=[ManimContractError('technical'),rendered])
+        self.assertEqual(raised.exception.failure_code,'visual_invalid')
+        self.assertEqual(self.generated,2)
+        self.assertEqual(self.render.call_count,2)
+        self.assertFalse(self.service.root.exists())
+
+    def test_third_candidate_invalid_never_generates_fourth(self):
+        rendered=self.renderer.render('ignored')
+        with self.assertRaises(ManimGenerationError) as raised:
+            self.run_reviews(['{"ok":false,"issues":["quality"]}','',''],
+                             renders=[ManimContractError('technical'),rendered,rendered])
+        self.assertEqual(raised.exception.failure_code,'visual_invalid')
+        self.assertEqual(self.generated,3)
+        self.assertEqual(self.render.call_count,3)
+        self.assertFalse(self.service.root.exists())
+
+    def test_transport_cancel_and_deadline_exit_without_more_calls(self):
+        from unittest.mock import patch
+        from job_execution import execution_budget, JobDeadlineExceeded
+        for error in (urllib.error.URLError('PRIVATE_network'),TimeoutError()):
+            with self.subTest(error=type(error).__name__),self.assertRaises(ManimGenerationError) as raised:
+                self.run_reviews(['',error])
+            self.assertEqual(raised.exception.failure_code,'model_unavailable')
+            self.assertEqual(len(self.reviews()),2)
+            self.assertEqual(self.generated,1)
+        cancelled=[False]
+        def cancel(): cancelled[0]=True; return ''
+        with self.assertRaises(JobError) as raised:
+            self.run_reviews([cancel],cancelled=lambda:cancelled[0])
+        self.assertEqual(raised.exception.status,409)
+        self.assertEqual(len(self.reviews()),1)
+        clock=[0.0]
+        def expire(): clock[0]+=11; return ''
+        with patch('job_execution.time.monotonic',side_effect=lambda:clock[0]),execution_budget(10):
+            with self.assertRaises(JobDeadlineExceeded):self.run_reviews([expire])
+        self.assertEqual(len(self.reviews()),1)
+        self.assertFalse(self.service.root.exists())
+
+    def test_outer_budget_decreases_across_same_candidate_reviews(self):
+        from unittest.mock import patch
+        from job_execution import execution_budget,remaining_timeout
+        clock=[0.0];remaining=[]
+        def first(): remaining.append(remaining_timeout(1000));clock[0]+=4;return ''
+        def second(): remaining.append(remaining_timeout(1000));clock[0]+=4;return '{"ok":true,"issues":[]}'
+        with patch('job_execution.time.monotonic',side_effect=lambda:clock[0]),execution_budget(10):
+            self.run_reviews([first,second])
+        self.assertEqual(remaining,[10,6])
+        self.assertEqual(self.generated,1)
+
+    def test_safe_review_diagnostics_and_observer_failure_do_not_change_result(self):
+        from unittest.mock import patch
+        self.repo.job_event=lambda *args,**kwargs: (_ for _ in ()).throw(RuntimeError('PRIVATE_observer'))
+        with self.assertLogs('manim_service',level='INFO') as logs:
+            self.run_reviews(['PRIVATE_empty','{"ok":true,"issues":[]}'])
+        rows=[json.loads(r.getMessage().split(' ',1)[1]) for r in logs.records]
+        reviews=[r for r in rows if r['stage']=='visual_review']
+        self.assertEqual([r['review_attempt'] for r in reviews],[1,2])
+        self.assertEqual([r['failure_code'] for r in reviews],['visual_invalid','passed'])
+        self.assertTrue(all(0<r['remaining_budget_ms']<=300000 for r in reviews))
+        self.assertNotIn('PRIVATE_','\n'.join(logs.output))
+        self.assertNotIn('候选新正文','\n'.join(logs.output))
+        self.assertIn('开始帧',PROMPT)
+        self.assertIn('必要组成部分',PROMPT)
+
+    def test_real_client_empty_response_uses_two_actual_review_requests(self):
+        from unittest.mock import patch
+        from model_client import ModelClient
+        import model_transport
+        settings=type('Settings',(),dict(llm_model='fixture',llm_base='http://127.0.0.1',max_output_tokens=16384,upstream_timeout=1))()
+        good=self.service.model.json([{}, {'content':'generation'}])
+        self.service.model=ModelClient(settings)
+        responses=[json.dumps({'choices':[{'message':{'content':v}}]}).encode()
+                   for v in (good,'','{"ok":true,"issues":[]}')]
+        with patch.object(model_transport,'post',side_effect=responses) as transport, \
+             patch.object(self.renderer,'render',wraps=self.renderer.render) as renderer:
+            self.generate()
+        bodies=[json.loads(call.args[1]) for call in transport.call_args_list]
+        self.assertEqual(len(bodies),3)
+        self.assertEqual(renderer.call_count,1)
+        self.assertEqual(bodies[1],bodies[2])
+        self.assertEqual(bodies[1]['max_tokens'],8192)
+
+    def test_quality_repair_rechecks_source_before_rendering_new_candidate(self):
+        from unittest.mock import patch
+        good=self.service.model.json([{}, {'content':'generation'}])
+        invalid=json.loads(good)
+        invalid['code']='class LessonScene(TeachingScene):\n def construct(self):\n  line=Line(LEFT,RIGHT,thickness=6)'
+        with patch.object(self.service.model,'json',side_effect=[good,'{"ok":false,"issues":["quality"]}',json.dumps(invalid),good,'{"ok":true,"issues":[]}']) as model, \
+             patch.object(self.renderer,'render',wraps=self.renderer.render) as renderer:
+            self.generate()
+        self.assertEqual(model.call_count,5)
+        self.assertEqual(renderer.call_count,2)
+        repair=json.loads(model.call_args_list[3].args[0][1]['content'])
+        self.assertIn('stroke_width',repair['repair'])
+        self.assertEqual(repair['previous_code'],invalid['code'])
+
+    def test_second_review_cannot_publish_after_outer_deadline(self):
+        from unittest.mock import patch
+        from job_execution import execution_budget,JobDeadlineExceeded,remaining_timeout
+        clock=[0.0];remaining=[]
+        def first(): remaining.append(remaining_timeout(1000));clock[0]+=4;return ''
+        def second(): remaining.append(remaining_timeout(1000));clock[0]+=7;return '{"ok":true,"issues":[]}'
+        original=json.dumps(self.repo.doc,sort_keys=True)
+        with patch('job_execution.time.monotonic',side_effect=lambda:clock[0]),execution_budget(10):
+            with self.assertRaises(JobDeadlineExceeded):self.run_reviews([first,second])
+        self.assertEqual(remaining,[10,6])
+        self.assertEqual(self.generated,1)
+        self.assertEqual(self.render.call_count,1)
+        self.assertFalse(self.service.root.exists())
+        self.assertEqual(json.dumps(self.repo.doc,sort_keys=True),original)
