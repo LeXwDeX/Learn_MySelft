@@ -1,0 +1,2 @@
+# Local regression tests only; production parser dependencies are managed separately.
+py7zr>=1.0,<2
