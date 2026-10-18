@@ -214,8 +214,8 @@ def _vector_rotation(scene, value):
     length = m.MathTex(r'|\vec a|=\sqrt{%d}' % (x * x + y * y), font_size=52,
                        color='#2d3142').to_corner(m.DL, buff=0.45)
     scene.add(plane, axes, origin, origin_label, vector, name, length)
-    scene.play(m.Write(coords), m.Indicate(length, color='#c74f20'),
-               m.Indicate(vector, color='#c74f20'), run_time=1.4)
+    # Fade the full coordinate in; a partial Write frame reads as truncated text.
+    scene.play(m.FadeIn(coords), run_time=1.2)
     scene.next_step(captions[0])
 
     ghost = vector.copy().set_color('#9a9a9a')

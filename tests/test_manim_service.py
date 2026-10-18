@@ -1521,6 +1521,8 @@ class ManimgxServiceTests(unittest.TestCase):
         source=renderer.call_args.args[0]
         self.assertEqual(source['kind'],'recipe');self.assertEqual(source['recipe'],'vector_rotation')
         self.assertEqual(len(source['steps']),3)
+        self.assertEqual(source['steps'][0]['caption'],
+                         '首帧显示坐标网格、原点O、蓝色向量a=(2,1)和它的长度根号5，再显示终点坐标(2,1)')
         self.assertEqual(self.model.calls,0)
 
     def test_manimgx_rejects_bad_engine_and_vector_bounds(self):

@@ -161,7 +161,7 @@ VECTOR_REFERENCE_PLAN = {
     'visual_reason': '真实旋转显示方向改变，保留原向量作对照，再用同心圆验证两个终点到原点距离相同',
     'observe': '观察终点从(2,1)到(-1,2)的位置变化，以及旋转前后向量的长度是否改变',
     'steps': [
-        {'change': '首帧显示坐标网格、原点O、蓝色向量a=(2,1)和它的长度根号5，再写出终点坐标',
+        {'change': '首帧显示坐标网格、原点O、蓝色向量a=(2,1)和它的长度根号5，再显示终点坐标(2,1)',
          'why': '先建立向量终点坐标和长度的基准'},
         {'change': '向量绕原点逆时针旋转90度，终点从(2,1)到(-1,2)，灰色原向量保留',
          'why': '旋转改变方向，终点坐标按(-y,x)变化'},
@@ -366,7 +366,7 @@ def compile_relation(relation, engine='manimgx'):
             plan = envelope['teaching_plan']
             plan['objective'] = '理解向量(%d,%d)绕原点逆时针旋转90度后终点到(%d,%d)，长度不变' % (x,y,after[0],after[1])
             plan['observe'] = '观察终点从(%d,%d)到(%d,%d)的位置变化，以及旋转前后向量的长度是否改变' % (x,y,after[0],after[1])
-            plan['steps'][0]['change'] = '首帧显示坐标网格、原点O、蓝色向量a=(%d,%d)和它的长度根号%d，再写出终点坐标' % (x,y,norm)
+            plan['steps'][0]['change'] = '首帧显示坐标网格、原点O、蓝色向量a=(%d,%d)和它的长度根号%d，再显示终点坐标(%d,%d)' % (x,y,norm,x,y)
             plan['steps'][1]['change'] = '向量绕原点逆时针旋转90度，终点从(%d,%d)到(%d,%d)，灰色原向量保留' % (x,y,after[0],after[1])
             plan['steps'][2]['change'] = '作以原点为圆心、根号%d为半径的圆，旋转前后终点都在圆上' % norm
             envelope['summary'] = '观察向量(%d,%d)逆时针旋转90度后变为(%d,%d)，长度始终为根号%d。' % (x,y,after[0],after[1],norm)
