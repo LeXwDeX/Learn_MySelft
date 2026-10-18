@@ -47,7 +47,15 @@ class ManimgxRenderer:
             raw = self._phase(image, {'phase': 'render', 'scene': value}, MAX_VIDEO * 4 // 3 + 65536, 360)
             check_wait()
             if isinstance(raw, dict) and raw.get('error') == 'layout_problems':
-                error = ManimContractError('布局检查未通过，请删除重叠文字、穿过文字的形状和越界内容后重试')
+                detail = raw.get('detail')
+                if isinstance(detail, str):
+                    detail = re.sub(r'\S*lesson\.py:[0-9]+', 'scene', detail)
+                    detail = re.sub(r'[\x00-\x1f\x7f]', ' ', detail)
+                    detail = re.sub(r'\s+', ' ', detail).strip()[:400]
+                else:
+                    detail = ''
+                message = '布局检查未通过' + ('：' + detail if detail else '')
+                error = ManimContractError(message + '，请删除重叠文字、穿过文字的形状和越界内容后重试')
                 error.failure_code = 'layout_invalid'
                 raise error
             if isinstance(raw, dict) and raw.get('error') == 'scene_render_failed':

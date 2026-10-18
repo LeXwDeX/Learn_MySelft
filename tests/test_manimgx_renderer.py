@@ -11,7 +11,7 @@ from manim_contracts import ManimContractError
 from manim_renderer import ManimUnavailable
 from manimgx_renderer import ManimgxRenderer
 import manimgx_renderer
-from manimgx_worker import LayoutFailure, inspect_failed, require_clean_layout
+from manimgx_worker import LayoutFailure, inspect_failed, layout_detail, require_clean_layout
 from animation_contracts import validate_scene
 
 
@@ -39,7 +39,7 @@ class FakeRenderer(ManimgxRenderer):
         self.inputs.append(envelope)
         if envelope['phase'] == 'render':
             if self.render_failure:
-                return {'error': self.render_failure}
+                return self.render_failure if isinstance(self.render_failure, dict) else {'error': self.render_failure}
             return {'raw_video': base64.b64encode(b'untrusted').decode(),
                     'steps': [dict(caption='标出向量', start_frame=0, end_frame=30,
                                    result_frame=29, hold_start_frame=9)]}
@@ -86,6 +86,22 @@ class RendererTests(unittest.TestCase):
         with self.assertRaises(ManimContractError) as raised:
             renderer.render(SCENE)
         self.assertEqual(raised.exception.failure_code, 'render_failed')
+
+    def test_layout_detail_reaches_repair_feedback_without_raw_output(self):
+        renderer = FakeRenderer(self.path)
+        detail = "  [1] t=6.6–7.3s (lesson.py:134)  initial[3] (Text 'a') and Circle: Circle runs\n through the text"
+        renderer.render_failure = {'error': 'layout_problems', 'detail': detail}
+        with self.assertRaises(ManimContractError) as raised:
+            renderer.render(SCENE)
+        message = str(raised.exception)
+        self.assertIn('Circle runs through the text', message)
+        self.assertNotIn('lesson.py', message)
+        self.assertNotIn('\n', message)
+        self.assertLessEqual(len(message), 600)
+        renderer.render_failure = {'error': 'layout_problems', 'detail': ['hidden']}
+        with self.assertRaises(ManimContractError) as raised:
+            renderer.render(SCENE)
+        self.assertNotIn('hidden', str(raised.exception))
 
     def test_media_failure_is_distinct_from_scene_failure(self):
         renderer = FakeRenderer(self.path)
@@ -153,6 +169,18 @@ class LayoutReportTests(unittest.TestCase):
                            (2, 'layout: 0 problems\n')):
             with self.subTest(code=code, text=text):
                 self.assertTrue(inspect_failed(code, text))
+
+    def test_layout_detail_is_bounded_and_path_free(self):
+        text = ("layout: 1 problem\n"
+                "  [1] t=6.6–7.3s (lesson.py:134)  initial[3] (Text 'a') and Circle: Circle runs through the text\n")
+        detail = layout_detail(text)
+        self.assertIn('Circle runs through the text', detail)
+        self.assertNotIn('lesson.py', detail)
+        self.assertLessEqual(len(detail), 400)
+        self.assertEqual(layout_detail('layout: no problems\n'), '')
+        with self.assertRaises(LayoutFailure) as raised:
+            require_clean_layout(text)
+        self.assertIn('Circle runs through the text', str(raised.exception))
 
 
 if __name__ == '__main__':

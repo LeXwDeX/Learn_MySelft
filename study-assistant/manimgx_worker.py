@@ -89,13 +89,31 @@ def capture(command, env, timeout):
         return process.returncode, re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
 
 
+def layout_detail(text):
+    """Return a short, path-free reason from the last layout report."""
+    matches = list(LAYOUT.finditer(text))
+    if not matches:
+        return ''
+    lines = []
+    for line in text[matches[-1].end():].splitlines():
+        line = re.sub(r'\s+', ' ', line).strip()
+        if re.match(r'^\[[0-9]+\]', line):
+            lines.append(line)
+        elif lines:
+            break
+    detail = '；'.join(lines[:3])
+    detail = re.sub(r'\S*lesson\.py:[0-9]+', 'scene', detail)
+    detail = re.sub(r'[\x00-\x1f\x7f]', ' ', detail)
+    return detail[:400]
+
+
 def require_clean_layout(text):
     matches = LAYOUT.findall(text)
     if not matches:
         raise LayoutFailure('layout report missing')
     clean, problems = matches[-1]
     if not clean or int(problems or 0):
-        raise LayoutFailure('layout problems reported')
+        raise LayoutFailure(layout_detail(text) or 'layout problems reported')
 
 
 def inspect_failed(code, text):
@@ -239,8 +257,11 @@ def main():
     if envelope.get('phase') == 'render' and set(envelope) == {'phase', 'scene'}:
         try:
             render(envelope)
-        except LayoutFailure:
-            print(json.dumps({'error': 'layout_problems'}))
+        except LayoutFailure as error:
+            message = {'error': 'layout_problems'}
+            if str(error):
+                message['detail'] = str(error)[:400]
+            print(json.dumps(message, ensure_ascii=False))
         except (ValueError, KeyError, TypeError, subprocess.CalledProcessError, OSError):
             print(json.dumps({'error': 'scene_render_failed'}))
     elif envelope.get('phase') == 'validate':
