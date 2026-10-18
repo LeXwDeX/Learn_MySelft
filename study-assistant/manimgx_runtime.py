@@ -221,11 +221,10 @@ def _vector_rotation(scene, value):
     after_coords = m.MathTex(r"\vec a'=" + _pair(*rotated), font_size=56,
                              color='#c74f20').to_corner(m.UL, buff=0.45)
     after_name = scene.label("向量 a'", color='#c74f20').to_corner(m.UR, buff=0.45)
-    scene.play(m.FadeIn(ghost), m.FadeIn(ghost_name),
-               m.Rotate(vector, angle=90 * m.DEGREES, about_point=m.ORIGIN),
-               m.Transform(name, after_name), run_time=2.4)
-    # Update the coordinate label only after the vector reaches its result pose.
-    scene.play(m.Transform(coords, after_coords), run_time=0.6)
+    # Fade the old labels out instead of morphing text, which overlaps glyphs.
+    scene.play(m.FadeOut(name), m.FadeOut(coords), m.FadeIn(ghost), m.FadeIn(ghost_name),
+               m.Rotate(vector, angle=90 * m.DEGREES, about_point=m.ORIGIN), run_time=2.4)
+    scene.play(m.FadeIn(after_name), m.FadeIn(after_coords), run_time=0.6)
     scene.next_step(captions[1])
 
     circle = m.Circle(radius=radius, color='#757575', stroke_width=3)
