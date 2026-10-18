@@ -212,8 +212,9 @@ def _vector_rotation(scene, value):
     coords = m.MathTex(r'\vec a=' + _pair(x, y), font_size=56, color='#245b83').to_corner(m.UL, buff=0.45)
     length = m.MathTex(r'|\vec a|=\sqrt{%d}' % (x * x + y * y), font_size=52,
                        color='#2d3142').to_corner(m.DL, buff=0.45)
-    scene.add(plane, axes, origin, origin_label, vector, name, coords)
-    scene.play(m.Write(length), m.Indicate(vector, color='#c74f20'), run_time=1.4)
+    scene.add(plane, axes, origin, origin_label, vector, name, length)
+    scene.play(m.Write(coords), m.Indicate(length, color='#c74f20'),
+               m.Indicate(vector, color='#c74f20'), run_time=1.4)
     scene.next_step(captions[0])
 
     ghost = vector.copy().set_color('#9a9a9a')
