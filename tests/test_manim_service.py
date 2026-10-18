@@ -9,7 +9,7 @@ import urllib.error
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
 from background_jobs import JobError
-from manim_service import METADATA_LIMITS, PROMPT, TEACHING_REFERENCE_CODE, TEACHING_REFERENCE_ENVELOPE, SWAP_REFERENCE_ENVELOPE, validate_relation, compile_relation, ManimService, ManimGenerationError
+from manim_service import METADATA_LIMITS, PROMPT, REVIEW_FALLBACK_REMINDER, TEACHING_REFERENCE_CODE, TEACHING_REFERENCE_ENVELOPE, SWAP_REFERENCE_ENVELOPE, validate_relation, compile_relation, ManimService, ManimGenerationError
 from manim_contracts import ManimContractError, validate_source, validate_teaching_plan
 from manim_renderer import ManimUnavailable
 from prompts import MATH_VISUAL_TEACHING
@@ -886,16 +886,22 @@ class VisualReviewRecoveryTests(unittest.TestCase):
     def reviews(self):
         return [call for call in self.calls if isinstance(call[0][1]['content'], list)]
 
-    def test_empty_then_pass_reuses_exact_request_and_render(self):
+    def test_empty_then_pass_reuses_candidate_and_render_with_no_reasoning_fallback(self):
         result = self.run_reviews(['', visual_report()])
         self.assertTrue(result['asset_id'])
         self.assertEqual(self.generated, 1)
         self.assertEqual(self.render.call_count, 1)
         reviews = self.reviews()
         self.assertEqual(len(reviews), 2)
-        self.assertIs(reviews[0][0], reviews[1][0])
-        self.assertEqual(reviews[0][1], reviews[1][1])
-        self.assertEqual(reviews[0][1], dict(temperature=0,max_tokens=8192,reasoning_effort='low',response_format='json_object'))
+        first,second=reviews
+        self.assertIs(first[0][0],second[0][0])
+        first_content=first[0][1]['content'];second_content=second[0][1]['content']
+        self.assertEqual(second_content[0],first_content[0])
+        self.assertEqual(second_content[1],{'type':'text','text':REVIEW_FALLBACK_REMINDER})
+        self.assertEqual(second_content[2:],first_content[1:])
+        self.assertIs(second_content[2],first_content[1])
+        self.assertEqual(first[1], dict(temperature=0,max_tokens=8192,reasoning_effort='low',response_format='json_object'))
+        self.assertEqual(second[1], dict(temperature=0,max_tokens=8192,reasoning_effort='none',response_format='json_object'))
 
     def assert_terminal_review(self, reply, prefix):
         self.setUp()
@@ -939,8 +945,12 @@ class VisualReviewRecoveryTests(unittest.TestCase):
                 self.run_reviews([blank,visual_report()])
                 self.assertEqual(self.generated,1)
                 self.assertEqual(self.render.call_count,1)
-                self.assertEqual(len(self.reviews()),2)
-                self.assertIs(self.reviews()[0][0],self.reviews()[1][0])
+                reviews=self.reviews()
+                self.assertEqual(len(reviews),2)
+                self.assertEqual([r[1]['reasoning_effort'] for r in reviews],['low','none'])
+                fallback=reviews[1][0][1]['content']
+                self.assertEqual(fallback[1],{'type':'text','text':REVIEW_FALLBACK_REMINDER})
+                self.assertEqual(fallback[:1]+fallback[2:],reviews[0][0][1]['content'])
         self.assert_terminal_review(' \n\t',[''])
 
     def test_empty_then_quality_rejection_repairs_new_candidate_and_all_gates(self):
@@ -948,6 +958,7 @@ class VisualReviewRecoveryTests(unittest.TestCase):
         self.assertEqual(self.generated,2)
         self.assertEqual(self.render.call_count,2)
         self.assertEqual(len(self.reviews()),3)
+        self.assertEqual([r[1]['reasoning_effort'] for r in self.reviews()],['low','none','low'])
         messages=[c[0] for c in self.calls if isinstance(c[0][1]['content'],str)][1]
         payload=json.loads(messages[-1]['content']);snapshot=json.loads(messages[2]['content'])
         self.assertIn('PRIVATE_actual_feedback',payload['repair'])
@@ -1037,8 +1048,13 @@ class VisualReviewRecoveryTests(unittest.TestCase):
         bodies=[json.loads(call.args[1]) for call in transport.call_args_list]
         self.assertEqual(len(bodies),3)
         self.assertEqual(renderer.call_count,1)
-        self.assertEqual(bodies[1],bodies[2])
-        self.assertEqual(bodies[1]['max_tokens'],8192)
+        self.assertEqual(bodies[1]['reasoning_effort'],'low')
+        self.assertEqual(bodies[2]['reasoning_effort'],'none')
+        self.assertEqual([b['max_tokens'] for b in bodies[1:]],[8192,8192])
+        self.assertEqual(bodies[1]['messages'][0],bodies[2]['messages'][0])
+        first_content=bodies[1]['messages'][1]['content'];second_content=bodies[2]['messages'][1]['content']
+        self.assertEqual(second_content[1],{'type':'text','text':REVIEW_FALLBACK_REMINDER})
+        self.assertEqual(second_content[:1]+second_content[2:],first_content)
 
     def test_quality_repair_rechecks_source_before_rendering_new_candidate(self):
         from unittest.mock import patch
