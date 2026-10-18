@@ -9,6 +9,7 @@ MAX_IMAGE = 3 * 1024 * 1024
 MAX_TOTAL = 56 * 1024 * 1024
 MAX_STEPS = 8
 FPS = 30
+STEP_HOLD_SECONDS = 0.7
 WIDTH = 1280
 HEIGHT = 720
 MANIMGL_ENGINE = {'name': 'ManimGL', 'version': '1.7.2'}
@@ -18,6 +19,17 @@ SUPPORTED_ENGINES = (MANIMGL_ENGINE, MANIMGX_ENGINE)
 
 class ManimContractError(ValueError):
     pass
+
+
+def step_frame_bounds(seconds, fps=FPS, hold_seconds=STEP_HOLD_SECONDS):
+    """Return hold start and end frames with an exact fixed-length hold.
+
+    Rounding the start and end times independently can lose one frame at
+    half-frame boundaries. Add the integer hold length to the rounded start
+    instead so every step keeps the same hold.
+    """
+    hold_start = round(seconds * fps)
+    return hold_start, hold_start + round(hold_seconds * fps)
 
 
 def validate_render_diagnostic(value, source_lines):

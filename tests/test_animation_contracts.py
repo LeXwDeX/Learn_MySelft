@@ -111,6 +111,35 @@ class SceneContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ManimContractError, '安全区'):
             validate_scene(value)
 
+    def test_indicate_requires_a_palette_color(self):
+        for color in (None, '#ff0000'):
+            value = scene()
+            value['steps'][1]['actions'] = [
+                {'op': 'indicate', 'target': 'a', 'color': color, 'run_time': 1}]
+            with self.subTest(color=color), self.assertRaisesRegex(ManimContractError, '强调颜色'):
+                validate_scene(value)
+        value = scene()
+        value['steps'][1]['actions'] = [
+            {'op': 'indicate', 'target': 'a', 'color': '#c74f20', 'run_time': 1}]
+        self.assertEqual(validate_scene(value)['steps'][1]['actions'][0]['color'], '#c74f20')
+
+    def test_arc_cannot_move_but_can_transform(self):
+        arc = {'id': 'path', 'type': 'arc', 'start': [-2, 0], 'end': [0, 2], 'angle_deg': 90}
+        value = scene()
+        value['initial'].append(arc)
+        value['steps'][1]['actions'] = [
+            {'op': 'move', 'target': 'path', 'to': [1, 1], 'run_time': 1}]
+        with self.assertRaisesRegex(ManimContractError, '移动目标'):
+            validate_scene(value)
+        value = scene()
+        value['initial'].append(arc)
+        value['steps'][1]['actions'] = [
+            {'op': 'transform', 'target': 'path',
+             'object': {'type': 'arc', 'start': [-2, 0], 'end': [0, 2], 'angle_deg': 45},
+             'run_time': 1}]
+        result = validate_scene(value)
+        self.assertEqual(result['steps'][1]['actions'][0]['object']['angle_deg'], 45)
+
     def test_identity_and_size_limits(self):
         value = scene()
         value['initial'].append(dict(value['initial'][0]))

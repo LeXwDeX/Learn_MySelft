@@ -127,6 +127,11 @@ def inspect_failed(code, text):
     return bool(clean) or not int(problems or 0)
 
 
+def inspect_sample_time(frame, fps=FPS):
+    """Sample the middle of a hold frame instead of its rounded start."""
+    return format((frame + 0.5) / fps, '.6f')
+
+
 def render(envelope):
     if set(envelope) != {'phase', 'scene'}:
         raise ValueError('invalid render envelope')
@@ -155,7 +160,7 @@ def render(envelope):
         frame = step.get('hold_start_frame') if isinstance(step, dict) else None
         if type(frame) is not int or frame < 0:
             raise ValueError('invalid step hold')
-        command += ['-t', format(frame / FPS, '.3f')]
+        command += ['-t', inspect_sample_time(frame)]
     code, text = capture(command, env, RENDER_BUDGET - (time.monotonic() - started))
     # inspect exits nonzero when it finds layout problems, so its report decides.
     if inspect_failed(code, text):

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import manimgx as m
 
+from manim_contracts import step_frame_bounds
+
 FPS = 30
 HOLD_SECONDS = 0.7
 WIDTH = 1280
@@ -29,9 +31,8 @@ class TeachingScene(m.Scene):
         return m.Text(text, font_size=size, color=color)
 
     def next_step(self, caption):
-        hold_start = round(self.time * FPS)
+        hold_start, end = step_frame_bounds(self.time)
         self.wait(HOLD_SECONDS)
-        end = round(self.time * FPS)
         self.step_records.append({
             'caption': caption,
             'start_frame': self.step_start,

@@ -1479,6 +1479,35 @@ class ManimgxServiceTests(unittest.TestCase):
         self.assertIn('只写关键词',payload['previous_scene'])
         self.assertEqual(payload['focus'],'理解角度表示两条边的张开程度')
 
+    def test_repair_context_carries_the_complete_large_scene(self):
+        from unittest.mock import patch
+        from animation_contracts import validate_scene
+        initial = [{'id': 't%d' % index, 'type': 'text', 'text': '标签' * 99 + '%02d' % index,
+                    'at': [-5.4 + index % 5 * 2.7, -2.7 + index // 5 * 1.8]}
+                   for index in range(20)]
+        plan_steps, scene_steps = [], []
+        for index in range(8):
+            change = ('第%d步推进关系' % (index + 1)).ljust(160, '观')
+            plan_steps.append({'change': change, 'why': '说明关系变化'})
+            actions = [{'op': 'transform', 'target': 't%d' % target,
+                        'object': {'type': 'text', 'text': '说明' * 98 + '%02d%02d' % (index, target)},
+                        'run_time': 1} for target in range(10)]
+            scene_steps.append({'caption': change, 'actions': actions})
+        bad = dict(needed=True, reason='展示变化', title='大场景检查', summary='检查完整场景上下文',
+                   teaching_plan=dict(objective='理解关系变化', visual_reason='逐步变换展示关系',
+                                      observe='观察每一步的关系变化', steps=plan_steps),
+                   scene={'version': 1, 'kind': 'spec', 'initial': initial, 'steps': scene_steps})
+        validate_scene(bad['scene'])
+        bad['scene']['steps'][0]['caption'] = '只写关键词'
+        self.model.envelopes=[bad,bad]
+        with patch.object(self.renderer,'render') as renderer:
+            with self.assertRaises(ManimGenerationError) as raised:self.generate()
+        self.assertEqual(raised.exception.failure_code,'spec_invalid')
+        renderer.assert_not_called()
+        payload=json.loads(self.model.messages[1][1]['content'])
+        self.assertGreater(len(payload['previous_scene']), 20000)
+        self.assertEqual(json.loads(payload['previous_scene']), bad['scene'])
+
     def test_compiled_vector_recipe_passes_scene_and_skips_generation_model(self):
         from unittest.mock import patch
         relation=dict(needed=True,reason='单一关系',objective='理解角度表示两条边的张开程度',

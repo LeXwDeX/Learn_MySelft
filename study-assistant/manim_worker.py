@@ -87,7 +87,7 @@ class TeachingScene(Scene):
             raise ValueError("too many steps")
         hold_start = round(self.time * 30)
         self.wait(0.7)
-        end = round(self.time * 30)
+        end = hold_start + 21  # 0.7 seconds at 30 fps, without independent rounding
         self.step_records.append(dict(caption=caption, start_frame=self.step_start, end_frame=end, result_frame=end-1, hold_start_frame=hold_start))
         self.step_start = end
     def tear_down(self):

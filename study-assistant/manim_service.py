@@ -556,7 +556,7 @@ class ManimService:
                 if not isinstance(envelope, dict) or set(envelope) != fields or type(envelope['needed']) is not bool:
                     raise ManimContractError('模型动画格式无效')
                 if self.engine == 'manimgx':
-                    previous_scene = json.dumps(envelope.get('scene'), ensure_ascii=False)[:20000]
+                    previous_scene = json.dumps(envelope.get('scene'), ensure_ascii=False)
                 elif isinstance(envelope.get('code'),str):
                     previous_code = envelope['code'][:20000]
                 else:

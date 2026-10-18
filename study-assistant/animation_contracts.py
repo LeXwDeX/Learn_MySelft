@@ -55,9 +55,9 @@ _OBJECT_FIELDS = {
     'number_plane': {'x_range', 'y_range', 'x_length', 'y_length'},
 }
 
-_MOVABLE = frozenset({'text', 'math', 'dot', 'line', 'arrow', 'circle', 'rectangle', 'arc'})
+_MOVABLE = frozenset({'text', 'math', 'dot', 'line', 'arrow', 'circle', 'rectangle'})
 _ROTATABLE = frozenset({'line', 'arrow', 'rectangle', 'arc'})
-_TRANSFORMABLE = _MOVABLE
+_TRANSFORMABLE = _MOVABLE | {'arc'}
 _PATH_TARGETS = _MOVABLE
 
 
@@ -312,7 +312,8 @@ def _action(value, state, counter):
         target = value.get('target')
         _require(target in state, '强调目标不存在')
         _require('color' in value, '强调动作必须指定颜色')
-        color = _color(value['color'], None, '强调颜色')
+        _require(value['color'] in COLORS, '强调颜色必须使用项目调色板')
+        color = value['color']
         run_time = _number(value.get('run_time'), MIN_RUN_TIME, 2, '动作时长')
         return {'op': op, 'target': target, 'color': color, 'run_time': run_time}, run_time
     if op == 'move_along_path':

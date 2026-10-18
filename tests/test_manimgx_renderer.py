@@ -11,7 +11,8 @@ from manim_contracts import ManimContractError
 from manim_renderer import ManimUnavailable
 from manimgx_renderer import ManimgxRenderer
 import manimgx_renderer
-from manimgx_worker import LayoutFailure, inspect_failed, layout_detail, require_clean_layout
+from manimgx_worker import (LayoutFailure, inspect_failed, inspect_sample_time, layout_detail,
+                            require_clean_layout)
 from animation_contracts import validate_scene
 
 
@@ -169,6 +170,11 @@ class LayoutReportTests(unittest.TestCase):
                            (2, 'layout: 0 problems\n')):
             with self.subTest(code=code, text=text):
                 self.assertTrue(inspect_failed(code, text))
+
+    def test_inspect_samples_the_middle_of_each_hold(self):
+        self.assertEqual(inspect_sample_time(0), '0.016667')
+        self.assertEqual(inspect_sample_time(1), '0.050000')
+        self.assertEqual(inspect_sample_time(21), '0.716667')
 
     def test_layout_detail_is_bounded_and_path_free(self):
         text = ("layout: 1 problem\n"
