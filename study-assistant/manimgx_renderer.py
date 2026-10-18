@@ -50,7 +50,7 @@ class ManimgxRenderer:
                 detail = raw.get('detail')
                 if isinstance(detail, str):
                     detail = re.sub(r'\S*lesson\.py:[0-9]+', 'scene', detail)
-                    detail = re.sub(r'[\x00-\x1f\x7f]', ' ', detail)
+                    detail = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', detail)
                     detail = re.sub(r'\s+', ' ', detail).strip()[:400]
                 else:
                     detail = ''
