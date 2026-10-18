@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
-from manim_contracts import ManimContractError, references_in, strip_generated_scenes, validate_manifest, validate_source, validate_teaching_plan
+from manim_contracts import ManimContractError, references_in, strip_generated_scenes, validate_first_frame_plan, validate_manifest, validate_source, validate_teaching_plan
 
 class TeachingPlanTests(unittest.TestCase):
     def plan(self):
@@ -16,6 +16,30 @@ class TeachingPlanTests(unittest.TestCase):
                     dict(plan,steps=plan['steps']*9),dict(plan,steps=[{'change':'旋转'}]),dict(plan,unknown='x')):
             with self.subTest(plan=bad),self.assertRaises(ManimContractError):validate_teaching_plan(bad)
         with self.assertRaisesRegex(ManimContractError,'步骤不一致'):validate_teaching_plan(plan,2)
+
+class FirstFramePlanTests(unittest.TestCase):
+    def plan(self, change):
+        return dict(objective='理解变化',visual_reason='连续变化连接关系',observe='观察首帧和变化',
+                    steps=[dict(change=change,why='展示关系')])
+    def source(self,*lines):
+        return 'class LessonScene(TeachingScene):\n def construct(self):\n' + ''.join('  '+line+'\n' for line in lines)
+    def test_first_frame_claim_requires_add_before_any_play_or_wait(self):
+        claim=self.plan('首帧显示原点O和箭头，再展示旋转')
+        for first in ('self.play(FadeIn(dot),run_time=1.0)','self.wait(0.5)'):
+            with self.subTest(first=first),self.assertRaisesRegex(ManimContractError,r'self\.add'):
+                validate_first_frame_plan(claim,self.source(first,'self.add(dot)'))
+    def test_add_or_builtin_helper_before_play_satisfies_first_frame_claim(self):
+        claim=self.plan('首帧显示原点O和箭头')
+        for source in (self.source('self.add(dot)','self.play(FadeIn(arrow),run_time=1.0)'),
+                       self.source('self.shear_basis(k=1)'),
+                       self.source('self.swap_components(values=(3,-1,4))')):
+            with self.subTest(source=source):
+                self.assertEqual(validate_first_frame_plan(claim,source),claim)
+    def test_buildup_wording_and_negated_claim_do_not_require_populated_start(self):
+        for change in ('先建立原点O，再用GrowArrow画出箭头','正常建立过程不要求首帧已有最终对象'):
+            plan=self.plan(change)
+            with self.subTest(change=change):
+                self.assertEqual(validate_first_frame_plan(plan,self.source('self.play(FadeIn(dot),run_time=1.0)')),plan)
 
 class ManimContractsTests(unittest.TestCase):
     def manifest(self):

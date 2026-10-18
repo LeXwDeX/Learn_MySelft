@@ -107,6 +107,54 @@ def validate_source(source):
     return source
 
 
+FIRST_FRAME_CLAIM = re.compile(
+    r'(?:首帧|第一帧|开始帧|开始时|起始帧|初始画面)'
+    r'(?:即|直接)?'
+    r'(?:显示|呈现|已有|包含|可见|出现|保留|摆放|展示)')
+FIRST_FRAME_NEGATION = re.compile(r'(?:不|未|没有|勿|别|不得|不要)[^，。；]{0,8}$')
+FIRST_FRAME_VISUAL_CALLS = frozenset({'add', 'shear_basis', 'swap_components'})
+
+
+def claims_first_frame(change):
+    """Return true only for an affirmative promise that the step starts populated."""
+    if not isinstance(change, str):
+        return False
+    for match in FIRST_FRAME_CLAIM.finditer(change):
+        prefix = change[max(0, match.start() - 10):match.start()]
+        if not FIRST_FRAME_NEGATION.search(prefix):
+            return True
+    return False
+
+
+def _earliest_scene_call(source):
+    tree = ast.parse(source)
+    scene = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    construct = scene.body[0]
+    calls = []
+    for node in ast.walk(construct):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == 'self'
+                and node.func.attr in FIRST_FRAME_VISUAL_CALLS | {'play', 'wait', 'next_step'}):
+            calls.append((node.lineno, node.col_offset, node.func.attr))
+    return min(calls) if calls else None
+
+
+def validate_first_frame_plan(plan, source):
+    """Reject a first step that promises a populated start but animates from empty."""
+    steps = plan.get('steps') if isinstance(plan, dict) else None
+    if not isinstance(steps, list) or not steps or not isinstance(steps[0], dict):
+        raise ManimContractError('动画教学计划无效')
+    if not claims_first_frame(steps[0].get('change')):
+        return plan
+    earliest = _earliest_scene_call(source)
+    if earliest is None or earliest[2] not in FIRST_FRAME_VISUAL_CALLS:
+        raise ManimContractError(
+            '教学计划第1步声称首帧显示对象，但代码在开始动画前没有self.add这些对象。'
+            '请在该步第一个self.play/self.wait前用self.add(...)放入首帧对象，'
+            '或把计划改为“先建立/逐步显示”的表述。')
+    return plan
+
+
 def validate_manifest(value):
     if not isinstance(value, dict) or value.get('version') != 1:
         raise ManimContractError('动画清单无效')
