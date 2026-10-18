@@ -12,7 +12,7 @@ from manim_renderer import ManimUnavailable
 from manimgx_renderer import ManimgxRenderer
 import manimgx_renderer
 from manimgx_worker import (LayoutFailure, inspect_failed, inspect_sample_time, layout_detail,
-                            require_clean_layout)
+                            require_clean_layout, runtime_env)
 from animation_contracts import validate_scene
 
 
@@ -170,6 +170,12 @@ class LayoutReportTests(unittest.TestCase):
                            (2, 'layout: 0 problems\n')):
             with self.subTest(code=code, text=text):
                 self.assertTrue(inspect_failed(code, text))
+
+    def test_runtime_environment_exposes_fixed_modules_to_the_lesson_script(self):
+        env = runtime_env(STEP_MANIFEST='/output/raw/steps.json')
+        self.assertEqual(env['PYTHONPATH'], '/opt/learn')
+        self.assertEqual(env['HOME'], '/tmp')
+        self.assertEqual(env['STEP_MANIFEST'], '/output/raw/steps.json')
 
     def test_inspect_samples_the_middle_of_each_hold(self):
         self.assertEqual(inspect_sample_time(0), '0.016667')

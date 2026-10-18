@@ -132,6 +132,12 @@ def inspect_sample_time(frame, fps=FPS):
     return format((frame + 0.5) / fps, '.6f')
 
 
+def runtime_env(**extra):
+    """Give the /tmp lesson script access to the fixed runtime modules."""
+    return dict(os.environ, HOME='/tmp', XDG_CACHE_HOME='/tmp/.cache',
+                PYTHONPATH='/opt/learn', **extra)
+
+
 def render(envelope):
     if set(envelope) != {'phase', 'scene'}:
         raise ValueError('invalid render envelope')
@@ -141,8 +147,7 @@ def render(envelope):
     raw.mkdir(mode=0o700)
     Path('/tmp/scene.json').write_text(json.dumps(scene, ensure_ascii=False))
     Path('/tmp/lesson.py').write_text(RUNTIME.read_text(encoding='utf-8') + WRAPPER)
-    env = dict(os.environ, HOME='/tmp', XDG_CACHE_HOME='/tmp/.cache',
-               STEP_MANIFEST=str(raw / 'steps.json'))
+    env = runtime_env(STEP_MANIFEST=str(raw / 'steps.json'))
     started = time.monotonic()
     code, text = capture(['manimgx', 'render', '/tmp/lesson.py', 'LessonScene',
                           '-o', str(raw / 'raw.mp4'), '-r', '1280x720', '--fps', '30'],
