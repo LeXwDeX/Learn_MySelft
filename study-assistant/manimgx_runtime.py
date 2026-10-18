@@ -208,7 +208,7 @@ def _vector_rotation(scene, value):
     origin = m.Dot(m.ORIGIN, radius=0.07, color='#2d3142')
     origin_label = scene.label('O', size=56).next_to(origin, m.DL, buff=0.15)
     vector = m.Arrow(m.ORIGIN, _point([x, y]), buff=0, stroke_width=5, color='#245b83')
-    name = scene.label('向量 a', color='#245b83').next_to(vector.get_end(), m.UR, buff=0.25)
+    name = scene.label('向量 a', color='#245b83').to_corner(m.UR, buff=0.45)
     coords = m.MathTex(r'\vec a=' + _pair(x, y), font_size=56, color='#245b83').to_corner(m.UL, buff=0.45)
     length = m.MathTex(r'|\vec a|=\sqrt{%d}' % (x * x + y * y), font_size=52,
                        color='#2d3142').to_corner(m.DL, buff=0.45)
@@ -217,17 +217,19 @@ def _vector_rotation(scene, value):
     scene.next_step(captions[0])
 
     ghost = vector.copy().set_color('#9a9a9a')
-    ghost_name = scene.label('原向量', color='#9a9a9a', size=56).next_to(ghost.get_end(), m.UR, buff=0.25)
+    ghost_name = scene.label('原向量', color='#9a9a9a', size=56).next_to(name, m.DOWN, buff=0.3)
     after_coords = m.MathTex(r"\vec a'=" + _pair(*rotated), font_size=56,
                              color='#c74f20').to_corner(m.UL, buff=0.45)
-    after_name = scene.label("向量 a'", color='#c74f20').next_to(_point(rotated), m.UL, buff=0.25)
+    after_name = scene.label("向量 a'", color='#c74f20').to_corner(m.UR, buff=0.45)
     scene.play(m.FadeIn(ghost), m.FadeIn(ghost_name),
                m.Rotate(vector, angle=90 * m.DEGREES, about_point=m.ORIGIN),
-               m.Transform(name, after_name), m.Transform(coords, after_coords), run_time=2.4)
+               m.Transform(name, after_name), run_time=2.4)
+    # Update the coordinate label only after the vector reaches its result pose.
+    scene.play(m.Transform(coords, after_coords), run_time=0.6)
     scene.next_step(captions[1])
 
     circle = m.Circle(radius=radius, color='#757575', stroke_width=3)
-    radius_label = scene.label('半径不变', color='#757575', size=52).to_corner(m.UR, buff=0.5)
+    radius_label = scene.label('半径不变', color='#757575', size=52).to_corner(m.DR, buff=0.5)
     verify = m.MathTex(r"|\vec a|=|\vec a'|=\sqrt{%d}" % (x * x + y * y), font_size=52,
                        color='#2d3142').to_corner(m.DL, buff=0.45)
     scene.play(m.Create(circle), m.FadeIn(radius_label), m.Transform(length, verify), run_time=1.8)

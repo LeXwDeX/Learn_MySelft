@@ -161,7 +161,7 @@ VECTOR_REFERENCE_PLAN = {
     'visual_reason': '真实旋转显示方向改变，保留原向量作对照，再用同心圆验证两个终点到原点距离相同',
     'observe': '观察终点从(2,1)到(-1,2)的位置变化，以及旋转前后向量的长度是否改变',
     'steps': [
-        {'change': '首帧显示坐标网格、原点O和蓝色向量a=(2,1)，写出它的长度根号5',
+        {'change': '先显示坐标网格、原点O和蓝色向量a=(2,1)，再写出它的长度根号5',
          'why': '先建立向量终点坐标和长度的基准'},
         {'change': '向量绕原点逆时针旋转90度，终点从(2,1)到(-1,2)，灰色原向量保留',
          'why': '旋转改变方向，终点坐标按(-y,x)变化'},
@@ -213,6 +213,7 @@ PROMPT_MANIMGX = '''你制作真实 ManimGX 0.1.1 分步教学动画。学习资
 只返回JSON，字段needed(bool)、reason、title、summary、teaching_plan、scene。明确要求动画时needed必须true。
 每个短片只选一个最有教学价值的关系，不必覆盖单元所有目标。先判断什么关系用动画更容易理解，再写teaching_plan和scene。teaching_plan为对象，只能含objective、visual_reason、observe、steps四个字段。objective（学习目标，≤120字）、visual_reason（为何静态文字或图不够，≤200字）、observe（学习者应观察或预测什么，≤160字）、steps（1至8步）。steps每项只有change（画面实际改变什么，≤160字）和why（这个改变解释什么原因或关系，≤160字）。
 scene只能是对象，字段恰好为version、kind、initial、steps。version固定1；kind固定"spec"；initial是首帧已有对象数组，1至20个；steps是1至8步，每步只有caption和actions。每步caption必须与该步教学计划steps对应项的change逐字完全一致，不能改写、缩写或只写关键词。
+计划写“首帧显示/首帧已有/开始帧已有”时，所列对象必须全部出现在initial；若对象在该步才写入或出现，计划写“先显示…再写出/再显示…”，不得声称首帧已有。单独indicate已有对象不构成知识关系；需要强调时，与建立该对象或真实关系变化的动作放在同一步。
 每步1至10个动作。同一actions数组内的动作同时播放，时长取最长run_time。需要先显示再移动时，拆成前后两个步骤，不要在同一数组里写先后动作。
 对象只能在initial或create动作中出现，字段按类型固定：
 text: id,type,text,at,size,color；math: id,type,tex,at,size,color；dot: id,type,at,radius,color；line: id,type,start,end,stroke_width,color；arrow: id,type,start,end,stroke_width,color；circle: id,type,center,radius,stroke_width,color；rectangle: id,type,center,width,height,stroke_width,color；arc: id,type,start,end,angle_deg,stroke_width,color；axes和number_plane: id,type,x_range,y_range,x_length,y_length,color。
@@ -246,7 +247,7 @@ PROMPT_MANIMGX += json.dumps({
         'visual_reason': '旋转直接显示方向变化，保留原向量作为对照',
         'observe': '观察终点位置如何变化，以及向量长度是否改变',
         'steps': [
-            {'change': '首帧显示坐标网格和向量a=(2,1)，写出它的长度根号5', 'why': '建立终点坐标和长度的基准'},
+            {'change': '先显示坐标网格和向量a=(2,1)，再写出它的长度根号5', 'why': '建立终点坐标和长度的基准'},
             {'change': '向量绕原点逆时针旋转90度，终点到(-1,2)', 'why': '旋转改变方向，终点坐标按(-y,x)变化'},
         ],
     },
@@ -260,7 +261,7 @@ PROMPT_MANIMGX += json.dumps({
             {'id': 'name', 'type': 'text', 'text': '向量 a', 'at': [1.4, 1.9], 'size': 56, 'color': '#245b83'},
         ],
         'steps': [
-            {'caption': '首帧显示坐标网格和向量a=(2,1)，写出它的长度根号5', 'actions': [
+            {'caption': '先显示坐标网格和向量a=(2,1)，再写出它的长度根号5', 'actions': [
                 {'op': 'create', 'object': {'id': 'len', 'type': 'math', 'tex': '|\\vec a|=\\sqrt{5}',
                                             'at': [-5.2, -3.0], 'size': 52}, 'animation': 'write', 'run_time': 1.4},
             ]},
@@ -365,7 +366,7 @@ def compile_relation(relation, engine='manimgx'):
             plan = envelope['teaching_plan']
             plan['objective'] = '理解向量(%d,%d)绕原点逆时针旋转90度后终点到(%d,%d)，长度不变' % (x,y,after[0],after[1])
             plan['observe'] = '观察终点从(%d,%d)到(%d,%d)的位置变化，以及旋转前后向量的长度是否改变' % (x,y,after[0],after[1])
-            plan['steps'][0]['change'] = '首帧显示坐标网格、原点O和蓝色向量a=(%d,%d)，写出它的长度根号%d' % (x,y,norm)
+            plan['steps'][0]['change'] = '先显示坐标网格、原点O和蓝色向量a=(%d,%d)，再写出它的长度根号%d' % (x,y,norm)
             plan['steps'][1]['change'] = '向量绕原点逆时针旋转90度，终点从(%d,%d)到(%d,%d)，灰色原向量保留' % (x,y,after[0],after[1])
             plan['steps'][2]['change'] = '作以原点为圆心、根号%d为半径的圆，旋转前后终点都在圆上' % norm
             envelope['summary'] = '观察向量(%d,%d)逆时针旋转90度后变为(%d,%d)，长度始终为根号%d。' % (x,y,after[0],after[1],norm)
