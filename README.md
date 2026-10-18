@@ -93,7 +93,7 @@ python3 scripts/install_release.py --environment test --release-dir /path/to/rel
 python3 scripts/install_release.py --environment production --release-dir /path/to/release
 ```
 
-安装器在停止后端后备份状态数据和现有代码文件。它按归档清单校验文件，再原子替换允许的代码和静态资源。发生安装失败时会恢复代码文件并重启原配置。手动回滚使用该环境安装记录返回的备份目录：
+安装器先记录运行配置并快照现有代码文件，再停止后端备份状态数据。它按归档清单校验文件，再原子替换允许的代码和静态资源。发生安装失败时会恢复代码文件并重启原配置。手动回滚使用该环境安装记录返回的备份目录：
 
 ```bash
 python3 scripts/install_release.py --environment test --rollback /path/to/backup
