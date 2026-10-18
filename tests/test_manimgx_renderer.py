@@ -96,10 +96,26 @@ class RendererTests(unittest.TestCase):
             renderer.render(SCENE)
         message = str(raised.exception)
         self.assertIn('Circle runs through the text', message)
-        self.assertIn('移出至少0.4', message)
+        self.assertIn('文字外框不得与圆、线、弧相交', message)
+        self.assertIn('留出至少0.4间隙', message)
+        self.assertIn('必要的文字或公式要移动而不是删除', message)
+        self.assertIn('不要删除必要的图形', message)
         self.assertNotIn('lesson.py', message)
         self.assertNotIn('\n', message)
         self.assertLessEqual(len(message), 600)
+        renderer.render_failure = {'error': 'layout_problems',
+                                   'detail': '\x00' + 'x' * 1000 + '\n\x1b[31m'}
+        with self.assertRaises(ManimContractError) as raised:
+            renderer.render(SCENE)
+        bounded = str(raised.exception)
+        self.assertNotIn('\x00', bounded)
+        self.assertNotIn('\x1b', bounded)
+        self.assertNotIn('\n', bounded)
+        self.assertLessEqual(len(bounded), 600)
+        renderer.render_failure = {'error': 'layout_problems'}
+        with self.assertRaises(ManimContractError) as raised:
+            renderer.render(SCENE)
+        self.assertIn('不要删除必要的图形', str(raised.exception))
         renderer.render_failure = {'error': 'layout_problems', 'detail': ['hidden']}
         with self.assertRaises(ManimContractError) as raised:
             renderer.render(SCENE)

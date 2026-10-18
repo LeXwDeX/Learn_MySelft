@@ -56,9 +56,10 @@ class ManimgxRenderer:
                     detail = ''
                 message = '布局检查未通过' + ('：' + detail if detail else '')
                 error = ManimContractError(
-                    message + '。请保留必要教学对象：删除多余文字，移开重叠或越界内容；'
-                    '若圆或曲线必须经过文字所在点，把文字沿远离圆心或曲线的方向移出至少0.4，'
-                    '不要删除必要的圆或曲线后重试')
+                    message + '。请保留必要教学对象：多余的才删除，必要的文字或公式要移动而不是删除；'
+                    '文字之间不得重叠，文字外框不得与圆、线、弧相交，把文字移到图形外或空白处，'
+                    '直到外框完全离开并留出至少0.4间隙；靠近边界时向画面内移动，不要越界，'
+                    '不要删除必要的图形后重试')
                 error.failure_code = 'layout_invalid'
                 raise error
             if isinstance(raw, dict) and raw.get('error') == 'scene_render_failed':
