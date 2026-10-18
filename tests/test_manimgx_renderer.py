@@ -96,6 +96,7 @@ class RendererTests(unittest.TestCase):
             renderer.render(SCENE)
         message = str(raised.exception)
         self.assertIn('Circle runs through the text', message)
+        self.assertIn('移出至少0.4', message)
         self.assertNotIn('lesson.py', message)
         self.assertNotIn('\n', message)
         self.assertLessEqual(len(message), 600)
