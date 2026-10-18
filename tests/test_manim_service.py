@@ -286,6 +286,26 @@ class ManimServiceTests(unittest.TestCase):
             self.assertIn('stroke_width', payload['repair'])
             self.assertEqual(model.call_count, 3)
 
+    def test_first_frame_claim_requires_add_before_play_and_repairs_before_render(self):
+        from unittest.mock import patch
+        good=self.service.model.json([{}, {'content':'generation'}])
+        bad=json.loads(good)
+        bad['teaching_plan']['steps'][0]['change']='首帧显示原点O和箭头，再展示变化'
+        bad['code']='class LessonScene(TeachingScene):\n def construct(self):\n  self.play(FadeIn(self.label("O")),run_time=1.0)\n  self.next_step("观察")'
+        repaired=json.loads(good)
+        repaired['teaching_plan']['steps'][0]['change']='先建立原点O和箭头，再展示变化'
+        with patch.object(self.service.model,'json',side_effect=[json.dumps(bad),json.dumps(repaired),visual_report()]) as model, \
+             patch.object(self.renderer,'render',wraps=self.renderer.render) as render:
+            spec=self.generate()
+            self.assertTrue(spec['asset_id'])
+            self.assertEqual(render.call_count,1)
+            self.assertEqual(render.call_args.args[0],repaired['code'])
+            repair=json.loads(model.call_args_list[1].args[0][1]['content'])
+            self.assertIn('首帧',repair['repair'])
+            self.assertIn('self.add',repair['repair'])
+            self.assertIn('先建立',repair['repair'])
+            self.assertEqual(repair['previous_code'],bad['code'])
+
     def test_invalid_fade_shift_repairs_before_container_with_previous_code(self):
         from unittest.mock import patch
         good=self.service.model.json([{}, {'content':'generation'}])
@@ -702,6 +722,7 @@ class RelationPlannerTests(unittest.TestCase):
         value=self.relation('shear_basis',{'k':1.5});expected=compile_relation(value)
         native=json.loads(json.dumps(expected))
         native['code']='class LessonScene(TeachingScene):\n def construct(self):\n  self.next_step("第一步")\n  self.next_step("第二步")'
+        native['teaching_plan']['steps'][0]['change']='先建立原点O与e2基准，再展示固定原点的终点变化'
         native=json.loads(corrected_plan_json(native))
         with patch.object(self.service.planner_model,'json',return_value=json.dumps(value)),patch.object(self.service.model,'json',side_effect=[visual_report(ok=False,issues=['运动歧义'],count=2),json.dumps(native),visual_report(count=2)]) as model,patch.object(self.renderer,'render',return_value=self.two_step_render()) as renderer:
             self.generate()
