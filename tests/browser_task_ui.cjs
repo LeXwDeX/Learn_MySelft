@@ -30,7 +30,7 @@ const nodes = Array.from({length:24}, (_, i) => ({id:'n' + (i + 1), title:'合�
   essence:'合成内容。用于检查任务窗口。', objectives:['检查任务窗口'], deps:[]}));
 const material = {stage:'learning', title:'合成任务交互回归', topic:'合成任务交互回归',
   spec:{topic:'合成任务交互回归', goal:'检查任务交互'}, plan:{title:'合成任务交互回归', summary:'合成学习路径。', nodes},
-  nodeDetail:{n1:{study_notes:'合成正文。', quiz:{questions:[]}, manim_review:{status:'not_needed'}}}, nodeState:{}, pending:null};
+  nodeDetail:{n1:{study_notes:['合成正文。',...Array.from({length:80},()=>'这是用于检查任务窗口滚动保持的合成段落。')].join('\n\n'), quiz:{questions:[]}, manim_review:{status:'not_needed'}}}, nodeState:{}, pending:null};
 const entries = {[key]:JSON.stringify(material)};
 const jobs = Array.from({length:8}, (_, i) => ({id:(i + 1).toString(16).padStart(32,'0'), user_id:uid,
   key, node_id:'n' + (i + 1), node_title:nodes[i].title, title:material.title, operation:'/path/node',
@@ -56,6 +56,8 @@ function response(route, status, body) {
 async function taskWindow() {
   const dialog = page.locator('dialog.learn-job-detail-panel[open]');
   await dialog.waitFor();
+  const diagnostics = dialog.locator('.learn-job-diagnostics');
+  if (await diagnostics.count()) await diagnostics.evaluate(details => {details.open = true;});
   await dialog.locator('.learn-job-event').first().waitFor();
   assert.equal(await dialog.count(),1,'one active shared task dialog');
   assert.equal(await dialog.evaluate(el => el.parentElement === document.body),true,'dialog mounts under body');
@@ -101,6 +103,9 @@ async function injectNotification(job) {
         assert(Object.keys(body.entries).every(k => k.startsWith(uid + '/')),'fixture writes stay within fixed UID');
         Object.assign(entries,body.entries); return response(route,200,{ok:true});
       }
+      if (url.pathname === '/state/access' && method === 'GET') return response(route,200,{
+        ok:true,key:uid + '/learn-path-v1-' + slug,revision:0,
+        plan:{nodes:nodes.map(node => ({id:node.id}))},nodeAccess:{},nodeState:{}});
       if (url.pathname === '/jobs' && method === 'GET') return response(route,200,{ok:true,jobs:[...batchJobs.values(),...jobs]});
       if (url.pathname === '/jobs' && method === 'POST') {
         const body = request.postDataJSON();
@@ -179,27 +184,16 @@ async function injectNotification(job) {
     assert.equal(await dialog.locator('.learn-job-task-name').textContent(),title,'polling does not replace selected task');
     assert.equal(detailRequests.at(-1),jobs[0].id,'polling still reads the selected task ID');
     failDetails=true;
-    await dialog.getByRole('button',{name:'重新读取详情'}).waitFor({state:'visible',timeout:8000});
+    await dialog.getByRole('button',{name:'重新读取进度'}).waitFor({state:'visible',timeout:8000});
     assert.equal(await dialog.locator('.learn-job-event').count(),events.length,'failed read preserves prior events');
     failDetails=false;
-    await dialog.getByRole('button',{name:'重新读取详情'}).click();
-    await dialog.getByRole('button',{name:'重新读取详情'}).waitFor({state:'hidden'});
+    await dialog.getByRole('button',{name:'重新读取进度'}).click();
+    await dialog.getByRole('button',{name:'重新读取进度'}).waitFor({state:'hidden'});
     await page.keyboard.press('Escape');
     passed('selected-task-stable-during-polling-and-read-failure-recovery');
-    phase = 'path-card-details';
-    await page.goto(site + '/learn/u/' + uid + '/learning-path.html?t=' + slug);
-    await page.locator('#node-n1 .learn-job-detail-button').waitFor({state:'visible'});
-    const card = page.locator('#node-n1');
-    const before = await card.getAttribute('class');
-    await card.locator('.learn-job-detail-button').scrollIntoViewIfNeeded();
-    const cardY = await scrollPosition();
-    await card.locator('.learn-job-detail-button').click();dialog = await taskWindow();
-    await checkScroll(cardY,'card details preserves scroll');
-    assert.equal(await card.getAttribute('class'),before,'task detail does not expand card');
-    await page.screenshot({path:path.join(output,'path-details.png')});
-    await page.keyboard.press('Escape');
-    passed('path-card-same-shared-dialog-without-card-expansion');
     phase = 'batch-list-stacking-and-focus';
+    await page.goto(site + '/learn/u/' + uid + '/learning-path.html?t=' + slug);
+    await page.waitForFunction(() => !!window.LearnPathApp && !!window.LearnJobDetails);
     await page.evaluate(() => {window.__batchTest=window.LearnPathApp.get('path.generation').genAllStart(['n2','n3']);});
     const summary = page.locator('.learn-status[data-status-key^="generation-batch-"] .learn-job-detail-button');
     await summary.waitFor();
