@@ -78,7 +78,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
       await page.getByRole('button',{name:'移除 补充资料.txt',exact:true}).click();
       await page.locator('.materials-dialog').getByText('已移除并保存',{exact:true}).waitFor();
       await page.locator('.materials-dialog .cancel').click();
-      await page.goto(base+'quiz-map.html');await page.getByRole('link',{name:'上传资料创建测验地图'}).click();
+      await page.goto(base+'quiz-map.html');await page.getByRole('link',{name:'上传资料创建综合测验'}).click();
       await page.getByRole('heading',{name:'用自己的资料创建测验地图'}).waitFor();
       report.cases.push('quiz_reference_upload_reload_remove_mobile','new_quiz_upload_entry');
       report.modelGeneration='not_run';assert.deepEqual(errors,[]);report.pageErrors=errors;
@@ -117,7 +117,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
     assert(/七|7|蓝|绿/.test(JSON.stringify(quiz.questions)));
     report.cases.push('real_model_quiz_from_base_and_added_references');report.quizURL=page.url();
     await page.screenshot({path:output+'/quiz-result.png',fullPage:true});
-    await page.goto(base+'quiz-map.html');await page.getByRole('link',{name:'上传资料创建测验地图'}).click();
+    await page.goto(base+'quiz-map.html');await page.getByRole('link',{name:'上传资料创建综合测验'}).click();
     await page.getByRole('heading',{name:'用自己的资料创建测验地图'}).waitFor();
     report.cases.push('new_quiz_upload_entry');
     assert.deepEqual(errors,[]);report.pageErrors=errors;
