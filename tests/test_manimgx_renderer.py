@@ -181,6 +181,7 @@ class LayoutReportTests(unittest.TestCase):
         self.assertEqual(inspect_sample_time(0), '0.016667')
         self.assertEqual(inspect_sample_time(1), '0.050000')
         self.assertEqual(inspect_sample_time(21), '0.716667')
+        self.assertEqual(inspect_sample_time(53), '1.783333')
 
     def test_layout_detail_is_bounded_and_path_free(self):
         text = ("layout: 1 problem\n"

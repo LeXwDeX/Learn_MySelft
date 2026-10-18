@@ -54,13 +54,16 @@ class ManimContractsTests(unittest.TestCase):
             manifest=self.manifest()
             manifest['steps'][0][field]=value
             with self.assertRaises(ManimContractError): validate_manifest(manifest)
-    def test_step_hold_keeps_a_fixed_length_at_half_frame_boundaries(self):
-        for seconds, expected in ((0.0, (0, 21)), (1.25, (38, 59)), (2.25, (68, 89)),
-                                  (3.5, (105, 126))):
+    def test_step_hold_starts_after_the_last_transition_frame(self):
+        for seconds, expected in ((0.0, (0, 21)), (0.75, (23, 44)), (1.2, (36, 57)),
+                                  (1.25, (38, 59)), (1.75, (53, 74)), (2.25, (68, 89)),
+                                  (2.75, (83, 104)), (3.5, (105, 126)), (3.75, (113, 134)),
+                                  (4.9, (147, 168)), (7.4, (222, 243))):
             hold_start, end = step_frame_bounds(seconds)
             with self.subTest(seconds=seconds):
                 self.assertEqual((hold_start, end), expected)
                 self.assertGreaterEqual(end - hold_start, 21)
+                self.assertEqual(end - hold_start, 21)
         self.assertEqual(step_frame_bounds(1.25, fps=60, hold_seconds=0.7), (75, 117))
 
     def test_dynamic_execution_imports_and_wrong_base_rejected(self):

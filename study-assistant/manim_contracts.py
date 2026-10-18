@@ -24,11 +24,12 @@ class ManimContractError(ValueError):
 def step_frame_bounds(seconds, fps=FPS, hold_seconds=STEP_HOLD_SECONDS):
     """Return hold start and end frames with an exact fixed-length hold.
 
-    Rounding the start and end times independently can lose one frame at
-    half-frame boundaries. Add the integer hold length to the rounded start
-    instead so every step keeps the same hold.
+    An animation that ends between two frames still changes the earlier one,
+    so the first fully static frame is the next one. Rounding picks the
+    transition frame at a half-frame boundary. Start from the ceiling, then
+    add the integer hold length so every step keeps the same hold.
     """
-    hold_start = round(seconds * fps)
+    hold_start = math.ceil(seconds * fps - 1e-9)
     return hold_start, hold_start + round(hold_seconds * fps)
 
 

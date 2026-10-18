@@ -82,6 +82,30 @@ class SwapComponentsInputTests(ShearBasisInputTests):
         self.graphics.assert_not_called()
 
 class HoldFrameTests(unittest.TestCase):
+    def test_hold_reference_must_be_the_first_static_frame(self):
+        motion=bytes([0])*(160*90)
+        transition=bytes([50])*(160*90)
+        frame=bytes([100])*(160*90)
+        pixels=motion*52+transition+frame*21
+        manifest={'steps':[{'start_frame':0,'hold_start_frame':53,'end_frame':74}]}
+        check_hold_frames(pixels,manifest)
+        manifest['steps'][0]['hold_start_frame']=52
+        with self.assertRaisesRegex(ValueError,'hold contains visible motion'):
+            check_hold_frames(pixels,manifest)
+    def test_prelude_starts_the_hold_on_the_first_static_frame(self):
+        import types
+        from unittest.mock import Mock, patch
+        module=types.ModuleType('manimlib'); module.Scene=type('Scene',(),{})
+        with patch.dict(sys.modules,{'manimlib':module}):
+            namespace={}; exec(PRELUDE,namespace)
+        scene=namespace['TeachingScene'](); scene.wait=Mock()
+        for seconds, expected in ((0.75,(23,44)), (1.2,(36,57)), (1.75,(53,74))):
+            scene.time=seconds; scene.step_start=0; scene.step_records=[]
+            scene.next_step('观察')
+            record=scene.step_records[0]
+            with self.subTest(seconds=seconds):
+                self.assertEqual((record['hold_start_frame'],record['end_frame']),expected)
+                self.assertEqual(record['end_frame']-record['hold_start_frame'],21)
     def test_decoded_static_hold_and_small_compression_noise(self):
         frame=bytes([100])*(160*90)
         manifest={'steps':[{'start_frame':0,'hold_start_frame':1,'end_frame':22}]}
