@@ -23,6 +23,11 @@ from text_utils import clip
 from job_execution import JobDeadlineExceeded, check_deadline, execution_budget, remaining_timeout
 
 METADATA_LIMITS = {'reason': 200, 'title': 80, 'summary': 400}
+REVIEW_FALLBACK_REMINDER = ('复核提醒：教学计划写“先建立/逐步显示”时，该步开始帧可以为空白。'
+                            '正常建立过程不要求首帧已有最终对象，不要仅因开始帧空白判 start_matches_plan=false；'
+                            '只判断该步是否按计划开始建立。其他步骤仍按原合同检查。'
+                            '输出仍须为完整JSON：根字段恰好为 ok、issues、steps；每步字段恰好为 '
+                            'step、start_matches_plan、change_explains_relation、issues，不得添加额外字段。')
 FAILURE_CODES = frozenset({'model_unavailable', 'renderer_unavailable', 'source_invalid',
                           'render_failed', 'media_invalid', 'visual_invalid', 'visual_rejected',
                           'output_too_long'})
@@ -438,8 +443,18 @@ class ManimService:
                 for review_attempt in (1,2):
                     check_cancelled()
                     review_remaining = max(0,int(remaining_timeout(MANIM_EXECUTION_SECONDS)*1000))
-                    reply = self.model.json(review_messages, temperature=0,
-                        max_tokens=min(self.generation_token_limit,8192), reasoning_effort='low',
+                    fallback = review_attempt == 2
+                    review_messages_to_send = review_messages
+                    if fallback:
+                        # A low-effort review can spend the whole token cap on hidden
+                        # reasoning and return no verdict. Disable reasoning for the one
+                        # blank recheck and restate the buildup rule and exact fields.
+                        review_messages_to_send = [review_messages[0], {'role':'user','content':[
+                            review_content[0], {'type':'text','text':REVIEW_FALLBACK_REMINDER},
+                            *review_content[1:]]}]
+                    reply = self.model.json(review_messages_to_send, temperature=0,
+                        max_tokens=min(self.generation_token_limit,8192),
+                        reasoning_effort='none' if fallback else 'low',
                         response_format='json_object')
                     check_cancelled()
                     blank = isinstance(reply,str) and not reply.strip()
