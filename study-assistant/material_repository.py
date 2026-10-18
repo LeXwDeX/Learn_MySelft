@@ -228,7 +228,8 @@ class MaterialRepository:
                           failure_code, validate):
         """Persist only failure diagnostics after expiry; never extend business work."""
         if failure_code not in ('deadline', 'model_unavailable', 'renderer_unavailable',
-                                'source_invalid', 'render_failed', 'media_invalid',
+                                'source_invalid', 'spec_invalid', 'layout_invalid',
+                                'render_failed', 'media_invalid',
                                 'visual_invalid', 'visual_rejected', 'output_too_long'):
             raise ValueError('invalid animation failure category')
         if not self.lock.acquire(timeout=1):

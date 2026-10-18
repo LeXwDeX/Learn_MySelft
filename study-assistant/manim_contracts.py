@@ -1,4 +1,4 @@
-"""Bounded contracts for real ManimGL teaching animations."""
+"""Bounded contracts for real teaching animations."""
 import ast
 import math
 import re
@@ -11,6 +11,9 @@ MAX_STEPS = 8
 FPS = 30
 WIDTH = 1280
 HEIGHT = 720
+MANIMGL_ENGINE = {'name': 'ManimGL', 'version': '1.7.2'}
+MANIMGX_ENGINE = {'name': 'ManimGX', 'version': '0.1.1'}
+SUPPORTED_ENGINES = (MANIMGL_ENGINE, MANIMGX_ENGINE)
 
 
 class ManimContractError(ValueError):
@@ -163,7 +166,7 @@ def validate_manifest(value):
     duration = value.get('duration')
     if type(duration) not in (int, float) or not math.isfinite(duration) or not 0 < duration <= 90:
         raise ManimContractError('动画时长无效')
-    if value.get('engine') != {'name': 'ManimGL', 'version': '1.7.2'}:
+    if value.get('engine') not in SUPPORTED_ENGINES:
         raise ManimContractError('动画引擎无效')
     steps = value.get('steps')
     if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_STEPS:

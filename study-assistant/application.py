@@ -28,6 +28,7 @@ from tutor_rendering import TutorRendering
 from render_review import validate_mermaid
 from scene_service import SceneService
 from manim_renderer import ManimRenderer
+from manimgx_renderer import ManimgxRenderer
 from manim_service import ManimService
 from manim_routes import ManimRoutes
 from job_execution import check_deadline
@@ -55,10 +56,12 @@ class Application:
         self.verification = QuizGeneration(self.model)
         self.authorization = RequestAuthorization(self.accounts)
         self.tutor_rendering = TutorRendering(validate_mermaid)
-        self.manim = ManimService(self.repository, self.model,
-                                  ManimRenderer(settings.state_dir), self.authorize_scene,
+        renderer = ManimgxRenderer(settings.state_dir) if settings.manim_engine == 'manimgx' \
+            else ManimRenderer(settings.state_dir)
+        self.manim = ManimService(self.repository, self.model, renderer, self.authorize_scene,
                                   authorize_read=self.authorize_asset,
-                                  generation_token_limit=min(settings.max_output_tokens, 16384))
+                                  generation_token_limit=min(settings.max_output_tokens, 16384),
+                                  engine=settings.manim_engine)
         self.scenes = SceneService(self.repository, self.model, self.verification,
                                    self.authorize_scene, manim=self.manim)
         dependencies = (self.repository, self.model, self.cache, self.verification)

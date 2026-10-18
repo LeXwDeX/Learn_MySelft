@@ -29,8 +29,9 @@ def collect_files(root: Path) -> dict[str, dict[str, bytes]]:
             raise ValueError(f'Invalid backend release module: {name}')
         backend[name] = checked_source(root, 'study-assistant/' + name).read_bytes()
     backend['architecture.json'] = checked_source(root, 'study-assistant/architecture.json').read_bytes()
-    for name in ('Dockerfile', 'requirements.lock'):
-        backend['manim-runtime/' + name] = checked_source(root, 'deploy/manim-runtime/' + name).read_bytes()
+    for runtime in ('manim-runtime', 'manimgx-runtime'):
+        for name in ('Dockerfile', 'requirements.lock'):
+            backend[runtime + '/' + name] = checked_source(root, 'deploy/' + runtime + '/' + name).read_bytes()
     shared = json.loads((root / 'shared/manifest.json').read_text())
     names = [module['source'] for module in shared['scripts']]
     names += ['ui.css', 'markdown.css', 'learning-scenes.css', 'materials.css', 'vendor-mermaid.js', 'vendor-manifest.json']

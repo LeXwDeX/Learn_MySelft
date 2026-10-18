@@ -238,6 +238,16 @@ class SceneFailurePhaseTests(unittest.TestCase):
                                                  self.detail['manim_review'], 'passed', lambda: None)
         self.assertEqual(self.store.record(self.key), before)
 
+    def test_scene_spec_and_layout_failure_codes_are_persisted(self):
+        for code in ('spec_invalid', 'layout_invalid'):
+            current = self.app.repository.node_detail(self.key, 'n1')
+            review = json.loads(json.dumps(current['manim_review']))
+            self.app.repository.fail_scene_review(self.key, 'n1', current['study_notes'], self.node,
+                                                  review, code, lambda: None)
+            saved = self.app.repository.node_detail(self.key, 'n1')
+            self.assertEqual(saved['manim_review']['failure_code'], code)
+            self.assertEqual(saved['study_notes'], self.detail['study_notes'])
+
     def test_diagnostic_sqlite_lock_wait_is_bounded_after_real_expiry(self):
         before = self.store.record(self.key)
         blocker = sqlite3.connect(self.store.path, isolation_level=None)

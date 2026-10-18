@@ -2,6 +2,7 @@
   "version": 1,
   "modules": {
     "account_routes.py": "http",
+    "animation_contracts.py": "domain",
     "app_config.py": "domain",
     "application.py": "composition",
     "background_jobs.py": "infrastructure",
@@ -21,6 +22,9 @@
     "manim_routes.py": "http",
     "manim_service.py": "services",
     "manim_worker.py": "tools",
+    "manimgx_renderer.py": "infrastructure",
+    "manimgx_runtime.py": "tools",
+    "manimgx_worker.py": "tools",
     "material_parser.py": "infrastructure",
     "material_repository.py": "infrastructure",
     "material_routes.py": "http",
@@ -96,6 +100,9 @@
   "external_imports": {
     "render_worker.py": [
       "playwright"
+    ],
+    "manimgx_runtime.py": [
+      "manimgx"
     ],
     "material_worker.py": [
       "py7zr",

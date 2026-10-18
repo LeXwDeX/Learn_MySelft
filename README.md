@@ -131,6 +131,7 @@ python3 learning-path/gen_path_page.py
 | `SEARXNG_BASE` | `http://192.168.33.146:8103`（当前部署所用） | SearXNG 地址（可选；「主动研究」用） |
 | `SEARXNG_ENGINES` | `brave,google cse,wikipedia` | 学习网站专用的搜索引擎列表；不修改共享 SearXNG 配置。候选来源还需通过主题相关性筛选才进入简报。 |
 | `STATE_DIR` | `<脚本目录>/state` | 学习数据存储目录；账号文件放在同级的 `state-accounts`（实际为 `STATE_DIR` 加 `-accounts`） |
+| `MANIM_ENGINE` | `manimgx` | 动画引擎：`manimgx` 使用封闭场景与固定镜像；`manimgl` 为旧代码链路回滚模式 |
 | `DELETE_PASSWORD` | （空） | 首次启动初始化 admin 的密码；账号文件存在后不会覆盖管理员密码 |
 
 ### 前端运行配置

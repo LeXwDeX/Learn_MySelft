@@ -95,8 +95,8 @@ JSON POST 要求唯一、正整数的 `Content-Length`，不接受 `Transfer-Enc
 ## 备份与回滚
 
 1. 等待后台任务完成，停止后端，保留运行配置、代码版本及静态资源。
-2. 执行 `python3 backup_state.py <STATE_DIR> <新的备份目录>`。备份目录须位于状态和账户目录之外。脚本持有同一进程锁，以 SQLite backup API 包含已提交 WAL。脚本同时备份账户目录、现有 `STATE_DIR/manim-assets` 和 `STATE_DIR/manim-runtime.json`。动画备份包含视频、关键帧、清单、绑定记录和私有源码。没有动画目录的旧环境仍可备份。文件按块复制，不设置整个资产库的大小上限。符号链接、硬链接和特殊文件使备份失败。只有全部复制成功后才写入 `manifest.json`；没有该清单的目录不是成功备份。不要只复制活动数据库主文件。
-3. 恢复时保持服务停止。将配套 `state.sqlite3` 恢复到 `STATE_DIR`，将备份的 `accounts` 恢复到 `STATE_DIR-accounts`。将同一备份中的 `manim-assets` 和 `manim-runtime.json` 恢复到 `STATE_DIR`。维持目录 700、文件 600。动画引用和文件必须来自同一快照。核对运行镜像仍可用，再启动服务。验证 quick_check、登录、资料数量、业务读取和已保存动画播放。已有新写入时，不得用旧备份覆盖当前数据库或动画文件。
+2. 执行 `python3 backup_state.py <STATE_DIR> <新的备份目录>`。备份目录须位于状态和账户目录之外。脚本持有同一进程锁，以 SQLite backup API 包含已提交 WAL。脚本同时备份账户目录、现有 `STATE_DIR/manim-assets`、`STATE_DIR/manim-runtime.json` 和 `STATE_DIR/manimgx-runtime.json`。动画备份包含视频、关键帧、清单、绑定记录和私有场景数据或源码。没有动画目录的旧环境仍可备份。文件按块复制，不设置整个资产库的大小上限。符号链接、硬链接和特殊文件使备份失败。只有全部复制成功后才写入 `manifest.json`；没有该清单的目录不是成功备份。不要只复制活动数据库主文件。
+3. 恢复时保持服务停止。将配套 `state.sqlite3` 恢复到 `STATE_DIR`，将备份的 `accounts` 恢复到 `STATE_DIR-accounts`。将同一备份中的 `manim-assets`、`manim-runtime.json` 和 `manimgx-runtime.json` 恢复到 `STATE_DIR`。维持目录 700、文件 600。动画引用和文件必须来自同一快照。核对当前 `MANIM_ENGINE` 对应的运行镜像仍可用，再启动服务。验证 quick_check、登录、资料数量、业务读取和已保存动画播放。已有新写入时，不得用旧备份覆盖当前数据库或动画文件。
 4. 升级首次迁移核对全部旧文档键、值、时间戳及旧文件哈希。升级后有写入则优先修复当前版本；回退旧 JSON 版本需要停写并从权威数据库转换当前文档和墓碑，经核对后再切换，不能直接启动陈旧文件版。
 
 代码回退必须保留当前权威数据库和新增任务元数据。不得用升级前备份覆盖新数据来回退。旧代码不提供新增的自动重试保证；发布失败时应核对实际任务状态，再修复当前版本。

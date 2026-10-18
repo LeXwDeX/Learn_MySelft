@@ -23,10 +23,13 @@ class ConfigSchemaTests(unittest.TestCase):
             {"LLM_BASE": "file:///tmp/private"},
             {"LLM_BASE": "http://user:pass@host"},
             {"LLM_MODEL": ""},
+            {"MANIM_ENGINE": "svg"},
         ]:
             with self.subTest(settings=settings), self.assertRaises(ValueError):
                 Settings.from_env(settings)
         self.assertEqual(Settings.from_env({"PORT": "8111"}).port, 8111)
+        self.assertEqual(Settings.from_env({}).manim_engine, "manimgx")
+        self.assertEqual(Settings.from_env({"MANIM_ENGINE": "manimgl"}).manim_engine, "manimgl")
 
     def test_nested_state_types_and_vocabulary(self):
         for name, value in [

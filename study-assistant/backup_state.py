@@ -109,9 +109,13 @@ def backup(state_dir, destination):
             runtime = os.path.lexists(state_dir / 'manim-runtime.json')
             if runtime:
                 _ordinary_file(state_fd, 'manim-runtime.json', destination / 'manim-runtime.json')
+            manimgx_runtime = os.path.lexists(state_dir / 'manimgx-runtime.json')
+            if manimgx_runtime:
+                _ordinary_file(state_fd, 'manimgx-runtime.json', destination / 'manimgx-runtime.json')
             manifest = {'schema_version': store.SCHEMA_VERSION, 'documents': len(store.records()),
                         'state_source': str(state_dir.resolve()), 'database_check': 'ok',
-                        'manim_assets': assets, 'manim_runtime': runtime}
+                        'manim_assets': assets, 'manim_runtime': runtime,
+                        'manimgx_runtime': manimgx_runtime}
             # A success marker exists only after every paired file copy succeeds.
             temporary_manifest = destination / 'manifest.tmp'
             descriptor = os.open(temporary_manifest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
