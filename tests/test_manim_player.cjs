@@ -51,7 +51,8 @@ async function fixture(ready=true){const f=figure();window.LearnManim.enhance(f)
   assert.doesNotMatch(markdownWindow.LearnMarkdown.render(fence),/<script>/);
   const validate=window.LearnManim.validate;
   assert.equal(validate(manifest,id),manifest);
-  for(const patch of [{fps:60},{duration:91},{asset_id:'b'.repeat(32)},{engine:{name:'SVG',version:'1.7.2'}},{steps:[{caption:'坏步骤',start_frame:0,end_frame:20,result_frame:19}]}]) assert.throws(()=>validate({...manifest,...patch},id));
+  assert.equal(validate({...manifest,engine:{name:'ManimGX',version:'0.1.1'}},id).engine.name,'ManimGX');
+  for(const patch of [{fps:60},{duration:91},{asset_id:'b'.repeat(32)},{engine:{name:'SVG',version:'1.7.2'}},{engine:{name:'ManimGX',version:'0.1.0'}},{engine:{name:'constructor',version:'1'}},{steps:[{caption:'坏步骤',start_frame:0,end_frame:20,result_frame:19}]}]) assert.throws(()=>validate({...manifest,...patch},id));
   assert.throws(()=>validate({...manifest,steps:[{...manifest.steps[0],hold_start_frame:40},manifest.steps[1]]},id),'hold must contain at least 21 frames');
   assert.throws(()=>validate({...manifest,steps:[manifest.steps[0],{...manifest.steps[1],start_frame:61}]},id));
   const waiting=figure('waiting');window.LearnManim.enhance(waiting);assert.equal(fetchCount,0,'streaming must not fetch media');

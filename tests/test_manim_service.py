@@ -9,8 +9,9 @@ import urllib.error
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'study-assistant'))
 from background_jobs import JobError
-from manim_service import METADATA_LIMITS, PROMPT, REVIEW_FALLBACK_REMINDER, TEACHING_REFERENCE_CODE, TEACHING_REFERENCE_ENVELOPE, SWAP_REFERENCE_ENVELOPE, validate_relation, compile_relation, ManimService, ManimGenerationError
+from manim_service import METADATA_LIMITS, PROMPT_MANIMGL as PROMPT, PROMPT_MANIMGX, REVIEW_FALLBACK_REMINDER, TEACHING_REFERENCE_CODE, TEACHING_REFERENCE_ENVELOPE, SWAP_REFERENCE_ENVELOPE, VECTOR_REFERENCE_ENVELOPE, validate_relation, compile_relation, ManimService, ManimGenerationError
 from manim_contracts import ManimContractError, validate_source, validate_teaching_plan
+from animation_contracts import validate_scene
 from manim_renderer import ManimUnavailable
 from prompts import MATH_VISUAL_TEACHING
 
@@ -70,7 +71,7 @@ class ManimServiceTests(unittest.TestCase):
         self.repo=Repository(); self.renderer=Renderer(self.temp.name)
         def authorize(actor,key):
             if actor != key.split('/')[0]: raise JobError(403,'denied')
-        self.service=ManimService(self.repo,Model(),self.renderer,authorize,planner_model=Planner())
+        self.service=ManimService(self.repo,Model(),self.renderer,authorize,planner_model=Planner(),engine='manimgl')
     def generate(self): return self.service.generate('u1/learn-path-v1-a','n1','候选新正文',{'id':'n1'},actor='u1')
     def test_short_reference_passes_source_and_two_step_plan_contract(self):
         self.assertEqual(validate_source(TEACHING_REFERENCE_CODE), TEACHING_REFERENCE_CODE)
@@ -719,7 +720,7 @@ class RelationPlannerTests(unittest.TestCase):
 
     def test_known_teaching_failure_native_repair_can_succeed(self):
         from unittest.mock import patch
-        value=self.relation('shear_basis',{'k':1.5});expected=compile_relation(value)
+        value=self.relation('shear_basis',{'k':1.5});expected=compile_relation(value, 'manimgl')
         native=json.loads(json.dumps(expected))
         native['code']='class LessonScene(TeachingScene):\n def construct(self):\n  self.next_step("第一步")\n  self.next_step("第二步")'
         native['teaching_plan']['steps'][0]['change']='先建立原点O与e2基准，再展示固定原点的终点变化'
@@ -734,7 +735,7 @@ class RelationPlannerTests(unittest.TestCase):
 
     def test_known_repeated_technical_failure_stops_after_second_candidate(self):
         from unittest.mock import patch
-        value=self.relation('shear_basis',{'k':1});expected=compile_relation(value)
+        value=self.relation('shear_basis',{'k':1});expected=compile_relation(value, 'manimgl')
         with patch.object(self.service.planner_model,'json',return_value=json.dumps(value)) as planner,patch.object(self.service.model,'json',return_value=json.dumps(expected)) as model,patch.object(self.renderer,'render',side_effect=ManimContractError('render failed')) as renderer:
             with self.assertRaises(ManimGenerationError):self.generate()
         self.assertEqual(planner.call_count,1);self.assertEqual(model.call_count,1);self.assertEqual(renderer.call_count,2)
@@ -770,14 +771,14 @@ class RelationPlannerTests(unittest.TestCase):
         self.assertFalse(self.service.root.exists())
 
     def test_compiled_parameters_have_independent_mathematical_expectations(self):
-        shear=compile_relation(validate_relation(self.relation('shear_basis',{'k':1.001}),True))
+        shear=compile_relation(validate_relation(self.relation('shear_basis',{'k':1.001}),True,'manimgl'),'manimgl')
         plan=shear['teaching_plan']
         self.assertIn('A=[[1,1.001],[0,1]]',plan['objective'])
         self.assertIn('e2=(0,1)变为(1.001,1)',plan['objective'])
         self.assertNotIn('(1,1)',json.dumps(plan,ensure_ascii=False))
         call=next(n for n in ast.walk(ast.parse(shear['code'])) if isinstance(n,ast.Call))
         self.assertEqual(ast.literal_eval(call.keywords[0].value),1.001)
-        swap=compile_relation(validate_relation(self.relation('swap_components',{'values':[-9,9,-9]}),True))
+        swap=compile_relation(validate_relation(self.relation('swap_components',{'values':[-9,9,-9]}),True,'manimgl'),'manimgl')
         call=next(n for n in ast.walk(ast.parse(swap['code'])) if isinstance(n,ast.Call))
         self.assertEqual(ast.literal_eval(call.keywords[0].value),(-9,9,-9))
         self.assertIn('使(-9,9,-9)变为(9,-9,-9)',swap['teaching_plan']['objective'])
@@ -788,7 +789,7 @@ class RelationPlannerTests(unittest.TestCase):
     def test_known_parameters_compile_code_and_plan_then_review_only(self):
         from unittest.mock import patch
         for value in [self.relation('shear_basis',{'k':1.001}),self.relation('swap_components',{'values':[-9,9,-9]})]:
-            expected=compile_relation(validate_relation(value,True))
+            expected=compile_relation(validate_relation(value,True,'manimgl'),'manimgl')
             with self.subTest(recipe=value['recipe']),patch.object(self.service.planner_model,'json',return_value=json.dumps(value)),patch.object(self.service.model,'json',return_value=visual_report(count=2)) as model,patch.object(self.renderer,'render',return_value=self.two_step_render()) as renderer:
                 self.generate()
                 self.assertEqual(renderer.call_args.args, (expected['code'],))
@@ -802,7 +803,7 @@ class RelationPlannerTests(unittest.TestCase):
 
     def test_known_teaching_repair_falls_back_with_same_focus_and_stops_on_repeat(self):
         from unittest.mock import patch
-        value=self.relation('shear_basis',{'k':0.5});expected=compile_relation(value)
+        value=self.relation('shear_basis',{'k':0.5});expected=compile_relation(value, 'manimgl')
         rejected=visual_report(ok=False,issues=['动作不清楚'],count=2)
         with patch.object(self.service.planner_model,'json',return_value=json.dumps(value)) as planner,patch.object(self.service.model,'json',side_effect=[rejected,corrected_plan_json(expected),rejected]) as model,patch.object(self.renderer,'render',return_value=self.two_step_render()) as renderer:
             with self.assertRaises(ManimGenerationError):self.generate()
@@ -816,7 +817,7 @@ class RelationPlannerTests(unittest.TestCase):
 
     def test_known_technical_then_teaching_failure_allows_only_third_candidate(self):
         from unittest.mock import patch
-        value=self.relation('swap_components',{'values':[3,-1,4]});expected=compile_relation(value)
+        value=self.relation('swap_components',{'values':[3,-1,4]});expected=compile_relation(value, 'manimgl')
         rendered=self.two_step_render()
         with patch.object(self.service.planner_model,'json',return_value=json.dumps(value)) as planner,patch.object(self.renderer,'render',side_effect=[ManimContractError('render failed'),rendered,rendered]) as renderer,patch.object(self.service.model,'json',side_effect=[json.dumps(expected),visual_report(ok=False,issues=['重叠'],count=2),corrected_plan_json(expected),visual_report(count=2)]) as model:
             self.generate()
@@ -1388,3 +1389,160 @@ class StepReviewTests(unittest.TestCase):
         result=self.invoke(self.report(3),3)
         self.assertTrue(result['asset_id'])
         self.assertEqual(self.model.call_count,2)
+
+
+def spec_envelope(change='旋转一条边，使夹角变大'):
+    return {
+        'needed': True, 'reason': '展示变化', 'title': '角的变化', 'summary': '观察角旋转后两边的关系',
+        'teaching_plan': {
+            'objective': '理解角度表示两条边的张开程度',
+            'visual_reason': '旋转一条边能表现角的大小变化',
+            'observe': '一边转动时两边张开的程度如何变化',
+            'steps': [{'change': change, 'why': '角的大小取决于两条边的相对方向'}],
+        },
+        'scene': {
+            'version': 1, 'kind': 'spec',
+            'initial': [{'id': 'edge', 'type': 'line', 'start': [0, 0], 'end': [3, 0]}],
+            'steps': [{'caption': change, 'actions': [
+                {'op': 'rotate', 'target': 'edge', 'angle_deg': 45, 'about': [0, 0], 'run_time': 1.5}]}],
+        },
+    }
+
+
+class SpecModel:
+    def __init__(self, *envelopes):
+        self.envelopes = list(envelopes)
+        self.calls = 0
+        self.messages = []
+
+    def json(self, messages, **kwargs):
+        self.messages.append(messages)
+        if isinstance(messages[1]['content'], list):
+            context = json.loads(messages[1]['content'][0]['text'])
+            return visual_report(count=len(context['teaching_plan']['steps']))
+        self.calls += 1
+        return json.dumps(self.envelopes.pop(0))
+
+
+class SpecRenderer(Renderer):
+    def __init__(self, path, steps=1):
+        super().__init__(path)
+        self.steps = steps
+
+    def render(self, source, *, check_cancelled=None):
+        value = super().render(source, check_cancelled=check_cancelled)
+        value['manifest'] = {'steps': [{}] * self.steps, 'engine': {'name': 'ManimGX', 'version': '0.1.1'}}
+        value['frames'] = [b'image'] * self.steps
+        value['review_frames'] = [dict(start=png(), middle=png(), result=png()) for _ in range(self.steps)]
+        return value
+
+
+class ManimgxServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.repo=Repository(); self.renderer=SpecRenderer(self.temp.name)
+        def authorize(actor,key):
+            if actor != key.split('/')[0]: raise JobError(403,'denied')
+        self.authorize=authorize
+        self.envelope=spec_envelope()
+        self.model=SpecModel(self.envelope)
+        self.service=ManimService(self.repo,self.model,self.renderer,authorize,planner_model=Planner(),engine='manimgx')
+
+    def generate(self): return self.service.generate('u1/learn-path-v1-a','n1','候选新正文',{'id':'n1'},actor='u1')
+
+    def test_spec_scene_is_normalized_and_published_as_manimgx(self):
+        from unittest.mock import patch
+        from animation_contracts import validate_scene
+        with patch.object(self.renderer,'render',wraps=self.renderer.render) as renderer:
+            spec=self.generate()
+        self.assertEqual(renderer.call_count,1)
+        self.assertEqual(renderer.call_args.args[0],validate_scene(self.envelope['scene']))
+        directory=next((Path(self.temp.name)/'manim-assets'/'u1').iterdir())
+        metadata=json.loads((directory/'metadata.json').read_text())
+        self.assertEqual(metadata['engine'],{'name':'ManimGX','version':'0.1.1'})
+        self.assertIn('spec_sha256',metadata);self.assertNotIn('code_sha256',metadata)
+        self.assertTrue((directory/'scene-spec.json').exists());self.assertFalse((directory/'scene.py').exists())
+        self.assertEqual(json.loads((directory/'manifest').read_text())['engine'],
+                         {'name':'ManimGX','version':'0.1.1'})
+        self.assertEqual(spec['title'],'角的变化')
+
+    def test_caption_must_match_plan_change_and_repair_sees_previous_scene(self):
+        from unittest.mock import patch
+        bad=spec_envelope();bad['scene']['steps'][0]['caption']='只写关键词'
+        self.model.envelopes=[bad,bad]
+        with patch.object(self.renderer,'render') as renderer:
+            with self.assertRaises(ManimGenerationError) as raised:self.generate()
+        self.assertEqual(raised.exception.failure_code,'spec_invalid')
+        renderer.assert_not_called();self.assertEqual(self.model.calls,2)
+        payload=json.loads(self.model.messages[1][1]['content'])
+        self.assertEqual(payload['repair'],'每步caption必须与该步教学计划的change逐字完全一致，不得改写或缩写')
+        self.assertIn('只写关键词',payload['previous_scene'])
+        self.assertEqual(payload['focus'],'理解角度表示两条边的张开程度')
+
+    def test_repair_context_carries_the_complete_large_scene(self):
+        from unittest.mock import patch
+        from animation_contracts import validate_scene
+        initial = [{'id': 't%d' % index, 'type': 'text', 'text': '标签' * 99 + '%02d' % index,
+                    'at': [-5.4 + index % 5 * 2.7, -2.7 + index // 5 * 1.8]}
+                   for index in range(20)]
+        plan_steps, scene_steps = [], []
+        for index in range(8):
+            change = ('第%d步推进关系' % (index + 1)).ljust(160, '观')
+            plan_steps.append({'change': change, 'why': '说明关系变化'})
+            actions = [{'op': 'transform', 'target': 't%d' % target,
+                        'object': {'type': 'text', 'text': '说明' * 98 + '%02d%02d' % (index, target)},
+                        'run_time': 1} for target in range(10)]
+            scene_steps.append({'caption': change, 'actions': actions})
+        bad = dict(needed=True, reason='展示变化', title='大场景检查', summary='检查完整场景上下文',
+                   teaching_plan=dict(objective='理解关系变化', visual_reason='逐步变换展示关系',
+                                      observe='观察每一步的关系变化', steps=plan_steps),
+                   scene={'version': 1, 'kind': 'spec', 'initial': initial, 'steps': scene_steps})
+        validate_scene(bad['scene'])
+        bad['scene']['steps'][0]['caption'] = '只写关键词'
+        self.model.envelopes=[bad,bad]
+        with patch.object(self.renderer,'render') as renderer:
+            with self.assertRaises(ManimGenerationError) as raised:self.generate()
+        self.assertEqual(raised.exception.failure_code,'spec_invalid')
+        renderer.assert_not_called()
+        payload=json.loads(self.model.messages[1][1]['content'])
+        self.assertGreater(len(payload['previous_scene']), 20000)
+        self.assertEqual(json.loads(payload['previous_scene']), bad['scene'])
+
+    def test_compiled_vector_recipe_passes_scene_and_skips_generation_model(self):
+        from unittest.mock import patch
+        relation=dict(needed=True,reason='单一关系',objective='理解角度表示两条边的张开程度',
+                      recipe='vector_rotation',parameters={'vector':[2,1],'angle_deg':90})
+        planner=type('P',(),{'json':staticmethod(lambda *args,**kwargs: json.dumps(relation))})()
+        self.renderer.steps=3
+        self.model.envelopes=[]
+        self.service=ManimService(self.repo,self.model,self.renderer,self.authorize,planner_model=planner,engine='manimgx')
+        with patch.object(self.renderer,'render',wraps=self.renderer.render) as renderer:
+            self.generate()
+        source=renderer.call_args.args[0]
+        self.assertEqual(source['kind'],'recipe');self.assertEqual(source['recipe'],'vector_rotation')
+        self.assertEqual(len(source['steps']),3)
+        self.assertEqual(source['steps'][0]['caption'],
+                         '首帧显示坐标网格、原点O、蓝色向量a=(2,1)和它的长度根号5，再显示终点坐标(2,1)')
+        self.assertEqual(self.model.calls,0)
+
+    def test_manimgx_rejects_bad_engine_and_vector_bounds(self):
+        with self.assertRaises(ValueError):
+            ManimService(self.repo,self.model,self.renderer,self.authorize,engine='svg')
+        value=dict(needed=True,reason='单一关系',objective='理解向量旋转',
+                   recipe='vector_rotation',parameters={'vector':[2,1],'angle_deg':90})
+        self.assertEqual(validate_relation(value,True,'manimgx'),value)
+        with self.assertRaises(ManimContractError):
+            validate_relation(value,True,'manimgl')
+        for parameters in ({'vector':[2,1],'angle_deg':45},{'vector':[2,2],'angle_deg':90},
+                           {'vector':[0,0],'angle_deg':90},{'vector':[True,1],'angle_deg':90}):
+            with self.subTest(parameters=parameters),self.assertRaises(ManimContractError):
+                validate_relation(dict(value,parameters=parameters),True,'manimgx')
+
+    def test_generation_prompt_example_is_a_valid_closed_scene(self):
+        examples=[json.loads(line) for line in PROMPT_MANIMGX.splitlines() if line.startswith('{"needed":')]
+        self.assertEqual(len(examples),1)
+        example=examples[0]
+        value=validate_scene(example['scene'])
+        self.assertEqual(value['kind'],'spec')
+        self.assertEqual([step['caption'] for step in value['steps']],
+                         [step['change'] for step in example['teaching_plan']['steps']])

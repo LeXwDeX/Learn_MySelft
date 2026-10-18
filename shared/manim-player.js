@@ -1,16 +1,21 @@
-/* Authenticated ManimGL media. Each step owns a bounded frame interval. */
+/* Authenticated Manim media. Each step owns a bounded frame interval. */
 (function () {
   'use strict';
   var players = new WeakMap();
   var playbackRate = 0.9;
+  var engines = {ManimGL: '1.7.2', ManimGX: '0.1.1'};
   function text(value, max) { return typeof value === 'string' && value.length <= max; }
+  function supportedEngine(engine) {
+    return !!engine && typeof engine.name === 'string' && typeof engine.version === 'string'
+      && Object.prototype.hasOwnProperty.call(engines, engine.name) && engines[engine.name] === engine.version;
+  }
   function reference(raw) {
     var ref = JSON.parse(raw);
     if (!ref || ref.version !== 1 || !/^[a-f0-9]{32}$/.test(ref.asset_id) || !text(ref.title, 200) || !text(ref.summary, 2000)) throw new Error('动画引用无效');
     return ref;
   }
   function validate(manifest, id) {
-    if (!manifest || manifest.version !== 1 || manifest.asset_id !== id || manifest.fps !== 30 || manifest.width !== 1280 || manifest.height !== 720 || !Number.isFinite(manifest.duration) || manifest.duration <= 0 || manifest.duration > 90 || !manifest.engine || manifest.engine.name !== 'ManimGL' || manifest.engine.version !== '1.7.2' || !Array.isArray(manifest.steps) || manifest.steps.length < 1 || manifest.steps.length > 8) throw new Error('动画清单无效');
+    if (!manifest || manifest.version !== 1 || manifest.asset_id !== id || manifest.fps !== 30 || manifest.width !== 1280 || manifest.height !== 720 || !Number.isFinite(manifest.duration) || manifest.duration <= 0 || manifest.duration > 90 || !supportedEngine(manifest.engine) || !Array.isArray(manifest.steps) || manifest.steps.length < 1 || manifest.steps.length > 8) throw new Error('动画清单无效');
     var end = 0;
     manifest.steps.forEach(function (step) {
       if (!step || !text(step.caption, 1000) || !step.caption.trim() || !Number.isInteger(step.start_frame) || !Number.isInteger(step.end_frame) || !Number.isInteger(step.result_frame) || !Number.isInteger(step.hold_start_frame) || step.hold_start_frame < step.start_frame || step.hold_start_frame > step.end_frame - 21 || step.start_frame !== end || step.end_frame - step.start_frame < 21 || step.result_frame !== step.end_frame - 1) throw new Error('动画步骤无效');
@@ -42,7 +47,7 @@
     media.style.opacity = '1';
     var video = element('video');
     video.preload = 'none'; video.playsInline = true; video.muted = true; video.playbackRate = playbackRate; video.crossOrigin = 'use-credentials';
-    video.setAttribute('aria-label', ref.title + '，ManimGL 教学动画');
+    video.setAttribute('aria-label', ref.title + '，教学动画');
     var snapshot = element('img', 'learn-manim-snapshot');
     snapshot.crossOrigin = 'use-credentials'; snapshot.alt = '本步结果'; snapshot.hidden = true;
     media.appendChild(video); media.appendChild(snapshot); screen.appendChild(media);
@@ -221,8 +226,8 @@
       var epoch = ++state.epoch;
       state.playing = true; if (restart) state.runAutomatic = false; else if (sequential) state.runAutomatic = true;
       state.phase = 'seeking'; status.textContent = '正在准备播放…'; update();
-      // The first play remains inside the click handler. Muted ManimGL video can
-      // then resume after asynchronous seeks on browsers including WebKit.
+      // The first play remains inside the click handler. Muted video can then
+      // resume after asynchronous seeks on browsers including WebKit.
       var initialPlay;
       try { initialPlay = video.play(); } catch (error) { fail('浏览器未能播放动画。请重新加载后重试。'); return; }
       var waiting = needsSeek || state.pendingFrame !== null;

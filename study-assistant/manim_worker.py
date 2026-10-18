@@ -17,7 +17,7 @@ PRELUDE = '''from manimlib import *
 import json as _json
 from pathlib import Path as _Path
 from decimal import Decimal as _Decimal
-from math import isfinite as _isfinite
+from math import ceil as _ceil, isfinite as _isfinite
 class TeachingScene(Scene):
     default_camera_config = {"background_color": "#f5f5f5"}
     def label(self, text, color="#2d3142", size=96):
@@ -85,9 +85,9 @@ class TeachingScene(Scene):
     def next_step(self, caption):
         if len(self.step_records) >= 8:
             raise ValueError("too many steps")
-        hold_start = round(self.time * 30)
+        hold_start = _ceil(self.time * 30 - 1e-9)  # first frame after the animation ends, even between frames
         self.wait(0.7)
-        end = round(self.time * 30)
+        end = hold_start + 21  # 0.7 seconds at 30 fps, without independent rounding
         self.step_records.append(dict(caption=caption, start_frame=self.step_start, end_frame=end, result_frame=end-1, hold_start_frame=hold_start))
         self.step_start = end
     def tear_down(self):

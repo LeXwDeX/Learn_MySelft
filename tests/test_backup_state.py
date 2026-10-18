@@ -33,15 +33,18 @@ class BackupStateTests(unittest.TestCase):
                'metadata.json':json.dumps({'owner':'u1','key':self.key,'node_id':'n1','published':True}).encode()}
         for name,value in files.items():(directory/name).write_bytes(value)
         runtime={'image':'sha256:'+'b'*64};(self.state/'manim-runtime.json').write_text(json.dumps(runtime))
-        return directory,files,runtime
+        manimgx_runtime={'image':'sha256:'+'c'*64};(self.state/'manimgx-runtime.json').write_text(json.dumps(manimgx_runtime))
+        return directory,files,runtime,manimgx_runtime
     def test_paired_bytes_permissions_and_offline_restore(self):
-        directory,files,runtime=self.assets()
+        directory,files,runtime,manimgx_runtime=self.assets()
         manifest=backup(self.state,self.destination)
         self.assertEqual(manifest['manim_assets'],{'present':True,'files':len(files),'bytes':sum(map(len,files.values()))})
         self.assertTrue(manifest['manim_runtime'])
+        self.assertTrue(manifest['manimgx_runtime'])
         for name,value in files.items():
             self.assertEqual((self.destination/'manim-assets'/'u1'/self.asset_id/name).read_bytes(),value)
         self.assertEqual(json.loads((self.destination/'manim-runtime.json').read_text()),runtime)
+        self.assertEqual(json.loads((self.destination/'manimgx-runtime.json').read_text()),manimgx_runtime)
         for path in [self.destination,*self.destination.rglob('*')]:
             self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o700 if path.is_dir() else 0o600)
         restored=self.root/'restored';restored.mkdir()
@@ -49,6 +52,7 @@ class BackupStateTests(unittest.TestCase):
         shutil.copytree(self.destination/'accounts',Path(str(restored)+'-accounts'))
         shutil.copytree(self.destination/'manim-assets',restored/'manim-assets')
         shutil.copyfile(self.destination/'manim-runtime.json',restored/'manim-runtime.json')
+        shutil.copyfile(self.destination/'manimgx-runtime.json',restored/'manimgx-runtime.json')
         store=StateStore(restored)
         self.assertEqual(store.check(),'ok')
         self.assertEqual(json.loads(store.record(self.key)['value']),self.document)
@@ -61,6 +65,7 @@ class BackupStateTests(unittest.TestCase):
         manifest=backup(self.state,self.destination)
         self.assertEqual(manifest['manim_assets']['present'],False)
         self.assertFalse(manifest['manim_runtime'])
+        self.assertFalse(manifest['manimgx_runtime'])
         self.assertTrue((self.destination/'accounts'/'accounts.json').exists())
     def test_live_writer_is_rejected_before_destination_creation(self):
         with (self.state/'.writer.lock').open('a') as lock:
@@ -68,8 +73,8 @@ class BackupStateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'stop the backend'):backup(self.state,self.destination)
         self.assertFalse(self.destination.exists())
     def test_links_and_special_files_fail_without_success_manifest(self):
-        directory,_,_=self.assets()
-        for kind in ('file-link','directory-link','hard-link','fifo','runtime-link','account-link'):
+        directory,_,_,_=self.assets()
+        for kind in ('file-link','directory-link','hard-link','fifo','runtime-link','manimgx-runtime-link','account-link'):
             with self.subTest(kind=kind):
                 external=self.root/'external';external.write_bytes(b'outside')
                 bad=directory/'bad'
@@ -79,12 +84,15 @@ class BackupStateTests(unittest.TestCase):
                 elif kind=='fifo':os.mkfifo(bad)
                 elif kind=='runtime-link':
                     bad=self.state/'manim-runtime.json';bad.unlink();bad.symlink_to(external)
+                elif kind=='manimgx-runtime-link':
+                    bad=self.state/'manimgx-runtime.json';bad.unlink();bad.symlink_to(external)
                 else:bad=self.accounts/'bad';bad.symlink_to(external)
                 target=self.root/('bad-backup-'+kind)
                 with self.assertRaises((OSError,ValueError)):backup(self.state,target)
                 self.assertFalse((target/'manifest.json').exists())
                 bad.unlink()
                 if kind=='runtime-link':bad.write_text('{}')
+                if kind=='manimgx-runtime-link':bad.write_text('{}')
     def test_copy_failure_never_leaves_success_marker(self):
         self.assets()
         with patch('backup_state._ordinary_file',side_effect=OSError('copy failed')):

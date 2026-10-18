@@ -1,4 +1,4 @@
-"""Bounded contracts for real ManimGL teaching animations."""
+"""Bounded contracts for real teaching animations."""
 import ast
 import math
 import re
@@ -9,12 +9,28 @@ MAX_IMAGE = 3 * 1024 * 1024
 MAX_TOTAL = 56 * 1024 * 1024
 MAX_STEPS = 8
 FPS = 30
+STEP_HOLD_SECONDS = 0.7
 WIDTH = 1280
 HEIGHT = 720
+MANIMGL_ENGINE = {'name': 'ManimGL', 'version': '1.7.2'}
+MANIMGX_ENGINE = {'name': 'ManimGX', 'version': '0.1.1'}
+SUPPORTED_ENGINES = (MANIMGL_ENGINE, MANIMGX_ENGINE)
 
 
 class ManimContractError(ValueError):
     pass
+
+
+def step_frame_bounds(seconds, fps=FPS, hold_seconds=STEP_HOLD_SECONDS):
+    """Return hold start and end frames with an exact fixed-length hold.
+
+    An animation that ends between two frames still changes the earlier one,
+    so the first fully static frame is the next one. Rounding picks the
+    transition frame at a half-frame boundary. Start from the ceiling, then
+    add the integer hold length so every step keeps the same hold.
+    """
+    hold_start = math.ceil(seconds * fps - 1e-9)
+    return hold_start, hold_start + round(hold_seconds * fps)
 
 
 def validate_render_diagnostic(value, source_lines):
@@ -163,7 +179,7 @@ def validate_manifest(value):
     duration = value.get('duration')
     if type(duration) not in (int, float) or not math.isfinite(duration) or not 0 < duration <= 90:
         raise ManimContractError('动画时长无效')
-    if value.get('engine') != {'name': 'ManimGL', 'version': '1.7.2'}:
+    if value.get('engine') not in SUPPORTED_ENGINES:
         raise ManimContractError('动画引擎无效')
     steps = value.get('steps')
     if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_STEPS:

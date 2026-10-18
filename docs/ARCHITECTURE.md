@@ -106,7 +106,7 @@ flowchart LR
 
 共享脚本使用 `shared/manifest.json` 声明全局接口和依赖。它们按 HTML 顺序加载，不参与页面工厂包：`ui.js`、`user-shell.js`、`user-session.js`、`saves.js`、`jobs.js`、`titles.js`、`materials.js`、Markdown vendor、`learning-scenes.js`、`manim-player.js` 与 `markdown.js`。第三方文件保留 vendor 来源和独立清单，不改写为本项目模块。
 
-学习节点、补图与辅导动画通过 `ManimService` 生成真实 ManimGL 场景。`ManimRenderer` 使用两个无网络、限资源的容器。第一容器执行代码，第二容器独立解码与校验媒体。服务端完成视觉复核及账号、资料与节点绑定后，才发布 `learn-manim` 资产引用。`ManimRoutes` 负责授权读取与视频 Range 请求。`LearnManim` 只播放真实媒体并提供教学步骤控制。旧 `learn-scene` 由 `LearnScenes` 保持历史兼容。协议和部署边界见 [学习正文交互场景](LEARNING_SCENES.md)。
+学习节点、补图与辅导动画通过 `ManimService` 生成真实动画。默认 `MANIM_ENGINE=manimgx`，`ManimgxRenderer` 使用固定 ManimGX 镜像处理封闭场景与媒体校验；`MANIM_ENGINE=manimgl` 时保留 `ManimRenderer` 的旧代码链路。两者都使用两个无网络、限资源的容器。第一容器生成场景，第二容器独立解码与校验媒体。ManimGX 模式不执行模型代码，并在渲染阶段检查布局。服务端完成视觉复核及账号、资料与节点绑定后，才发布 `learn-manim` 资产引用。`ManimRoutes` 负责授权读取与视频 Range 请求。`LearnManim` 只播放真实媒体并提供教学步骤控制。旧 `learn-scene` 由 `LearnScenes` 保持历史兼容。协议和部署边界见 [学习正文交互场景](LEARNING_SCENES.md)。
 
 ## 构建、门禁与发布包
 

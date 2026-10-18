@@ -37,6 +37,7 @@ class Settings:
     job_workers: int
     job_queue_limit: int
     searxng_base: str
+    manim_engine: str
 
     @classmethod
     def from_env(cls, env=None):
@@ -44,6 +45,9 @@ class Settings:
         model = env.get('LLM_MODEL', 'deepseek').strip()
         if not model:
             raise ValueError('LLM_MODEL cannot be empty')
+        engine = env.get('MANIM_ENGINE', 'manimgx').strip()
+        if engine not in ('manimgx', 'manimgl'):
+            raise ValueError('MANIM_ENGINE must be manimgx or manimgl')
         return cls(
             port=integer(env, 'PORT', 8101, 1, 65535),
             state_dir=str(Path(env.get('STATE_DIR', Path(__file__).resolve().parent / 'state')).expanduser().absolute()),
@@ -56,4 +60,5 @@ class Settings:
             job_workers=integer(env, 'JOB_WORKERS', 2, 1, 8),
             job_queue_limit=integer(env, 'JOB_QUEUE_LIMIT', 64, 1, 1000),
             searxng_base=endpoint(env.get('SEARXNG_BASE', 'http://192.168.33.146:8103'), 'SEARXNG_BASE'),
+            manim_engine=engine,
         )

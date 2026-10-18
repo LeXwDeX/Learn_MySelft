@@ -31,7 +31,7 @@ TARGETS = {
 
 def allowed_path(scope, name):
     if scope == 'backend':
-        return name in {'REVISION', 'architecture.json', 'manim-runtime/Dockerfile', 'manim-runtime/requirements.lock'} or bool(re.fullmatch(r'[a-z][a-z0-9_]*\.py', name))
+        return name in {'REVISION', 'architecture.json'} or bool(re.fullmatch(r'(?:manim-runtime|manimgx-runtime)/(?:Dockerfile|requirements\.lock)', name)) or bool(re.fullmatch(r'[a-z][a-z0-9_]*\.py', name))
     if scope == 'site':
         return name in {'learn/index.html', 'learn/revision.json'} or bool(re.fullmatch(r'(?:learn/assets|diagram-design/learning-path)/[A-Za-z0-9_.-]+\.(?:js|css|html|json)', name))
     return False
