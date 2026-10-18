@@ -131,6 +131,7 @@ async function injectNotification(job) {
       '/learn/assets/job-details.js':'shared/job-details.js','/learn/assets/ui.css':'shared/ui.css',
       '/learn/assets/home.js':'home/home.js','/learn/home.js':'home/home.js',
       '/diagram-design/learning-path/path_app.js':'learning-path/path_app.js',
+      '/diagram-design/learning-path/page-shell.css':'learning-path/page-shell.css',
       '/diagram-design/learning-path/path.css':'learning-path/path.css'};
     if (source) await context.route(site + '/**', async route => {
       const pathname = new URL(route.request().url()).pathname, file = assets[pathname];
@@ -243,7 +244,7 @@ async function injectNotification(job) {
     assert.deepEqual(report.errors,[],'no JavaScript errors');
     assert.equal(report.model_calls,0,'no model requests or undeclared API calls');
     if(source) for(const asset of ['/learn/assets/job-details.js','/learn/assets/ui.css','/learn/assets/home.js',
-      '/diagram-design/learning-path/path_app.js','/diagram-design/learning-path/path.css'])
+      '/diagram-design/learning-path/path_app.js','/diagram-design/learning-path/page-shell.css','/diagram-design/learning-path/path.css'])
       assert(report.source_assets.includes(asset),'source asset used: ' + asset);
     report.passed=true;save();
     console.log(JSON.stringify({passed:true,environment,browser:engine,phone,source,report:path.join(output,'report.json'),cases:report.cases.length,model_calls:0,server_learning_writes:0}));

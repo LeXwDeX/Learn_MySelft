@@ -88,7 +88,7 @@ class Application:
             "jobs": JobRoutes(self.repository, self.jobs),
             "state": StateRoutes(self.repository, self.accounts),
             "path": PathRoutes(self.dispatch),
-            "tutor": TutorRoutes(self.model),
+            "tutor": TutorRoutes(),
             "manim": ManimRoutes(self.manim),
         }
         self._queue = None

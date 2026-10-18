@@ -58,7 +58,7 @@
     var dispatch = function () { return nativeFetch(url, options); };
     var request = endpoint === '/state/put' && persistence
       ? persistence.send(options, dispatch) : dispatch();
-    if ((endpoint === '/state/delete' || endpoint === '/state/del') && persistence) {
+    if (endpoint === '/state/delete' && persistence) {
       request = request.then(function (response) {
         if (response.ok) {
           var body = JSON.parse(options.body || '{}');

@@ -4,21 +4,9 @@ from service_limits import MAX_HISTORY_CHARS, MAX_MSG_CHARS
 
 
 def clip(s, n):
-    s = (s or "").strip()
-    return s[:n]
-
-
-def chunk_text(text, size):
-    """按行切块，尽量不切断行。"""
-    out, cur = [], ""
-    for line in text.split("\n"):
-        if cur and len(cur) + len(line) + 1 > size:
-            out.append(cur)
-            cur = ""
-        cur = (cur + "\n" + line) if cur else line
-    if cur:
-        out.append(cur)
-    return out or [text]
+    if not isinstance(s, str):
+        return ""
+    return s.strip()[:n]
 
 
 def history_messages(history, budget_chars=MAX_HISTORY_CHARS):

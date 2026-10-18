@@ -105,7 +105,6 @@ class LearningScenePromptTests(unittest.TestCase):
             prompts._path_system("quizmap"),
             prompts._path_system("intake"),
             prompts._path_system("research_queries"),
-            prompts.build_suggest_system({"unit_title": "概念"}),
         ]
         for prompt in excluded:
             with self.subTest(prompt_start=prompt[:32]):

@@ -108,6 +108,7 @@ UI Kit 为首页、学习路径、测验地图和测验窗口提供共享样式�
 | `shared/learning-scenes.css` | 共享功能 | 学习图形、动画、参数与视角控件；使用 UI Kit tokens。 |
 | `shared/materials.css` | 共享功能 | 上传资料组件。 |
 | `home/home.css` | 首页 | 登录、账号管理、资料库和首页布局。 |
+| `learning-path/page-shell.css` | 学习路径 / 测验地图 | 两页共用的工具栏、标题、提示、正文行内代码与代码块壳样式。 |
 | `learning-path/path.css` | 学习路径 | 学习阶段、正文工作区、单元目录及 AI 面板。 |
 | `learning-path/quiz-map.css` | 测验地图 | 试卷目录、作答区域和成绩视图。 |
 | `learning-path/quiz-dialog.css` | 测验窗口 | 学习路径和测验地图共用的测验弹窗。 |
