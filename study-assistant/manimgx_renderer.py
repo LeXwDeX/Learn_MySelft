@@ -50,12 +50,16 @@ class ManimgxRenderer:
                 detail = raw.get('detail')
                 if isinstance(detail, str):
                     detail = re.sub(r'\S*lesson\.py:[0-9]+', 'scene', detail)
-                    detail = re.sub(r'[\x00-\x1f\x7f]', ' ', detail)
+                    detail = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', detail)
                     detail = re.sub(r'\s+', ' ', detail).strip()[:400]
                 else:
                     detail = ''
                 message = '布局检查未通过' + ('：' + detail if detail else '')
-                error = ManimContractError(message + '，请删除重叠文字、穿过文字的形状和越界内容后重试')
+                error = ManimContractError(
+                    message + '。请保留必要教学对象：多余的才删除，必要的文字或公式要移动而不是删除；'
+                    '文字之间不得重叠，文字外框不得与圆、线、弧相交，把文字移到图形外或空白处，'
+                    '直到外框完全离开并留出至少0.4间隙；靠近边界时向画面内移动，不要越界，'
+                    '不要删除必要的图形后重试')
                 error.failure_code = 'layout_invalid'
                 raise error
             if isinstance(raw, dict) and raw.get('error') == 'scene_render_failed':
