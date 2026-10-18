@@ -124,29 +124,8 @@ class Handler(BaseHTTPRequestHandler):
                         "revision": self.app.release_revision(),
                         "quiz_harness_version": harness.VERSION,
                         "model": self.app.settings.llm_model,
-                        "base": self.app.settings.llm_base,
                         "reasoning_effort": self.app.model.reasoning_effort
                         or "(unset)",
-                        "endpoints": [
-                            "/ask",
-                            "/suggest",
-                            "/compress",
-                            "/path/intake",
-                            "/path/research",
-                            "/path/plan",
-                            "/path/node",
-                            "/path/quiz",
-                            "/path/requiz",
-                            "/path/quizmap",
-                            "/path/gaps",
-                            "/path/refine",
-                            "/state/all",
-                            "/state/access",
-                            "/state/put",
-                            "/state/node-access",
-                            "/state/del",
-                            "/state/delete",
-                        ],
                     },
                 )
                 return
@@ -419,7 +398,7 @@ class Handler(BaseHTTPRequestHandler):
             controller = routes["state"]
         elif path.startswith("/path/"):
             controller = routes["path"]
-        elif path in ("/ask", "/suggest", "/compress"):
+        elif path == "/ask":
             controller = routes["tutor"]
         else:
             self._json(404, {"error": "not found"})

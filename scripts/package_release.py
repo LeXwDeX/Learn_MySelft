@@ -42,7 +42,7 @@ def collect_files(root: Path) -> dict[str, dict[str, bytes]]:
     for source, target in [('index.html', 'learn/index.html'), ('home.js', 'learn/assets/home.js'), ('home.css', 'learn/assets/home.css')]:
         site[target] = checked_source(root, 'home/' + source).read_bytes()
     manifest = json.loads((root / 'learning-path/manifest.json').read_text())
-    pages = ['learning-path.html', 'quiz-map.html', 'path.css', 'quiz-map.css', 'quiz-dialog.css']
+    pages = ['learning-path.html', 'quiz-map.html', 'page-shell.css', 'path.css', 'quiz-map.css', 'quiz-dialog.css']
     pages += [bundle['output'] for bundle in manifest['bundles']]
     for name in pages:
         if not re.fullmatch(r'[a-zA-Z0-9_.-]+\.(js|css|html)', name):

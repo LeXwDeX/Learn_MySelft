@@ -18,7 +18,14 @@ class ReleasePackageTest(unittest.TestCase):
         self.assertIn('learn/assets/user-shell.js', files['site'])
         self.assertIn('diagram-design/learning-path/path_app.js', files['site'])
         self.assertIn('diagram-design/learning-path/quiz-map-app.js', files['site'])
+        self.assertIn('diagram-design/learning-path/page-shell.css', files['site'])
         self.assertIn('diagram-design/learning-path/path.css', files['site'])
+        for page in ('learning-path/learning-path.html', 'learning-path/quiz-map.html'):
+            self.assertIn(
+                '/diagram-design/learning-path/page-shell.css',
+                (ROOT / page).read_text(encoding='utf-8'),
+                page,
+            )
         for paths in files.values():
             self.assertFalse(any('credentials' in name or 'state.sqlite' in name or 'accounts.json' in name for name in paths))
             self.assertFalse(any('modules/' in name or 'template.html' in name for name in paths))

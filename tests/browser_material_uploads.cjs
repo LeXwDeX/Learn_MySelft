@@ -62,7 +62,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
       const fixture=JSON.parse(entries[key]);
       fixture.stage='learning';fixture.plan={title:'资料上传 UI 回归夹具',nodes:Array.from({length:6},(_,i)=>({id:'n'+(i+1),title:'协议规则 '+(i+1),deps:[],objectives:[],essence:'仅回归账号的界面夹具'})),edges:[]};
       assert.equal((await context.request.post(api+'/state/put',{data:{entries:{[key]:JSON.stringify(fixture)}}})).status(),200);
-      await page.goto(sourceURL);await page.locator('#quizmap-btn').click();await page.locator('.materials-dialog input').waitFor();
+      await page.goto(sourceURL);await page.locator('#path-open').click();await page.locator('#quizmap-btn').click();await page.locator('.materials-dialog input').waitFor();
       await page.locator('.materials-dialog input').setInputFiles({name:'补充资料.txt',mimeType:'text/plain',buffer:Buffer.from('仅测验参考的补充资料')});
       await page.locator('.materials-dialog').getByText('已保存 1 份资料，将用于生成地图和测验。',{exact:true}).waitFor();
       await page.locator('.materials-dialog .cancel').click();
@@ -70,7 +70,7 @@ const lesson = `星桥分拣协议（回归专用原创资料）
       const persistedDraft=JSON.parse((await (await context.request.get(api+'/state/all')).json()).entries[key]);
       delete persistedDraft.quizMaterials;
       await page.evaluate(({user,key,value})=>localStorage.setItem('learn-unsaved-v1/'+user,JSON.stringify({[key]:JSON.stringify(value)})),{user:user.id,key,value:persistedDraft});
-      await page.reload();await page.locator('#quizmap-btn').click();
+      await page.reload();await page.locator('#path-open').click();await page.locator('#quizmap-btn').click();
       assert.equal(await page.getByText('发现上次未保存的内容，请重试同步后继续。',{exact:true}).count(),0,'acknowledged quiz reference must not trigger recovery');
       await page.locator('.materials-dialog .materials-list li').waitFor();
       await page.setViewportSize({width:390,height:900});await page.screenshot({path:output+'/quiz-dialog-mobile.png',fullPage:true});
@@ -98,10 +98,10 @@ const lesson = `星桥分拣协议（回归专用原创资料）
     assert(persisted.plan.nodes.length>=6);assert(JSON.stringify(persisted.plan).includes('星桥'));
     report.cases.push('real_model_intake_research_plan_from_uploaded_reference');
     report.sourceKey=key;report.sourceURL=sourceURL;
-    await page.locator('#quizmap-btn').click();await page.locator('.materials-dialog input').waitFor();
+    await page.locator('#path-open').click();await page.locator('#quizmap-btn').click();await page.locator('.materials-dialog input').waitFor();
     await page.locator('.materials-dialog input').setInputFiles({name:'测验补充.txt',mimeType:'text/plain',buffer:Buffer.from('测验应覆盖星桥协议原文，特别检查七个样本、两人复核、蓝绿标记与三个交接字段。')});
     await page.locator('.materials-dialog').getByText('已保存 1 份资料，将用于生成地图和测验。',{exact:true}).waitFor();
-    await page.locator('.materials-dialog .cancel').click();await page.reload();await page.locator('#quizmap-btn').click();
+    await page.locator('.materials-dialog .cancel').click();await page.reload();await page.locator('#path-open').click();await page.locator('#quizmap-btn').click();
     await page.locator('.materials-dialog .materials-list li').waitFor();
     report.cases.push('quiz_extra_reference_draft_survives_reload');
     await page.setViewportSize({width:390,height:900});await page.screenshot({path:output+'/quiz-dialog-mobile.png',fullPage:true});

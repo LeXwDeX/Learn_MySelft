@@ -11,7 +11,7 @@ const root=path.resolve(__dirname,'..');fs.mkdirSync(output,{recursive:true});
     const page=await browser.newPage({viewport:mobile?{width:390,height:844}:{width:1280,height:900},isMobile:mobile,hasTouch:mobile});
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
     await page.setContent('<meta name="viewport" content="width=device-width, initial-scale=1"><header class="user-bar">学习资料</header><main class="wrap"><button class="btn" id="gen-all-btn">一键生成全部节点</button><div id="resume-bar" hidden></div><section id="readable-material" aria-label="学习正文"></section></main>');
-    for(const file of ['shared/ui.css','learning-path/path.css'])await page.addStyleTag({content:fs.readFileSync(path.join(root,file),'utf8')});
+    for(const file of ['shared/ui.css','learning-path/page-shell.css','learning-path/path.css'])await page.addStyleTag({content:fs.readFileSync(path.join(root,file),'utf8')});
     await page.evaluate(()=>{
       const nativeTimer=window.setTimeout.bind(window);window.setTimeout=(fn,ms,...args)=>nativeTimer(fn,ms===1500||ms===3500?10:ms,...args);
       window.fixture={calls:[],jobs:new Map(),serial:0,saved:{nodeDetail:{}},opened:[]};
@@ -38,7 +38,7 @@ const root=path.resolve(__dirname,'..');fs.mkdirSync(output,{recursive:true});
       window.model={state:{stage:'learning',spec:{},nodeDetail:{},pending:null,plan:{nodes:['n1','n2','n3'].map(id=>({id,title:id+' 单元',objectives:[]}))}},session:{nodeMaterialStatus:{},expandedId:'n3'}};
       window.define=(name,names,factory)=>{window.generation=factory({
         'path.model':window.model,'path.format':{$:id=>document.getElementById(id),storeKey:()=> 'fixture/material'},
-        'path.persistence':{save(){},post:(operation,body,options)=>window.LearnJobs.run(operation,body,options)},
+        'path.persistence':{save(){},ensureNodeExists:()=>Promise.resolve(),ensureAccess:()=>Promise.resolve(),waitForWrites:()=>Promise.resolve(),post:(operation,body,options)=>window.LearnJobs.run(operation,body,options)},
         'path.domain':{nodeById:id=>window.model.state.plan.nodes.find(n=>n.id===id),depTitles:()=>[]},
         'path.workflow':{hideResumeBar(){}},'path.hooks':{syncAiMaterial(){},renderNodeDetail(id){document.getElementById('readable-material').textContent=window.model.state.nodeDetail[id].study_notes;}}
       });};
@@ -57,6 +57,8 @@ const root=path.resolve(__dirname,'..');fs.mkdirSync(output,{recursive:true});
     assert.match(await page.locator('#readable-material').innerText(),/正文已保存/);
     const body=await page.evaluate(()=>JSON.stringify(window.model.state.nodeDetail.n3)),posts=await page.evaluate(()=>window.fixture.calls.filter(c=>c.operation==='/path/node').length);
     await page.locator('.generation-task-list li .btn').last().click();
+    await page.locator('.learn-job-detail-panel[open]').waitFor();
+    await page.locator('.learn-job-detail-panel[open] .learn-job-diagnostics').evaluate(details=>{details.open=true;});
     await page.waitForSelector('.learn-job-detail-panel[open] .learn-job-conversation');
     assert.match(await page.locator('.learn-job-detail-panel[open] .learn-job-conversation').innerText(),/生成失败/);
     await page.keyboard.press('Escape');

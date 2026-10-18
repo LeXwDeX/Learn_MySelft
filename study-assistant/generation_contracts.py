@@ -8,27 +8,6 @@ from material_titles import quiz_title
 from text_utils import clip
 
 
-def parse_questions(text):
-    """从模型输出里抠出干净的短问题列表。"""
-    out = []
-    for raw in (text or "").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        line = re.sub(r"^[\-\*•·]+\s*", "", line)
-        line = re.sub(r"^\d+[\.、\)）]\s*", "", line)
-        line = line.strip(" \t\"'“”「」")
-        if not line or len(line) > 24:
-            continue
-        if line.endswith("。") or line.endswith("."):
-            line = line.rstrip("。.")
-        if line and line not in out:
-            out.append(line)
-        if len(out) >= 4:
-            break
-    return out
-
-
 def _json_value(text):
     """从模型输出里抠出第一个平衡的 JSON 值（对象或数组）。失败返回 None。
 

@@ -82,6 +82,43 @@ class StateRegressionTests(unittest.TestCase):
     def material(self):
         return self.app.repository.material(KEY)
 
+    def test_removed_tutor_helpers_are_not_routed(self):
+        for path in ("/suggest", "/compress"):
+            status, body = self.post(path, {})
+            self.assertEqual(status, 404, path)
+            self.assertIsInstance(body, dict, path)
+
+    def test_ask_rejects_malformed_field_types(self):
+        for payload in (
+            {"question": 123},
+            {"question": "解释", "unit": []},
+            {"question": "解释", "image": {}},
+        ):
+            status, body = self.post("/ask", payload)
+            self.assertEqual(status, 400, payload)
+            self.assertIn("error", body)
+
+    def test_text_helpers_tolerate_malformed_types(self):
+        from text_utils import history_messages
+
+        self.assertEqual(history_messages([{"role": "user", "content": []}]), [])
+        self.assertIsInstance(
+            prompts.build_system(
+                {"unit_id": 1, "notes": {}, "musts": 5, "traps": {"a": 1}}
+            ),
+            str,
+        )
+
+    def test_health_does_not_publish_endpoint_or_gateway_lists(self):
+        request = urllib.request.Request(
+            "http://127.0.0.1:%d/health" % self.server.server_port
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = json.load(response)
+        self.assertEqual(body["status"], "ok")
+        self.assertNotIn("endpoints", body)
+        self.assertNotIn("base", body)
+
     def test_quizmap_title_uses_canonical_document_name(self):
         self.assertEqual(
             contracts._quizmap_title(
